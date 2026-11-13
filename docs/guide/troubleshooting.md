@@ -25,7 +25,7 @@ Each installed agent prints its path. For each agent that prints nothing:
 2. Add its folder to the PATH in `~/.zprofile` or `~/.zshrc`. Do this even when you use another shell every day. Zero always uses zsh.
 3. Run the command again until the path prints.
 
-New tasks get the change without a restart of Zero. The welcome checks only once, when it opens. To check again there, open **Settings › About › Help › Show welcome again** and click **Open**.
+New tasks get the change without a restart of Zero. The welcome checks only once, when it opens. To check again there, open **Settings › General › Help › Show welcome again** and click **Open**.
 
 A task's own errors, such as `command not found`, are in its `stderr.log`. See [Read the logs](#read-the-logs).
 
@@ -71,7 +71,7 @@ See [The control bar](/docs/control-bar).
 
 Agents reach you with the `zero` command. Do these checks in order.
 
-**Zero is running.** An agent's `zero` command can say "Zero.app is not running" or "Zero's daemon isn't running". In that case, open Zero. Turn on **Settings › General › Zero › Launch Zero at login**, so agents can always reach you. Zero's daemon, the background service that runs your tasks, starts at login by itself. When it's off in your Mac's Login Items, **Settings › About** shows **Start Zero's daemon at login**. Click **Login Items** and switch Zero back on there.
+**Zero is running.** An agent's `zero` command can say "Zero.app is not running" or "Zero's daemon isn't running". In that case, open Zero. Turn on **Settings › General › Zero › Launch Zero at login**, so agents can always reach you. Zero's daemon, the background service that runs your tasks, starts at login by itself. When it's off in your Mac's Login Items, **Settings › General › About** shows **Start Zero's daemon at login**. Click **Login Items** and switch Zero back on there.
 
 **The agent can find the `zero` command.** Agents use `~/.local/bin/zero`, which points at the copy inside Zero.app. Zero puts it there when it updates. To check it, run this in Terminal:
 
@@ -93,7 +93,7 @@ mkdir -p ~/.local/bin && ln -sf /Applications/Zero.app/Contents/MacOS/zero-cli ~
 
 ## Zero shows a problem with itself
 
-Zero checks itself when it opens and every five minutes. When a check finds something, the gear at the foot of the window's left rail gets an orange dot. Click the gear: Settings opens on **About**, where the **Health** section lists each check with a pill.
+Zero checks itself when it opens and every five minutes. When a check finds something, the gear at the foot of the window's left rail gets an orange dot. Click the gear: Settings opens on **General** at its **Health** section, which lists each check with a pill.
 
 | Check | What it looks at |
 |---|---|
@@ -153,16 +153,16 @@ Zero keeps its logs in the `.zero` folder in your home folder. To open this fold
 
 | File | What it holds | How to open it |
 |---|---|---|
-| `~/.zero/zero.log` | What the app did and when: phone connections, notification permission, and problems it found. The previous log is beside it as `zero.log.1`. | **Settings › About › Help › Show log** |
+| `~/.zero/zero.log` | What the app did and when: phone connections, notification permission, and problems it found. The previous log is beside it as `zero.log.1`. | **Settings › General › Help › Show log** |
 | `~/.zero/zerod.log` | Messages from Zero's background service, which runs your tasks. For example, failed sign-ins and usage that it couldn't read. | Open it from Finder. |
-| `~/.zero/asks.jsonl` | Every ask and every answer, one per line. | Right-click the control bar away from the tasks' dots, and choose **Open Log**. |
+| `~/.zero/asks.jsonl` | Every ask and every answer, one per line. | Right-click the control bar away from the tasks' dots, and choose **Open log**. |
 | `~/.zero/zerod/sessions/` | A folder for each task. `transcript.jsonl` holds everything that the task and its agent said to each other. `stderr.log` holds the agent's own errors. | Open it from Finder. The folder with the most recent change belongs to the task that worked last. |
 
 The logs can hold your code and conversations. Read them before you share them.
 
 ## Updating Zero fails
 
-Zero checks for updates when it opens and every six hours. The first row of **Settings › About** shows the result. When a check or an update fails, the row says why and shows **Check again**:
+Zero checks for updates when it opens and every six hours. The first row of **Settings › General › About** shows the result. When a check or an update fails, the row says why and shows **Check again**:
 
 | Message | What to do |
 |---|---|

@@ -12,7 +12,7 @@ The control bar is a small bar on the right edge of your screen, halfway down. I
 
 From the top:
 
-- **The inbox.** A tray icon. A red dot on it means at least one ask is waiting for you.
+- **The inbox.** A tray icon. A blue dot on it means at least one ask is waiting for you.
 - **The workspace.** Its icon shows only when you have more than one workspace. Click it to see your workspaces and switch to another one.
 - **A line**, then **one mark for each task** in the workspace, workers included. They're in the same order as the window's sidebar. Each mark is the task's state icon, the same one the sidebar shows. A blue spinner means the task is working.
 - **Agents outside Zero**, such as Claude Code in a terminal. When one asks you something, it shows as a coloured dot after the tasks.
@@ -63,7 +63,7 @@ Right-click the mark of an agent outside Zero:
 
 Right-click the bar for:
 
-- **Open Log**: opens `~/.zero/asks.jsonl`, the file where Zero records every ask and answer.
+- **Open log**: opens `~/.zero/asks.jsonl`, the file where Zero records every ask and answer.
 - **Settings…**: opens Zero's settings.
 - **Quit Zero**: quits the app.
 

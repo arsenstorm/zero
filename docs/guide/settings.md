@@ -4,7 +4,7 @@ description: "Every setting in Zero: what it does, where it is and what it's set
 order: 10
 ---
 
-Settings is part of Zero's window. Its left column lists the pages. **General**, **Inbox and bar** and **Phone** come first. Then three groups follow. **Agents** has Agents, Accounts and models, Git, Browsers and MCP servers. **Work** has Workspaces. **Connections** has GitHub, Linear and Slack. **About** is at the foot of the column.
+Settings is part of Zero's window. Its left column lists the pages. **General**, **Inbox and bar** and **Phone** come first. Then three groups follow. **Agents** has Agents, Accounts and models, Git, Browsers and MCP servers. **Work** has Workspaces. **Connections** has GitHub, Linear and Slack.
 
 ## Open Settings
 
@@ -13,7 +13,7 @@ Settings is part of Zero's window. Its left column lists the pages. **General**,
 - Click Zero's icon in the menu bar and choose **Settings…**.
 - Right-click the control bar and choose **Settings…**.
 
-Settings opens on **General**. When Zero's own checks find a problem, the gear has an orange dot, and Settings opens on **About**. Each change takes effect at once, so the pages have no Save button.
+Settings opens on **General**. When Zero's own checks find a problem, the gear has an orange dot, and Settings opens on General at **Health**. Each change takes effect at once, so the pages have no Save button.
 
 ## General
 
@@ -37,6 +37,17 @@ A step you've done shows **Done**. The list goes away once the plugin and an acc
 | Finished | Settings › General › Notifications | A notification when a task is done, replied, or waiting on someone else. On by default. |
 
 Each kind of notification has a switch and a sound chip. The chip lists the Mac's alert sounds and **None**. You hear a sound as you pick it. The list marks the default with **(default)**: Blow for Needs you, Bottle for In trouble, Hero for Finished.
+
+At the foot of General, **About**, **Health** and **Help**:
+
+| Setting | Where | What it does |
+|---|---|---|
+| Zero and its version | Settings › General › About | Shows the version you have and whether it's up to date. **Check now** looks for an update. When an update is out, the row reads **Zero**, the new version's number and **is available**. Click **Update and restart** to install it. Zero quits and opens again as the new version. Running agents pause for a few seconds, then continue. Zero never updates without your click. |
+| Start Zero's daemon at login | Settings › General › About | Shown only when the daemon doesn't start at login. Then it starts when Zero opens, not at login, and not without the app. When it's off in the Mac's Login Items, **Login Items** opens the Mac's settings, where you switch Zero back on. A build that can't add it shows **Not in this build**. |
+| Icons | Settings › General › About | Which icons this copy of Zero draws. **Icons: Nucleo** in official builds. **Icons: Lucide** in a build from source, which differs in nothing else. |
+| Health | Settings › General › Health | Zero's own checks: **zerod**, **The zero command**, **Quarantine**, **Open files**, **zerod's build**, **Crashes** and **Zero's window**. Each has its state as a pill: **OK**, **Past** for a crash or hang that isn't recent, **Look**, **Failing** or **Unknown**. A check that found a problem has its fix beside it: **Restart zerod**, **Start zerod**, **Open report** or **Dismiss**. **Check now** runs the checks again. |
+| Show log | Settings › General › Help | **Show log** opens the file where Zero records what it did and when. The row shows its path. |
+| Show welcome again | Settings › General › Help | **Open** shows the welcome screens again. |
 
 To give each task state its own sound, choose **Each state's sound…**. The dialog has a sound for **Needs you**, **Over to you**, **In trouble**, **Blocked**, **Replied**, **Waiting** and **Done**. Defaults: Blow for Needs you and Over to you, Bottle for In trouble and Blocked, Hero for the rest. When the states of one kind have different sounds, its chip reads **Each state's sound…**.
 
@@ -174,17 +185,6 @@ Set up an MCP server here once, and Zero gives it to your tasks as they start, i
 | Blocked sites | Settings › Browsers › Blocked sites | Sites that no task can use. Type one in **Add a site (bank.com)** and press <kbd>Return</kbd>. To take a site off, point at it and click the bin, **Unblock it**. Empty by default. |
 
 [Browsers and MCP servers](/docs/browsers-and-mcp) explains each browser and how agents use it.
-
-## About
-
-| Setting | Where | What it does |
-|---|---|---|
-| Zero and its version | Settings › About › Zero | Shows the version you have and whether it's up to date. **Check now** looks for an update. When an update is out, the row reads **Zero**, the new version's number and **is available**. Click **Update and restart** to install it. Zero quits and opens again as the new version. Running agents pause for a few seconds, then continue. Zero never updates without your click. |
-| Start Zero's daemon at login | Settings › About › Zero | Shown only when the daemon doesn't start at login. Then it starts when Zero opens, not at login, and not without the app. When it's off in the Mac's Login Items, **Login Items** opens the Mac's settings, where you switch Zero back on. A build that can't add it shows **Not in this build**. |
-| Icons | Settings › About › Zero | Which icons this copy of Zero draws. **Icons: Nucleo** in official builds. **Icons: Lucide** in a build from source, which differs in nothing else. |
-| Health | Settings › About › Health | Zero's own checks: **zerod**, **The zero command**, **Quarantine**, **Open files**, **zerod's build**, **Crashes** and **Zero's window**. Each has its state as a pill: **OK**, **Past** for a crash or hang that isn't recent, **Look**, **Failing** or **Unknown**. A check that found a problem has its fix beside it: **Restart zerod**, **Start zerod**, **Open report** or **Dismiss**. **Check now** runs the checks again. |
-| Show log | Settings › About › Help | **Show log** opens the file where Zero records what it did and when. The row shows its path. |
-| Show welcome again | Settings › About › Help | **Open** shows the welcome screens again. |
 
 ## Remembered without a setting
 

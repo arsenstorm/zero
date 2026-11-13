@@ -54,7 +54,7 @@ The first time you open Zero, a welcome window walks you through four steps. Cli
 
 macOS also asks whether Zero can send notifications. Allow them so you hear when a task needs you.
 
-To see the welcome again, open **Settings › About › Help › Show welcome again** and click **Open**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
+To see the welcome again, open **Settings › General › Help › Show welcome again** and click **Open**. Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the window's left rail.
 
 ## Sign in an agent
 
@@ -98,7 +98,7 @@ Zero has three places on your screen:
 | Item | What it does |
 |---|---|
 | **Show Zero** | Opens the window. |
-| **Check for Updates…** | Opens **Settings › About** and checks for a new version. |
+| **Check for Updates…** | Opens **Settings › General › About** and checks for a new version. |
 | **Settings…** | Opens Settings in the window. |
 | **Quit Zero** | Quits the app. |
 
@@ -108,7 +108,7 @@ Closing the window with <kbd>⌘</kbd> <kbd>W</kbd> leaves Zero in the menu bar,
 
 Zero checks for a new version when it opens and every six hours after that. It installs one only when you say so.
 
-- When a new version is out, the menu bar icon's menu shows **Update to Zero** and the version. Choose it to go to **Settings › About**.
-- In **Settings › About**, the first row shows your version. It reads **Up to date.** with **Check now**, or names the new version with **Update and restart**.
+- When a new version is out, the menu bar icon's menu shows **Update to Zero** and the version. Choose it to go to **Settings › General › About**.
+- In **Settings › General › About**, the first row shows your version. It reads **Up to date.** with **Check now**, or names the new version with **Update and restart**.
 
 Click **Update and restart**. Zero quits and opens again as the new version. Agents that are working pause between steps for a few seconds, then carry on.

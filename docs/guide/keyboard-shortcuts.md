@@ -74,7 +74,7 @@ An agent's screen, such as a command's picker, can open in the panel. While it's
 | <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>Z</kbd> | Redo. |
 | <kbd>⌘</kbd> <kbd>X</kbd>, <kbd>⌘</kbd> <kbd>C</kbd>, <kbd>⌘</kbd> <kbd>V</kbd>, <kbd>⌘</kbd> <kbd>A</kbd> | Cut, copy, paste, select all. |
 
-In dialogs, <kbd>Return</kbd> presses the main button. <kbd>Esc</kbd> presses **Cancel**. When you rename something, <kbd>Return</kbd> saves and <kbd>Esc</kbd> cancels.
+In dialogs, <kbd>Return</kbd> presses the main button. <kbd>Esc</kbd> closes the dialog. When you rename something, <kbd>Return</kbd> saves and <kbd>Esc</kbd> cancels.
 
 ## In a task's composer
 
@@ -103,10 +103,10 @@ When you type `/` or `@`, a list of suggestions opens:
 
 | Keys | What it does |
 |---|---|
-| <kbd>Esc</kbd> <kbd>Esc</kbd>, within half a second | Opens the rewind list of your messages. |
-| <kbd>↑</kbd> <kbd>↓</kbd>, in the rewind list | Moves through your messages. |
-| <kbd>Return</kbd>, in the rewind list | Picks the message to rewind to. |
-| <kbd>Esc</kbd>, in the rewind list | Closes the list. On the rewind card, <kbd>Esc</kbd> is **Never mind**. |
+| <kbd>Esc</kbd> <kbd>Esc</kbd>, within half a second | Starts a rewind to your latest message. |
+| <kbd>↑</kbd> <kbd>↓</kbd>, while rewinding | Moves to your message before or after. |
+| <kbd>Return</kbd>, while rewinding | Rewinds to the message. |
+| <kbd>Esc</kbd>, while rewinding | Leaves without rewinding. |
 | <kbd>Return</kbd>, on a permission request docked above the composer | Picks the first answer of the request. This works only when you aren't typing in the composer. |
 | <kbd>Esc</kbd> | Closes the task's details card after you click into it. |
 

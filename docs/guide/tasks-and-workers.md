@@ -69,21 +69,25 @@ The control bar lists the tasks in the same order as the sidebar.
 
 ### Use a task's menu
 
-Right-click a task in the sidebar:
+Right-click a task in the sidebar. The same menu opens from the **⋯** in the window's title bar and from a task's **⋯** on the board:
 
 | Item | What it does |
 |---|---|
 | **Open in** | Opens the task's folder in Finder, an editor you have installed, or your terminal app. **Copy path** copies the folder's path. The one you used last comes first. |
 | **Continue in** and your terminal app | Moves the task's session to your terminal app. See "Continue in your terminal app" below. |
-| **Rename task** | Gives the task a new name. |
+| **Rename…** | Gives the task a new name. |
 | **Status** | Sets the task to **Done**, **Waiting** or **Blocked**. See "What a task's state means" below. |
 | **Workspace** | Moves the task to another workspace. A tick marks the one it's in. Shown only when you have more than one. |
 | **Work with…** | Opens **Work with another task**. Pick another task, then click **Work together**. Each of the two hears about the other and how to reach it, so they can settle things between them. |
+| **Pin to bar** / **Unpin from bar** | Keeps the task's dot on the control bar. |
+| **Copy task id** | Copies the task's id. |
+| **Ask for a status update** | The agent answers in a few lines and posts where it stands. |
 | **Pause** / **Resume** | Puts the task and its workers on hold, or takes them off hold. |
-| **Save for later** | Puts the whole task in Later. It leaves the sidebar and is paused with its workers, but isn't archived. Also in the **⋯** menu in the window's title bar. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
+| **End session** / **Resume** | Stops the agent's process, or starts an offline one again on the same conversation. |
+| **Save for later** | Puts the whole task in Later. It leaves the sidebar and is paused with its workers, but isn't archived. See [Later, scratchpads and loops](/docs/later-scratchpads-loops). |
 | **Archive…** | Archives the task. See "Archive a task" below. |
 
-A worker's menu has **Rename task**, **Status**, **Pause** or **Resume**, and **Archive…**. While the worker is working or waiting, it also has **Stop**.
+A worker's menu is the same, without **Workspace** and **Save for later**.
 
 ## What a task's state means
 
@@ -128,14 +132,13 @@ Zero plays the conversation back in order, the agent's words at a steady pace. A
 
 To move around a long conversation, use the ticks down the left edge, one for each of your messages. Point at one to preview it, and click to go there. The down arrow, **Go to the latest**, takes you to the end.
 
-Point at a message to see a copy button, a **⋯** menu and the time it was sent. The menu has:
+Point at a message to see a copy button, a **⋯** menu and the time it was sent. Your own messages also have a rewind button (see "Rewind a task" below). The menu has:
 
 | Item | What it does |
 |---|---|
 | **Copy** | Copies the message. |
 | **Quote in reply** | Adds the message to your reply as a quote. |
 | **Save to a scratchpad** | Saves the message as a new scratchpad in the **Saved** folder, named after its first line. |
-| **Rewind…** | On your messages: takes the task back to before that message. See "Rewind a task" below. |
 
 ## Write to a task
 
@@ -238,10 +241,10 @@ Zero archives a finished worker an hour after its task has its report, so finish
 | Action | Where | What it does |
 |---|---|---|
 | **Stop** | The square in the composer, or <kbd>⌘</kbd> <kbd>.</kbd> | Stops the turn the agent is on. The task stays where it is, and you can write to it again. |
-| **Pause** | A task's menu in the sidebar, the **⋯** menu in the title bar called **More**, or the **⋯** menu on the board called **Actions** | Puts the task and its workers on hold. Zero asks a working agent to finish the step it's on and end its turn, then stops it. Messages for it wait until you resume it. |
+| **Pause** | A task's menu: in the sidebar, the **⋯** in the title bar, or the **⋯** on the board | Puts the task and its workers on hold. Zero asks a working agent to finish the step it's on and end its turn, then stops it. Messages for it wait until you resume it. |
 | **Resume** a paused task | The same menus | Takes the task and its workers off hold. Any with messages waiting start again for them. |
-| **End session** | The **⋯** in the title bar, or the **⋯** on the board | Stops the agent's process. |
-| **Resume** an offline task | The **⋯** in the title bar, or the **⋯** on the board | Starts the agent again on the same conversation. |
+| **End session** | The same menus | Stops the agent's process. |
+| **Resume** an offline task | The same menus | Starts the agent again on the same conversation. |
 
 To pause every task in a workspace, use **Pause all tasks** in the sliders menu beside the sidebar's **Tasks** heading.
 
@@ -261,21 +264,14 @@ Archiving stops the task and its workers. To bring one back, click the sliders b
 
 Rewinding takes a task back to before one of your messages: its conversation, the files in its folder, or both.
 
-1. Press <kbd>Esc</kbd> twice quickly on the task's page, or choose **Rewind…** from the **⋯** menu on one of your messages.
-2. In **Rewind to**, pick the message with <kbd>↑</kbd> <kbd>↓</kbd> and <kbd>↩</kbd>.
-3. The card says what's changed in the folder since then, such as "Since this message: 3 files changed, +40 −12." Choose what to do:
+1. Point at one of your messages and click its rewind button. Or press <kbd>Esc</kbd> twice quickly on the task's page to pick your latest message, then <kbd>↑</kbd> <kbd>↓</kbd> to move to another one.
+2. Everything after the message is dimmed. A bar under the message says what goes, such as "Removes 4 messages · 3 files changed". Click the line to see the changed files.
+3. Choose how far back to go: **Conversation and files**, **Conversation only** or **Files only**. A choice that isn't possible is greyed out; point at it to see why.
+4. Click **Rewind to here** or press <kbd>↩</kbd>. Click **Branch from here** to start a new task from before this message instead; this one stays as it is. <kbd>Esc</kbd> leaves without changing anything.
 
-| Choice | What it does |
-|---|---|
-| **Restore conversation and code** | Back to before this message, files and all. |
-| **Restore conversation** | The conversation goes back. The files stay as they are now. |
-| **Restore code** | The files go back. The conversation carries on as it is. |
-| **Branch from here** | Starts a new task from before this message. This one stays as it is. |
-| **Never mind** | Closes the card. |
+When the conversation goes back, your message returns to the composer, so you can change it and send it again. For a few seconds after a rewind, **Rewound · Undo** shows above the composer: click **Undo** to put the conversation and the files back as they were.
 
-When the conversation goes back, your message returns to the composer, so you can change it and send it again.
-
-When the folder is in a Git repository, Zero keeps a copy of it each time you send a message. When there's no copy for that message, the card says **Zero didn't keep the folder for this message, so only the conversation can go back.** Zero also keeps a copy before it restores the files, so you can rewind the restore too.
+When the folder is in a Git repository, Zero keeps a copy of it each time one of your messages goes to the agent, including messages that waited in the queue. When there's no copy for a message, **Conversation and files** and **Files only** are greyed out.
 
 ## See every task at once
 
@@ -291,7 +287,7 @@ Click **All tasks** in the tasks sidebar. The board lists the workspace's tasks 
 | **State** | The state, and what the task needs from you: its first open ask, or the step it handed over. |
 | **Now** | What the task is doing now, in its own words. |
 
-Click a row to open the task. Its **⋯** menu, called **Actions**, has **Ask for a status update**, **Open**, **End session** or **Resume**, **Pause** or **Resume**, **Copy task id** and **Archive…**. With **Ask for a status update**, the agent answers in a few lines and posts where it stands.
+Click a row to open the task. Its **⋯** opens the task's menu, the same as in the sidebar.
 
 ## Continue in your terminal app
 

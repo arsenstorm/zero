@@ -12,7 +12,7 @@ When an agent needs something from you, it sends an ask: a question, a choice, a
 
 Your asks show in two places:
 
-- **The inbox panel**, beside the control bar on the right edge of your screen. Point at the tray icon at the top of the bar to peek at the panel, or click the icon to keep it open. A red dot on the icon means at least one ask is waiting. See [The control bar](/docs/control-bar).
+- **The inbox panel**, beside the control bar on the right edge of your screen. Point at the tray icon at the top of the bar to peek at the panel, or click the icon to keep it open. A blue dot on the icon means at least one ask is waiting. See [The control bar](/docs/control-bar).
 - **The Inbox page** in Zero's window. Click the tray icon in the window's left rail. Its tip reads **Inbox**. A red badge on the icon shows how many asks are waiting on you.
 
 The **Inbox hotkey** works from any app: <kbd>⌥</kbd> <kbd>Space</kbd> unless you've changed it. It opens the inbox panel. To change it, see [Keyboard shortcuts](/docs/keyboard-shortcuts).
@@ -158,7 +158,7 @@ Its sidebar has:
 
 - **Waiting on you**, with how many: the asks waiting, oldest first.
 - **Answered**: up to 50 asks you've answered in the last day, newest first.
-- **Agents**: one row for each agent that has asked you something. An orange dot and a count mean that agent has asks waiting, and a grey dot means none. Click an agent to see its waiting asks, then its answered ones.
+- **Agents**: one row for each agent that has asked you something. A blue dot and a count mean that agent has asks waiting, and a grey dot means none. Click an agent to see its waiting asks, then its answered ones.
 
 The table's columns are:
 
@@ -167,7 +167,7 @@ The table's columns are:
 | **Ask** | The ask's title. |
 | **Agent** | The agent that asked. |
 | **Kind** | **Question** for questions and choices, **Approval** for approvals and permissions, **Command** for commands to run. |
-| **When** | When it was asked, in orange while it waits, then when it was answered once it's done. A declined ask adds **· declined**. |
+| **When** | When it was asked, in blue while it waits, then when it was answered once it's done. A declined ask adds **· declined**. |
 
 Click a row to open its card under it, and answer it there as in the panel. The oldest waiting ask opens on its own. Click the × at the card's right to close it. Its tip reads **Fold it back**. The number keys, and <kbd>Esc</kbd> to take an answer back, work in the inbox panel, not on this page.
 
@@ -230,6 +230,6 @@ Most are in **Settings › Inbox and bar**.
 | Unanswered asks expire after | Settings › Inbox and bar › Answers | How long an ask waits when the agent set no time: **15 min**, **1 h**, **4 h**, **1 day** or **Never**. **1 h** by default. |
 | Inbox hotkey | Settings › General › Zero | The keys that open the inbox, from any app. <kbd>⌥</kbd> <kbd>Space</kbd> by default. |
 
-Zero records every ask and answer in `~/.zero/asks.jsonl`. To open it, right-click the control bar and choose **Open Log**.
+Zero records every ask and answer in `~/.zero/asks.jsonl`. To open it, right-click the control bar and choose **Open log**.
 
 The iPhone app, coming soon, shows the same asks and has a **Take back** button on an answer you've just picked. See [The iPhone app](/docs/iphone).
