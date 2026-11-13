@@ -1,8 +1,6 @@
-import AVFoundation
-import Speech
 import SwiftUI
 
-/// Zero's first run: what it is, the agents it works with, the permissions it needs, a few habits, and one real
+/// Zero's first run: what it is, the agents it works with, a few habits, and one real
 /// ask to answer. Its own centred window; Zero stays a menu bar app once it closes.
 struct OnboardingView: View {
     @Bindable var settings: Settings
@@ -10,11 +8,10 @@ struct OnboardingView: View {
     let tryIt: () -> Void
     let finish: () -> Void
 
-    enum Step: Int, CaseIterable { case welcome, agents, permissions, habits, tryIt }
+    enum Step: Int, CaseIterable { case welcome, agents, habits, tryIt }
     @State private var step = Step.welcome
     @State private var forward = true
     @State private var agents = AgentCheck()
-    @State private var permissions = PermissionCheck()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,7 +30,7 @@ struct OnboardingView: View {
         .background(Theme.card)
         // From the first page, so later pages open already answered rather than changing in front of you.
         .onAppear {
-            agents.run(); permissions.run()
+            agents.run()
         }
     }
 
@@ -66,14 +63,10 @@ struct OnboardingView: View {
             ) {
                 AgentsStep(check: agents)
             }
-        case .permissions:
-            StepPage(title: "Permissions", detail: "Each one is optional, and Zero needs no other access.") {
-                PermissionsStep(check: permissions)
-            }
         case .habits:
-            StepPage(title: "Make it yours", detail: "Change these later in **Zero menu bar icon → Settings**.") {
+            StepPage(title: "Make it yours", detail: "Change these later in **Settings** (⌘,).") {
                 VStack(spacing: 0) {
-                    OnboardingRow(icon: "command", title: "Talk hotkey", detail: "Opens the inbox and starts dictation.") {
+                    OnboardingRow(icon: "command", title: "Inbox hotkey", detail: "Opens the inbox from any app.") {
                         HotKeyRecorder(settings: settings, minWidth: nil)
                     }
                     Divider()
@@ -288,63 +281,6 @@ private struct AgentsStep: View {
             Divider()
             OnboardingRow(icon: "code", picture: choiceIcon("openai"), title: "Codex", detail: "Start Codex agents from Zero.") {
                 RowButton(title: check.codex == false ? "Not installed" : "Coming soon", enabled: false)
-            }
-        }
-    }
-}
-
-/// Permission states, read when onboarding opens and again whenever Zero comes back to the front (after a
-/// trip to System Settings), so a page always opens on its real state instead of flipping from "Allow".
-@MainActor @Observable
-final class PermissionCheck {
-    var microphone = AVCaptureDevice.authorizationStatus(for: .audio)
-    var speech = SFSpeechRecognizer.authorizationStatus()
-    private var observer: Any?
-
-    func run() {
-        guard observer == nil else { return }
-        refresh()
-        observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) {
-            [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }
-    }
-
-    func refresh() {
-        microphone = AVCaptureDevice.authorizationStatus(for: .audio)
-        speech = SFSpeechRecognizer.authorizationStatus()
-    }
-
-    func allowMicrophone() {
-        if microphone == .notDetermined {
-            Task {
-                _ = await AVCaptureDevice.requestAccess(for: .audio); refresh()
-            }
-        } else {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
-        }
-    }
-
-    func allowSpeech() {
-        if speech == .notDetermined {
-            SFSpeechRecognizer.requestAuthorization { _ in Task { @MainActor in self.refresh() } }
-        } else {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!)
-        }
-    }
-}
-
-private struct PermissionsStep: View {
-    let check: PermissionCheck
-
-    var body: some View {
-        VStack(spacing: 0) {
-            OnboardingRow(icon: "microphone", title: "Microphone", detail: "To dictate a reply instead of typing it.") {
-                StatusControl(done: check.microphone == .authorized, label: "Allow") { check.allowMicrophone() }
-            }
-            Divider()
-            OnboardingRow(icon: "waveform-lines", title: "Speech recognition", detail: "Turns what you say into text, on this Mac.") {
-                StatusControl(done: check.speech == .authorized, label: "Allow") { check.allowSpeech() }
             }
         }
     }

@@ -37,11 +37,7 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Zero listens while you dictate a reply to an agent.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Zero transcribes your spoken reply on this Mac.</string>
 </dict>
 </plist>

@@ -238,14 +238,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zero-drop"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "zerod"
 version = "0.1.0"
 dependencies = [

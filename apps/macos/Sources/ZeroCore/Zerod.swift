@@ -641,8 +641,6 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var stalled: String?
     /// The running command it's stuck on, by its item, when one is: Stop it ends it (`stopCommand`).
     public var stuck: String?
-    /// The user said Zero is never to stop this task's commands on its own.
-    public var keepCommands: Bool?
     /// The unified diff of everything the latest turn changed.
     public var diff: String?
     /// While the task is open in the user's terminal app, on its CLI's own resume.
@@ -734,7 +732,6 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .usage(usage): self.usage = usage
         case let .failed(failure): self.failure = failure
         case let .stalled(reason, command): stalled = reason; stuck = command
-        case let .keepCommands(keep): keepCommands = keep
         case let .diff(diff): self.diff = diff
         case let .terminal(terminal): self.terminal = terminal
         case .archived: break
@@ -786,7 +783,6 @@ public enum Change: Decodable, Equatable, Sendable {
     case failed(Failure?)
     /// Why it looks stuck, and the command it's stuck on, if one.
     case stalled(String?, command: String?)
-    case keepCommands(Bool)
     case diff(String?)
     /// The task moved to another provider, which starts a thread of its own from Zero's record.
     case switched(Provider, model: String?, effort: String?)
@@ -810,7 +806,7 @@ public enum Change: Decodable, Equatable, Sendable {
 
     private enum Keys: String, CodingKey {
         case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label,
-            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command, keep
+            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command
     }
 
     public init(from decoder: Decoder) throws {
@@ -842,7 +838,6 @@ public enum Change: Decodable, Equatable, Sendable {
         case "stalled":
             self = .stalled(
                 try c.decodeIfPresent(String.self, forKey: .reason), command: try c.decodeIfPresent(String.self, forKey: .command))
-        case "keepCommands": self = .keepCommands(try c.decode(Bool.self, forKey: .keep))
         case "diff": self = .diff(try c.decodeIfPresent(String.self, forKey: .diff))
         case "terminal": self = .terminal(try c.decodeIfPresent(Opened.self, forKey: .terminal))
         case "archived": self = .archived
@@ -1329,10 +1324,6 @@ public final class ZerodLink: @unchecked Sendable {
     /// Ends a task's running command (its item) so its agent carries on; zerod tells the agent why.
     public func stopCommand(session: String, item: String) async throws {
         _ = try await call("stopCommand", ["session": session, "item": item])
-    }
-    /// Zero never stops this task's commands on its own (`keep`), or may again.
-    public func keepCommands(session: String, keep: Bool) async throws {
-        _ = try await call("keepCommands", ["session": session, "keep": keep])
     }
     /// The agent's word on how long its step under way takes (`zero expect 20m "the full suite"`).
     public func expect(session: String, span: String, what: String) async throws {
@@ -1852,17 +1843,12 @@ public final class ZerodLink: @unchecked Sendable {
     public func deliver(_ ask: String) async throws { _ = try await call("deliver", ["ask": ask]) }
     public func message(_ text: String, to agent: String) async throws { _ = try await call("message", ["agent": agent, "text": text]) }
     public func close(agent: String, stop: Bool) async throws { _ = try await call("close", ["agent": agent, "stop": stop]) }
-    public func screen(of agent: String) async throws -> String? { try await call("screen", ["agent": agent]) as? String }
-    /// Keys into the agent's terminal; the screen just after.
-    public func press(_ keys: [UInt8], on agent: String) async throws -> String? {
-        try await call("press", ["agent": agent, "keys": keys.map(Int.init)]) as? String
-    }
     public func switchModel(of agent: String, model: String?, effort: String?) async throws {
         _ = try await call("switchModel", ["agent": agent, "model": model, "effort": effort])
     }
-    /// The inbox's settings: the take-back window and default expiry in seconds, and the drop folders' patterns.
-    public func configure(takeBack: Double, ttl: Int, patterns: [String]) async throws {
-        _ = try await call("configure", ["takeBack": takeBack, "ttl": ttl, "patterns": patterns])
+    /// The inbox's settings: the take-back window and default expiry in seconds.
+    public func configure(takeBack: Double, ttl: Int) async throws {
+        _ = try await call("configure", ["takeBack": takeBack, "ttl": ttl])
     }
 
     /// One request; nil fields are left out.

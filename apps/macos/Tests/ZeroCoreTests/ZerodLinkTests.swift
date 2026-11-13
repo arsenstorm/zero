@@ -132,7 +132,7 @@ private final class InboxHeard: @unchecked Sendable {
     defer { link.close(); shutDown(socket, home) }
     let heard = InboxHeard()
     link.onInbox = { heard.add($0) }
-    try await link.configure(takeBack: 0.05, ttl: 600, patterns: [])
+    try await link.configure(takeBack: 0.05, ttl: 600)
     try await link.followInbox()
     let ask = try await link.create(
         Ask(kind: .choice, title: "Ship it?", options: ["Yes", "No"], agent: AgentIdentity(name: "codex-1", host: "mac")))

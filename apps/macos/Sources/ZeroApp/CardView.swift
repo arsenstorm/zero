@@ -37,7 +37,6 @@ struct CardView: View {
             Text(title).font(.system(size: 12.5, weight: .semibold))
         }
     }
-    private var dictating: Bool { controller.dictatingFor == ask.id }
     /// With several questions open, the waiting ones your keys won't answer step back; finished cards never dim.
     /// Flat (on the inbox page, in a task's status), it's the one being looked at: never dimmed.
     private var dimmed: Bool { !flat && ask.state == .waiting && !selected && controller.waitingCards > 1 }
@@ -45,10 +44,6 @@ struct CardView: View {
     @State private var commandExpanded = false
     @State private var scriptExpanded = false
     @State private var detailExpanded = false
-    /// The agent's replies to your words on it, opened.
-    @State private var repliesOpen = false
-    /// A running run's own terminal shown in place of its output (its Terminal button).
-    @State private var watching = false
     /// False until the entrance has played; cards already seen start true.
     @State private var entered = false
     /// Heights of the command box and the options while waiting; the terminal takes exactly their space.
@@ -171,7 +166,6 @@ struct CardView: View {
             }
             if showsOptions { options }
             footer
-            repliesLine
         }
         // A reply hugs its text like a chat bubble, up to about 65% of the column, and sits left.
         .modifier(BubbleWidth(hug: ask.kind == .note, max: 220))
@@ -203,9 +197,9 @@ struct CardView: View {
             Spacer(minLength: 8)
             // No time and no dismiss: a finished card folds into Earlier, or leaves the inbox when it next opens.
             if ask.state == .running {
-                // Its own terminal: watched in place of the output, or typed into if it asks something.
-                if ask.runTerminal != nil {
-                    Button(watching ? "Output" : "Terminal") { watching.toggle() }
+                // Its output followed in the user's terminal app, as it comes.
+                if let log = ask.runLog {
+                    Button("Terminal") { TerminalApp.follow(log, title: ask.title) }
                         .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 }
                 Button("Stop") { controller.store.cancelRun(ask.id) }
@@ -249,35 +243,6 @@ struct CardView: View {
             }
             .font(.system(size: 12)).foregroundStyle(.secondary)
         }
-    }
-
-    /// What the agent answered to your words on it: folded to a count, opened in place, at once.
-    @ViewBuilder private var repliesLine: some View {
-        if let replies = ask.replies, !replies.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Button {
-                    controller.holdTop = true
-                    repliesOpen.toggle()
-                } label: {
-                    HStack(spacing: 5) {
-                        Text(replies.count == 1 ? "1 reply" : "\(replies.count) replies").fontWeight(.medium)
-                        NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(repliesOpen ? 0 : -90)).frame(width: 12)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
-                if repliesOpen { ForEach(replies, id: \.item) { quoted($0.text) } }
-            }
-        }
-    }
-
-    /// A passage as a quote: a rule beside its words, as the question's details are set, a dozen lines at most (the
-    /// rest is a click on its title away).
-    private func quoted(_ text: String) -> some View {
-        Text(linked(text)).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.leading, 10)
-            .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 1).fill(Theme.stroke).frame(width: 2) }
     }
 
     /// Three lines; a longer one fades out on its last line instead of being cut mid-word, and a
@@ -439,10 +404,7 @@ struct CardView: View {
         ReplyBox(
             placeholder: placeholder,
             text: Binding(get: { controller.drafts[ask.id, default: ""] }, set: { controller.drafts[ask.id] = $0 }),
-            key: ask.id, focus: focus, dictating: dictating,
-            onMic: {
-                controller.select(ask.id); controller.toggleDictation()
-            }, onSend: { controller.send(ask.id) }, autofocus: autofocus
+            key: ask.id, focus: focus, onSend: { controller.send(ask.id) }, autofocus: autofocus
         )
         .background(done ? Theme.doneRow : Theme.choice).clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -478,18 +440,7 @@ struct CardView: View {
 
     /// Once a run starts, the command box takes exactly the space it and the options had, fixed, like a small
     /// terminal: the command on the first line, the output scrolling beneath it and following the newest line.
-    @ViewBuilder private var terminal: some View {
-        if watching, let id = ask.runTerminal {
-            HostTerminal(id: id).id(id)
-                .frame(maxWidth: .infinity)
-                .frame(height: commandHeight + 12 + optionsHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-        } else {
-            output
-        }
-    }
-
-    private var output: some View {
+    private var terminal: some View {
         TerminalView(command: ask.command ?? "", output: controller.store.output(of: ask.id))
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .topLeading)

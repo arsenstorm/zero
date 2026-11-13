@@ -33,8 +33,7 @@ updates:
       dmgbuild:
         patterns: ["*"]
 
-  # No swift ecosystem: Package.swift names Ghostty's engine as a local binary target built on the Mac (Vendor/, not
-  # in the repo), and Dependabot fails on any package it can't resolve. Swift packages are updated by hand.
+  # No swift ecosystem: the Swift package has no dependencies.
 
   # The bun ecosystem updates bun.lock with package.json (the npm one doesn't, failing `bun install --frozen-lockfile`).
   - package-ecosystem: bun

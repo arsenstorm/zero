@@ -19,14 +19,11 @@ func shortDetail(_ text: String?, flag name: String) {
 
 @MainActor func agentIdentity() -> AgentIdentity {
     let env = ProcessInfo.processInfo.environment
-    let own: String? = env["ZERO_HOST_TERMINAL"].map { "claude-" + String($0.suffix(6)) }
-    let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? own ?? "shell-\(getppid())"
+    let name: String = flag("agent") ?? env["ZERO_AGENT"] ?? "shell-\(getppid())"
     var identity = AgentIdentity(
         name: name, host: AgentIdentity.thisHost,
         cwd: FileManager.default.currentDirectoryPath,
         ticket: flag("ticket"))
-    // Inside one of Zero's own terminals: Zero reaches the agent through zero-host.
-    if let terminal = env["ZERO_HOST_TERMINAL"] { identity.runtime = "zero"; identity.ref = terminal }
     // A session zerod runs: its notes, asks and runs join that session's approvals in the inbox.
     if let session = env["ZERO_SESSION"] { identity.runtime = "zerod"; identity.ref = session }
     return identity

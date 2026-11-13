@@ -304,12 +304,10 @@ func newID() -> String {
 }
 
 func agentIdentity(session: String? = nil) -> String {
-    let own = env("ZERO_HOST_TERMINAL").map { "claude-" + String($0.suffix(6)) }
-    let name = flag("agent") ?? env("ZERO_AGENT") ?? own ?? "shell-\(getppid())"
+    let name = flag("agent") ?? env("ZERO_AGENT") ?? "shell-\(getppid())"
     var host = [CChar](repeating: 0, count: 256)
     var cwd = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
     var runtime: String?, ref: String?
-    if let terminal = env("ZERO_HOST_TERMINAL") { runtime = "zero"; ref = terminal }
     if let session = env("ZERO_SESSION") { runtime = "zerod"; ref = session }
     return object([
         ("name", quote(name)),

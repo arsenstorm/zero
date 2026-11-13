@@ -3,65 +3,6 @@ import Observation
 import SwiftUI
 import ZeroCore
 
-/// The agent's terminal, in Zero, for the pickers slash commands open: the rendered screen below its
-/// separator, keys for the pointer (the keyboard already goes straight through), and a close.
-struct ScreenCard: View {
-    let agent: String
-    let screen: String
-    @Bindable var controller: InboxController
-
-    private static let keys: [(String, [UInt8])] = [
-        ("↑", [27, 91, 65]), ("↓", [27, 91, 66]), ("←", [27, 91, 68]), ("→", [27, 91, 67]), ("⏎", [13]), ("Esc", [27]),
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Text("Screen").font(.system(size: 12, weight: .medium))
-                Text(controller.store.displayName(of: agent)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 8)
-                ForEach(Self.keys, id: \.0) { label, bytes in
-                    Button {
-                        controller.store.press(bytes, on: agent)
-                    } label: {
-                        Text(label).font(.system(size: 11, weight: .semibold)).monospacedDigit()
-                            .frame(minWidth: 22, minHeight: 20).padding(.horizontal, 4)
-                            .background(Theme.keycap).clipShape(RoundedRectangle(cornerRadius: 6))
-                    }.buttonStyle(.plain)
-                }
-                Button {
-                    controller.store.closeScreen(of: agent)
-                } label: {
-                    NucleoIcon("xmark", size: 13).foregroundStyle(.secondary)
-                        .frame(width: 20, height: 20).contentShape(Rectangle())
-                }.buttonStyle(.plain).offset(x: 4)
-            }
-            .frame(height: 20)
-            Text(visible.isEmpty ? "Waiting for the agent's screen…" : visible)
-                .font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10).background(Theme.code).clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-        .padding(14)
-        .card()
-    }
-
-    /// What the agent has open: everything below its last separator line, else the last 20 lines, with the
-    /// blank run at the end gone.
-    private var visible: String {
-        var lines = screen.components(separatedBy: "\n")
-        if let separator = lines.lastIndex(where: { $0.hasPrefix("▔▔▔") || $0.hasPrefix("───") }) {
-            lines = Array(lines[(separator + 1)...])
-        } else {
-            lines = Array(lines.suffix(20))
-        }
-        while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
-        while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeFirst() }
-        return lines.map { $0.trimmingCharacters(in: .whitespaces).isEmpty ? "" : $0 }.joined(separator: "\n")
-    }
-}
-
 /// Chat-bubble width: the content is offered up to `max` points and the view takes exactly what it uses, so a
 /// short line gets a short bubble. (A `maxWidth` frame claims the whole cap whenever the column offers it.)
 struct BubbleWidth: ViewModifier {

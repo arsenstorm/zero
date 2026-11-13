@@ -38,7 +38,7 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 final class Panel: NSPanel {
     override var canBecomeKey: Bool { true }
     /// AppKit hands a new key window's focus to its first text field. The inbox only takes text focus when asked:
-    /// a click in the field, or the controller arming it (R, Enter, "/", dictation). Otherwise 1, 2, 3 stay shortcuts.
+    /// a click in the field, or the controller arming it (R, Enter, "/"). Otherwise 1, 2, 3 stay shortcuts.
     var allowsTextFocus: () -> Bool = { true }
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
         if responder is NSTextView, !allowsTextFocus(), NSApp.currentEvent?.type != .leftMouseDown { return false }

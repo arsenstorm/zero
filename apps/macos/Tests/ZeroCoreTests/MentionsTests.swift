@@ -8,10 +8,7 @@ import Testing
     #expect(ProjectFiles.match("zcst", in: files) == ["Sources/ZeroCore/Store.swift"])
 }
 
-@Test func builtInsOpenTheScreenSkillsDoNot() {
-    #expect(ClaudeCommands.isBuiltIn("/resume"))
-    #expect(ClaudeCommands.isBuiltIn("/model claude-opus-5"))
-    #expect(!ClaudeCommands.isBuiltIn("/commit tidy the log"))
+@Test func aSkillsFrontmatterIsRead() {
     #expect(
         ClaudeCommands.frontmatter("---\nname: commit\ndescription: \"Write commits.\"\n---\nbody") == [
             "name": "commit", "description": "Write commits.",

@@ -930,10 +930,6 @@ public final class Workspace {
     public func stopCommand(_ session: String, item: String) async {
         _ = await attempt { try await $0.stopCommand(session: session, item: item) }
     }
-    /// Zero never stops this task's commands on its own (`keep`), or may again.
-    public func keepCommands(_ session: String, _ keep: Bool) async {
-        _ = await attempt { try await $0.keepCommands(session: session, keep: keep) }
-    }
     /// A task (a lead, or a worker on its lead's row) the user put on hold.
     public func isPaused(_ session: String) -> Bool {
         board.contains {

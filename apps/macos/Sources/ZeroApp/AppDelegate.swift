@@ -318,11 +318,8 @@ import ZeroCore
     }
 
     private func applySettings() {
-        store.configure(takeBack: settings.takeBackSeconds, ttl: settings.defaultTTLMinutes * 60, patterns: settings.dropPatterns)
-        inbox.autoAdvance = settings.autoAdvance
-        inbox.suggestCommands = settings.suggestCommands
+        store.configure(takeBack: settings.takeBackSeconds, ttl: settings.defaultTTLMinutes * 60)
         inbox.suggestFiles = settings.suggestFiles
-        inbox.dictation.deviceUID = settings.inputDeviceUID
         if hotKey != nil { registerHotKey() }
         placeBar()
     }
@@ -401,12 +398,6 @@ import ZeroCore
         return main
     }
 
-    /// ⌥Space: open the inbox on the oldest waiting ask and start listening.
-    private func talk() {
-        open(byIntent: true)
-        if inbox.dictatingFor == nil { inbox.startDictation() } else { inbox.stopDictation() }
-    }
-
     /// A new ask is announced by a sound and the bar's orange dot, not a banner: the card is already in the inbox,
     /// and a banner on top of it said the same thing twice (and on whichever screen macOS chose).
     private func arrived(_ ask: Ask) {
@@ -425,7 +416,7 @@ import ZeroCore
                 GetApplicationEventTarget(),
                 { _, _, userData in
                     guard let userData else { return noErr }
-                    Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue().talk()
+                    Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue().open(byIntent: true)
                     return noErr
                 }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
             hotKeyHandlerInstalled = true

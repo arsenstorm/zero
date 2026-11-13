@@ -67,18 +67,6 @@ public protocol AgentAdapter: Sendable {
         -> AgentIdentity
 }
 
-extension AgentAdapter {
-    /// Typing into a half-written prompt would join the user's words and Zero's into one message: waits for an
-    /// empty input, for up to 45 s, then gives up so the delivery shows as failed and can be retried.
-    func waitForEmptyInput(of agent: AgentIdentity) async throws {
-        for attempt in 0..<23 {
-            guard let screen = await screen(of: agent), let draft = ClaudeScreen.draft(in: screen), !draft.isEmpty else { break }
-            if attempt == 22 { throw AdapterError("\(agent.label ?? agent.name)'s terminal has a half-typed prompt") }
-            try await Task.sleep(for: .seconds(2))
-        }
-    }
-}
-
 public extension AgentAdapter {
     func reply(from agent: AgentIdentity, to text: String) async -> String? { nil }
     func displayName(for agent: AgentIdentity) async -> String? { nil }
@@ -109,64 +97,6 @@ public extension AgentAdapter {
 public struct AdapterError: LocalizedError {
     public let errorDescription: String?
     public init(_ message: String) { errorDescription = message }
-}
-
-/// Claude Code's rendered screen, as Zero reads it in an agent's terminal.
-enum ClaudeScreen {
-    /// What sits in Claude Code's input box on a rendered screen: the "❯" line between its two rules. nil when
-    /// no input box is in view; empty when the box is empty or shows only its placeholder hint.
-    static func draft(in screen: String) -> String? {
-        let lines = screen.components(separatedBy: "\n")
-        guard let index = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("❯") }),
-            index > 0, lines[index - 1].contains("────")
-        else { return nil }
-        let text = lines[index].trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces)
-        return text.hasPrefix("Try \"") ? "" : text
-    }
-
-    /// The agent's last spoken block on a rendered Claude Code or Codex screen, after the echo of `prompt`:
-    /// a block starts at a "⏺"/"●" line, tool calls (followed by "⎿", or named like `Bash(`) are skipped, and the
-    /// turn ends at the "· done" line or the next prompt. ponytail: screen scraping; a terminal has no message API.
-    static func lastReply(in screen: String, after prompt: String) -> String? {
-        // Zero's ending line ("[zero: done]") is for the stop check, not for the user.
-        let lines = screen.components(separatedBy: "\n")
-            .filter { $0.range(of: #"^\s*(⏺|●)?\s*\[zero: [a-z]+( [A-Za-z0-9]+)?\]\s*$"#, options: .regularExpression) == nil }
-        let needle = String(prompt.prefix(40))
-        var start = 0
-        for (index, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            // The echo is the prompt glyph followed by our text; a later prompt that merely contains it is not.
-            if let first = trimmed.first, "❯〉›>".contains(first),
-                trimmed.dropFirst().trimmingCharacters(in: .whitespaces).hasPrefix(needle)
-            {
-                start = index + 1
-            }
-        }
-        guard start > 0 else { return nil } // no echo of our message yet: nothing after it can be the reply
-        var blocks: [[String]] = []
-        var current: [String]?
-        for line in lines[start...] {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.contains("· done") || "❯〉›─".contains(trimmed.first ?? " ") { break }
-            if trimmed.hasPrefix("⏺") || trimmed.hasPrefix("●") {
-                if let block = current { blocks.append(block) }
-                current = [String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)]
-            } else if trimmed.hasPrefix("⎿") {
-                current = nil // the block above was a tool call
-            } else if current != nil {
-                current?.append(line.hasPrefix("  ") ? String(line.dropFirst(2)) : line)
-            }
-        }
-        if let block = current { blocks.append(block) }
-        let spoken = blocks.filter { block in
-            guard let first = block.first else { return false }
-            return first.range(of: "^[A-Z][A-Za-z]*\\(", options: .regularExpression) == nil
-        }
-        guard let last = spoken.last else { return nil }
-        let text = last.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
-        return text.isEmpty ? nil : text
-    }
 }
 
 /// The models a new or running agent can be started with or switched to, and the account it will run as.
@@ -244,5 +174,36 @@ public enum AgentModels {
         let version = parts[1]
         let codename = parts.dropFirst(2).joined(separator: " ")
         return codename.isEmpty ? "GPT \(version)" : "\(codename) \(version)"
+    }
+}
+
+/// The folders new tasks may start in, from Settings → Projects.
+public enum Projects {
+    public static let key = "zeroProjects"
+    public static let namesKey = "zeroProjectNames"
+    public static var folders: [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
+
+    /// What a folder is called: the name the user gave it, else its own.
+    public static func name(of path: String) -> String {
+        (UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String])?[path] ?? (path as NSString).lastPathComponent
+    }
+
+    /// The user's name for a folder; its own name (or none) takes the given one away.
+    public static func setName(_ name: String, for path: String) {
+        var names = UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:]
+        let name = name.trimmingCharacters(in: .whitespaces)
+        names[path] = name.isEmpty || name == (path as NSString).lastPathComponent ? nil : name
+        UserDefaults.standard.set(names, forKey: namesKey)
+    }
+}
+
+/// Programs the user has installed.
+enum Programs {
+    static func onPath(_ program: String) -> Bool {
+        (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").contains {
+            FileManager.default.isExecutableFile(atPath: "\($0)/\(program)")
+        }
+            || FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/\(program)")
+            || FileManager.default.isExecutableFile(atPath: NSHomeDirectory() + "/.local/bin/\(program)")
     }
 }

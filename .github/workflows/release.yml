@@ -54,13 +54,10 @@ jobs:
       - name: Use the newest Xcode
         run: sudo xcode-select -s "$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -1)" && swift --version
 
-      - name: Ghostty engine
-        uses: ./.github/actions/ghostty
-
       # No Cargo cache here: a release builds from scratch.
       - name: Set up Rust
         run: |
-          rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+          rustup toolchain install stable --profile minimal
           rustup default stable
 
       - name: Import the Developer ID certificate
@@ -100,7 +97,7 @@ jobs:
       - name: Check the signatures
         run: |
           codesign --verify --deep --strict --verbose=2 build/Zero.app
-          for binary in build/Zero.app/Contents/MacOS/* build/Zero.app/Contents/Resources/zero-drop-darwin-arm64 build/Zero.app; do
+          for binary in build/Zero.app/Contents/MacOS/* build/Zero.app; do
             codesign -d --verbose=2 "$binary" 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "::error::$binary lacks the hardened runtime"; exit 1; }
             codesign -d --verbose=2 "$binary" 2>&1 | grep -q '^Timestamp=' || { echo "::error::$binary lacks a secure timestamp"; exit 1; }
           done

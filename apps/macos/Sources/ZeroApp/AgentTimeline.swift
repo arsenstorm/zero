@@ -27,9 +27,6 @@ struct AgentTimeline: View {
         if let agent = controller.agentFilter, let reply = latestReply(agent), !waiting { replyCard(agent, reply) }
         if waiting, let agent = controller.agentFilter { workingRow(agent) }
         ForEach(open) { ask in CardView(ask: ask, controller: controller, focus: focus).id(ask.id) }
-        if let agent = controller.agentFilter, let screen = controller.store.screens[agent] {
-            ScreenCard(agent: agent, screen: screen, controller: controller)
-        }
         if let agent = controller.agentFilter, controller.store.canMessage(agent) {
             ComposerCard(controller: controller, focus: focus, mode: .agent(agent))
         }

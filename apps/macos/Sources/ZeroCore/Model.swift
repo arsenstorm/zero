@@ -86,7 +86,7 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     public var request: String?
     /// For a note: what the agent hands to the user without waiting for it ("mark the PR ready and merge it").
     public var needs: String?
-    /// For a run: where it runs (zerod's runs.rs). "host:<terminal>" is a terminal of zero-host's the user can watch.
+    /// For a run: where it runs (zerod's runs.rs), "file:<id>": its output in ~/.zero/runs/<id>.out.
     public var run: String?
     /// A page its first option opens, the ask staying open (an MCP server's sign-in, which zerod closes once done).
     public var link: String? = nil
@@ -120,10 +120,10 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     /// A run Zero lost track of while it ran: it may or may not have finished.
     public var lost: Bool { kind == .run && status == "lost" }
 
-    /// The zero-host terminal a run runs in, while it runs: one to watch, or type into if it asks something.
-    public var runTerminal: String? {
-        guard kind == .run, state == .running, let run, run.hasPrefix("host:") else { return nil }
-        return String(run.dropFirst(5))
+    /// A running run's output as it's written, to follow in a terminal.
+    public var runLog: URL? {
+        guard kind == .run, state == .running, let run, run.hasPrefix("file:") else { return nil }
+        return Paths.dir.appendingPathComponent("runs/\(run.dropFirst(5)).out")
     }
 
     /// An ask for the user to answer: not a note or a message, not expired, and not a run sharing another's card.

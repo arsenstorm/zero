@@ -54,16 +54,13 @@ public final class Store {
     @ObservationIgnored public var onOutput: ((Ask, String) -> Void)?
     @ObservationIgnored public var onRemove: ((String) -> Void)?
 
-    /// Agents whose terminal screen is open in Zero (after a slash command), with the latest rendering.
-    public private(set) var screens: [String: String] = [:]
-    @ObservationIgnored private var screenPolls: [String: Task<Void, Never>] = [:]
     /// Where agents start and what they can run as, for the composer and the model picker.
     @ObservationIgnored public let adapters: [AgentAdapter]
     @ObservationIgnored private var link: ZerodLink?
-    @ObservationIgnored private var settings: (takeBack: Double, ttl: Int, patterns: [String])?
+    @ObservationIgnored private var settings: (takeBack: Double, ttl: Int)?
 
     /// `asks` to start from, for previews; a connected store gets zerod's.
-    public init(asks: [Ask] = [], adapters: [AgentAdapter] = [ZerodSpawner(), HostAdapter()]) {
+    public init(asks: [Ask] = [], adapters: [AgentAdapter] = [ZerodSpawner()]) {
         self.adapters = adapters
         history = asks
         reindex()
@@ -80,7 +77,7 @@ public final class Store {
                 fresh.onClose = { close.finish() }
                 fresh.onInbox = { [weak self] message in Task { @MainActor in self?.receive(message) } }
                 link = fresh
-                if let settings { try? await fresh.configure(takeBack: settings.takeBack, ttl: settings.ttl, patterns: settings.patterns) }
+                if let settings { try? await fresh.configure(takeBack: settings.takeBack, ttl: settings.ttl) }
                 if (try? await fresh.followInbox()) != nil {
                     connected = true
                     for await _ in closed {}
@@ -194,10 +191,10 @@ public final class Store {
         if let box = outputs[ask.id], box.text != ask.output { box.text = ask.output }
     }
 
-    /// The take-back window and default expiry (seconds), and the drop folders' patterns; sent again on every connect.
-    public func configure(takeBack: Double, ttl: Int, patterns: [String]) {
-        settings = (takeBack, ttl, patterns)
-        request { try await $0.configure(takeBack: takeBack, ttl: ttl, patterns: patterns) }
+    /// The take-back window and default expiry (seconds); sent again on every connect.
+    public func configure(takeBack: Double, ttl: Int) {
+        settings = (takeBack, ttl)
+        request { try await $0.configure(takeBack: takeBack, ttl: ttl) }
     }
 
     /// A request with nothing to wait for; a failure is only logged.
@@ -285,34 +282,6 @@ public final class Store {
     /// joins the timeline once it has arrived; a failure throws and leaves nothing behind.
     public func message(_ text: String, to agent: String) async throws {
         try await linked().message(text, to: agent)
-        // A slash command opens something in the agent's terminal, so that screen comes to Zero.
-        if ClaudeCommands.isBuiltIn(text) { openScreen(of: agent) }
-    }
-
-    /// Shows the agent's terminal in Zero and keeps it fresh every second until closed.
-    public func openScreen(of agent: String) {
-        screenPolls[agent]?.cancel()
-        screens[agent] = screens[agent] ?? ""
-        screenPolls[agent] = Task { [weak self] in
-            while !Task.isCancelled {
-                if let self, let link, let screen = try? await link.screen(of: agent), screens[agent] != nil { screens[agent] = screen }
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
-    }
-
-    public func closeScreen(of agent: String) {
-        screenPolls[agent]?.cancel()
-        screenPolls[agent] = nil
-        screens[agent] = nil
-    }
-
-    /// Keys into the agent's terminal; the screen updates from what comes straight back.
-    public func press(_ bytes: [UInt8], on agent: String) {
-        guard let link else { return }
-        Task { [weak self] in
-            if let screen = try? await link.press(bytes, on: agent), let self, screens[agent] != nil { screens[agent] = screen }
-        }
     }
 
     /// Takes the agent out of the bar and, unless its process is already gone, stops it, keeping its session.
@@ -419,7 +388,7 @@ public struct ZerodSpawner: AgentAdapter {
             (Provider.claude, "Claude", "claude", "Anthropic"), (.codex, "Codex", "openai", "OpenAI"),
             (.opencode, "OpenCode", "opencode", "OpenCode"),
         ]
-        .filter { AgentCommand.onPath($0.0.rawValue) }
+        .filter { Programs.onPath($0.0.rawValue) }
         .map { SpawnChoice(id: "zerod:" + $0.0.rawValue, name: $0.1, detail: $0.0.rawValue, icon: $0.2, provider: $0.3) }
     }
 

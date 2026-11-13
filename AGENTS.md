@@ -40,7 +40,7 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
 ## Rules
 
 - Zero is a general tool: no one team's specifics in code, prompts or docs. A team's workflow is
-  evidence for general mechanisms (places commands, attributes, drops), not features. Agent-facing text says "the user".
+  evidence for general mechanisms (places commands, attributes), not features. Agent-facing text says "the user".
 - Zero keeps the CLIs' sign-ins (`signins.rs`: values in the Keychain, a Codex account's in the home Codex keeps it
   in) and hands each CLI the chosen one as it starts, in the form that CLI reads. It never calls providers' services
   itself (the CLIs make every call), and never logs, prints or sends a sign-in anywhere but to its CLI. Use the

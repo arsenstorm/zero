@@ -3,11 +3,10 @@ import Observation
 import SwiftUI
 import ZeroCore
 
-/// Selection, drafts, dictation and the keyboard map for the inbox panel.
+/// Selection, drafts and the keyboard map for the inbox panel.
 @MainActor @Observable
 final class InboxController {
     let store: Store
-    let dictation = Dictation()
     var selected: String?
     /// What's written in the inbox's boxes (a question's reply, its "Something else…", an agent's composer), and which
     /// question has its text option open: kept as it's typed, so an update (Zero quitting and opening again) loses
@@ -18,7 +17,6 @@ final class InboxController {
     var focusedReply: String? { didSet { if (focusedReply != nil) != (oldValue != nil) { onTyping?(focusedReply != nil) } } }
     /// Told when a text box in the inbox gains or loses focus, so Zero can be the active app while the user types.
     @ObservationIgnored var onTyping: ((Bool) -> Void)?
-    var dictatingFor: String?
     var agentFilter: String?
     /// True while the inbox is pinned open by a click; the pinned control shows a pin badge.
     var pinned = false
@@ -163,7 +161,7 @@ final class InboxController {
 
     func updateMention(key: String, trigger: MentionTrigger?) {
         mentionTask?.cancel()
-        guard let trigger, trigger.symbol == "/" ? suggestCommands : suggestFiles else { if mention?.key == key { mention = nil }; return }
+        guard let trigger, trigger.symbol == "/" || suggestFiles else { if mention?.key == key { mention = nil }; return }
         let path = projectPath(for: key)
         if trigger.symbol == "/" {
             let query = trigger.query.lowercased()
@@ -304,7 +302,7 @@ final class InboxController {
     /// True while the last thing in an agent's timeline is a message of the user's still awaiting its answer.
     func waitingOn(_ agent: String) -> Bool {
         let items = store.byAgent[agent] ?? []
-        guard !items.contains(where: { !$0.state.isFinal }), let last = items.last, store.screens[agent] == nil else { return false }
+        guard !items.contains(where: { !$0.state.isFinal }), let last = items.last else { return false }
         return last.kind == .message && ["sent", "sending", "starting", "resuming"].contains(last.status ?? "")
     }
 
@@ -416,10 +414,7 @@ final class InboxController {
     /// Bumped when the view should scroll the selected card to the bar's centre line (never on hover selection).
     var scrollRequest = 0
     @ObservationIgnored var scrollAnimated = false
-    /// Settings: move on to the next waiting card a few seconds after an answer turns green.
-    @ObservationIgnored var autoAdvance = true
-    /// From Settings: whether "/" and "@" open suggestions (and "@" paths are highlighted).
-    var suggestCommands = true
+    /// From Settings: whether "@" opens suggestions (and "@" paths are highlighted); "/" always does.
     var suggestFiles = false
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     /// The card last answered, so Esc can take it back even after the selection has moved on.
@@ -438,7 +433,7 @@ final class InboxController {
     /// the next waiting card becomes active and glides to the bar.
     func scheduleAdvance(after id: String) {
         advanceTask?.cancel()
-        guard autoAdvance, selected == id else { return }
+        guard selected == id else { return }
         advanceTask = Task {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled, selected == id,
@@ -533,7 +528,6 @@ final class InboxController {
     func send(_ key: String) {
         let text = drafts[key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if dictatingFor == key { stopDictation() }
         drafts[key] = nil
         focusedReply = nil
         if key == Self.newAgentKey {
@@ -580,9 +574,7 @@ final class InboxController {
     /// True in an agent's view when an adapter can carry a message into that agent's session.
     var composable: Bool { newAgentOpen || (agentFilter.map { store.canMessage($0) } ?? false) }
     /// Only then does the inbox take the keyboard.
-    var takesKeys: Bool { answerable || composable || screenOpen }
-    /// A terminal screen is open for the agent in view: keys go to it.
-    var screenOpen: Bool { agentFilter.map { store.screens[$0] != nil } ?? false }
+    var takesKeys: Bool { answerable || composable }
 
     func composerKey(_ agent: String) -> String { "msg:" + agent }
 
@@ -638,7 +630,6 @@ final class InboxController {
         else { return }
         let model = spawnModels.first { $0.id == spawnModel }
         let settings = model.flatMap { spawnSettings[$0.id] } ?? [:]
-        if dictatingFor == Self.newAgentKey { stopDictation() }
         spawning = true
         spawnError = nil
         focusedReply = nil
@@ -658,7 +649,7 @@ final class InboxController {
         }
     }
 
-    /// Where typing or dictation goes: the selected waiting card's own input (a free-text question, or its
+    /// Where typing goes: the selected waiting card's own input (a free-text question, or its
     /// text option, which opens), else the agent composer.
     var typingTarget: String? {
         ensureSelection()
@@ -672,14 +663,13 @@ final class InboxController {
     }
 
     /// Returns true when the key was consumed. Outside the reply field: 1–3 pick, arrows move, Enter focuses the
-    /// reply, Delete dismisses a finished card, Space toggles the mic, and any other character starts the reply.
+    /// reply, Delete dismisses a finished card, and any other character starts the reply.
     func handle(_ event: NSEvent) -> Bool {
         ensureSelection()
         let editing = event.window?.firstResponder is NSTextView
         let key = event.charactersIgnoringModifiers ?? ""
         if event.keyCode == 53 { return escape(event) }
         if !event.modifierFlags.intersection([.command, .control, .option]).isEmpty { return false }
-        if let agent = agentFilter, store.screens[agent] != nil { return pressOnScreen(event, key: key, of: agent) }
         if editing { return false }
         switch event.keyCode {
         case 126: move(-1); return true
@@ -690,7 +680,6 @@ final class InboxController {
         }
         switch key {
         case "1", "2", "3": choose(Int(key)! - 1); return true
-        case " ": toggleDictation(); return true
         default:
             guard let target = typingTarget, let scalar = key.unicodeScalars.first,
                 !CharacterSet.controlCharacters.contains(scalar)
@@ -701,58 +690,17 @@ final class InboxController {
         }
     }
 
-    /// Escape steps back one thing at a time: a mention, the selector, an agent's screen, dictation, a text option,
+    /// Escape steps back one thing at a time: a mention, the selector, an agent's screen, a text option,
     /// the last answer (taken back), the reply field, the agent's view, and last the panel itself.
     private func escape(_ event: NSEvent) -> Bool {
         let editing = event.window?.firstResponder is NSTextView
         if mention != nil { mention = nil; return true }
         if selector != nil { closeSelector(); return true }
-        if let agent = agentFilter, store.screens[agent] != nil, !editing {
-            // Cancels whatever the agent has open and closes the screen here.
-            store.press([27], on: agent)
-            store.closeScreen(of: agent)
-            return true
-        }
-        if dictatingFor != nil { stopDictation(); return true }
         if let selected, textOption[selected] != nil { cancelTextOption(selected); event.window?.makeFirstResponder(nil); return true }
         if let last = lastAnswered, store.takeBack(last) { cancelAdvance(); selected = last; return true }
         if editing { focusedReply = nil; event.window?.makeFirstResponder(nil); return true }
         if agentFilter != nil { agentFilter = nil; return true }
         hide()
         return true
-    }
-
-    /// The screen has the keyboard, whatever had focus: arrows, Enter and any character go to the agent's
-    /// terminal. (With the message box still focused after sending "/resume", nothing reached the picker.)
-    private func pressOnScreen(_ event: NSEvent, key: String, of agent: String) -> Bool {
-        let keys: [UInt16: [UInt8]] = [126: [27, 91, 65], 125: [27, 91, 66], 123: [27, 91, 68], 124: [27, 91, 67], 36: [13], 51: [127]]
-        if let bytes = keys[event.keyCode] { store.press(bytes, on: agent); return true }
-        guard let scalar = key.unicodeScalars.first, !CharacterSet.controlCharacters.contains(scalar) else { return false }
-        store.press(Array(key.utf8), on: agent)
-        return true
-    }
-
-    func toggleDictation() { dictatingFor == nil ? startDictation() : stopDictation() }
-
-    func startDictation() {
-        guard let key = typingTarget else { return }
-        dictatingFor = key
-        focusedReply = key
-        let base = drafts[key, default: ""].trimmingCharacters(in: .whitespaces)
-        Task {
-            do {
-                try await dictation.start { [weak self] text in
-                    self?.drafts[key] = base.isEmpty ? text : base + " " + text
-                }
-            } catch {
-                drafts[key] = "mic: \(error.localizedDescription)"
-                dictatingFor = nil
-            }
-        }
-    }
-
-    func stopDictation() {
-        dictatingFor = nil
-        Task { await dictation.stop() }
     }
 }

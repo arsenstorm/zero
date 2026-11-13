@@ -22,7 +22,7 @@ Reports about these are especially welcome:
 - **The relay and the iPhone app.** The phone and the Mac talk end to end encrypted (Noise) through a relay that should
   learn nothing but each Mac's token hash. Anything that lets the relay, or anyone on the path, read or forge frames,
   or pair a phone without the user, is in scope.
-- **zerod's socket and the zero CLI**, which agents call: anything that lets one agent, a drop folder or a web page act
+- **zerod's socket and the zero CLI**, which agents call: anything that lets one agent or a web page act
   as another, or approve its own requests.
 - **The browser extension**, which lets agents act in the user's browser tabs.
 

@@ -12,8 +12,7 @@ public struct Mention: Identifiable, Hashable, Sendable {
 }
 
 public enum ClaudeCommands {
-    /// Claude Code's own slash commands. Sending one opens the agent's screen in Zero, since what they show (a
-    /// picker, a report) lives in its terminal; skills and custom commands are prompts, answered like any message.
+    /// Claude Code's own slash commands, suggested after "/" with skills and custom commands.
     public static let builtIns: [String: String] = [
         "add-dir": "Add a working directory", "agents": "Manage subagents", "clear": "Clear the conversation",
         "compact": "Summarise the conversation to free context", "config": "Open settings", "context": "Show context use",
@@ -24,12 +23,6 @@ public enum ClaudeCommands {
         "resume": "Resume an earlier session", "review": "Review a pull request", "rewind": "Rewind the conversation",
         "status": "Show status",
     ]
-
-    public static func isBuiltIn(_ message: String) -> Bool {
-        guard message.hasPrefix("/") else { return false }
-        let word = message.dropFirst().split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
-        return builtIns[word] != nil
-    }
 
     nonisolated(unsafe) private static var cache: [String: (at: Date, items: [Mention])] = [:]
     private static let lock = NSLock()

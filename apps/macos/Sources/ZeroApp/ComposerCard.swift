@@ -23,14 +23,12 @@ struct QuietCard: View {
 }
 
 /// The text box used for replies and messages: the text column stops at ~80% of the width and wraps there,
-/// growing a line at a time; the mic and send buttons stay pinned to the bottom-right corner.
+/// growing a line at a time; the send button stays pinned to the bottom-right corner.
 struct ReplyBox: View {
     let placeholder: String
     @Binding var text: String
     let key: String
     var focus: FocusState<String?>.Binding
-    let dictating: Bool
-    let onMic: () -> Void
     let onSend: () -> Void
     /// Focused as it appears (an option opening into it).
     var autofocus = false
@@ -48,17 +46,12 @@ struct ReplyBox: View {
                 .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(1...8)
                 .focused(focus, equals: key)
                 .onSubmit(onSend)
-                .padding(.trailing, 56)
+                .padding(.trailing, 31)
                 // Same inner height as an option row's key cap, so a row turning into an input doesn't change size.
                 .frame(minHeight: 18, alignment: .leading)
-            HStack(spacing: 10) {
-                Button(action: onMic) {
-                    NucleoIcon(dictating ? "waveform-lines" : "microphone", size: 15).foregroundStyle(dictating ? .red : .secondary)
-                }.buttonStyle(.plain)
-                Button(action: onSend) {
-                    NucleoIcon("paper-plane", size: 15).foregroundStyle(.secondary)
-                }.buttonStyle(.plain)
-            }
+            Button(action: onSend) {
+                NucleoIcon("paper-plane", size: 15).foregroundStyle(.secondary)
+            }.buttonStyle(.plain)
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         // The whole box is the field: a click on its padding focuses it too.
@@ -103,14 +96,6 @@ struct ReplyBox: View {
 }
 
 private func buildChoiceIcon(_ name: String) -> Image? {
-    // Zero's own icon, for its own terminals.
-    let apps: [String: String?] = ["zero": Bundle.main.bundlePath]
-    if let entry = apps[name] {
-        guard let path = entry else { return nil }
-        let icon = NSWorkspace.shared.icon(forFile: path).copy() as! NSImage
-        icon.size = NSSize(width: 16, height: 16)
-        return Image(nsImage: icon)
-    }
     guard let url = Bundle.main.url(forResource: name, withExtension: "png"), let image = NSImage(contentsOf: url) else { return nil }
     if name == "openai" { return Image(nsImage: onWhiteTile(image)) }
     return Image(nsImage: image)
@@ -273,12 +258,6 @@ struct ComposerCard: View {
                 }
                 Spacer(minLength: 8)
                 if starting { Spinner().frame(width: 12, height: 12).padding(.trailing, 4) }
-                Button {
-                    controller.toggleDictation()
-                } label: {
-                    NucleoIcon(controller.dictatingFor == key ? "waveform-lines" : "microphone", size: 15)
-                        .foregroundStyle(controller.dictatingFor == key ? .red : .secondary)
-                }.buttonStyle(.plain)
                 Button(action: submit) {
                     NucleoIcon("circle-arrow-up", fill: "glyph", size: 20)
                         .foregroundStyle(controller.drafts[key, default: ""].isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))

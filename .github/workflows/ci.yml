@@ -42,7 +42,7 @@ jobs:
 
   swift:
     name: Apps (Swift)
-    # Needs Ghostty's engine built on macOS, whose minutes are costly on a private repository: public only.
+    # Needs macOS, whose minutes are costly on a private repository: public only.
     if: github.event.repository.visibility == 'public'
     runs-on: macos-26
     timeout-minutes: 45
@@ -59,9 +59,6 @@ jobs:
 
       - name: Format
         run: swift format lint --strict --recursive --parallel apps/macos/Package.swift apps/macos/Sources apps/macos/Tests apps/macos/scripts apps/ios
-
-      - name: Ghostty engine
-        uses: ./.github/actions/ghostty
 
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal && rustup default stable

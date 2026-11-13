@@ -39,13 +39,13 @@ public struct MemoryGroup: Equatable, Sendable, Identifiable {
             .sorted { $0.memory != $1.memory ? $0.memory > $1.memory : $0.name < $1.name }
     }
 
-    /// Under zerod or zero-host (not either itself): a task's. Else the simulator's, else its outermost app's
+    /// Under zerod (not zerod itself): a task's. Else the simulator's, else its outermost app's
     /// (Chrome's helpers are apps inside Chrome.app), else its program's name.
     static func name(of sample: ProcessSample, in byPid: [pid_t: ProcessSample]) -> String {
         var parent = byPid[sample.ppid]
         var seen: Set<pid_t> = [sample.pid]
         while let p = parent, seen.insert(p.pid).inserted {
-            if p.path.hasSuffix("/zerod") || p.path.hasSuffix("/zero-host") { return tasksName }
+            if p.path.hasSuffix("/zerod") { return tasksName }
             parent = byPid[p.ppid]
         }
         if sample.path.contains("CoreSimulator") || sample.path.contains("/Simulator.app/") { return "Simulator" }

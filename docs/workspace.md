@@ -11,10 +11,8 @@ OpenCode 2.1.4).
 |---|---|---|
 | Asks: question, choice, approve, run, note, message, permission; one state machine with a 2 s take-back, a JSONL log, open asks surviving a relaunch | `ZeroCore/Model.swift`, `Store.swift` | Yes. It is the attention layer for every provider. |
 | `zero` CLI and the Unix socket it talks over; Claude Code plugin hooks (permission, question, prompt, stop) | `zero/main.swift`, `ZeroApp/Server.swift`, `hooks/` | Yes. |
-| Drop folders for agents on other machines (static `zero-drop` clients) | `DropWatcher.swift`, `crates/zero-drop/` | Yes. |
 | `AgentAdapter`: deliver text, read a reply, start, stop, resume, liveness | `ZeroCore/Adapters.swift` | Yes; structured runtimes implement it too. |
-| Zero's own terminals as a runtime; it drives a TUI by typing into it and scraping its screen | `HostAdapter`, `TerminalAdapter.swift` | Yes, as the terminal path. Screen scraping is its ceiling. |
-| zero-host: a detached helper that keeps pty terminals (Ghostty's engine) alive when Zero quits; `zero attach` | `ZeroHost/`, `Host.swift` | For now; its terminals move into zerod. |
+| Open in Terminal: a task handed to its CLI in the user's own terminal app, on its own resume, and back once that CLI exits (Zero's own terminals and zero-host are gone) | `crates/zerod/src/daemon/terminals.rs` | Yes. |
 | The bar (one dot per agent) and the floating inbox, composer, model selector | `ZeroApp/Inbox.swift`, `Selector.swift` | Yes. |
 
 What is missing for the new direction: Zero only sees an agent through its screen. It cannot show tool calls,
@@ -98,7 +96,7 @@ What each one taught:
 2. The Mac app as a zerod client: start zerod from the app, a Swift mirror of `Conversation` fed by `subscribe`,
    every provider's approvals as permission asks in the inbox, and the workspace window (projects and sessions, the
    conversation with commands, diffs and reasoning, the composer with model and effort, steer and stop).
-3. Move zero-host's terminals (Ghostty's engine has a C API) and then the asks store and the CLI socket into zerod,
+3. Move the asks store and the CLI socket into zerod,
    leaving Swift with the UI and a client.
 4. The providers' own questions (Codex's `requestUserInput`, Claude's `request_user_dialog`) and MCP elicitations
    as Zero questions; zerod refuses them for now, with a notice in the conversation.

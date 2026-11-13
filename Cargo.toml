@@ -1,12 +1,3 @@
 [workspace]
 members = ["crates/*"]
 resolver = "2"
-
-# The drop clients are copied into every drop folder, so they are built small: `cargo build --profile drop`.
-[profile.drop]
-inherits = "release"
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true

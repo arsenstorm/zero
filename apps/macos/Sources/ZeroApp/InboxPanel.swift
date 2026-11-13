@@ -43,7 +43,7 @@ extension AppDelegate {
         inboxPanel.acceptsMouseMovedEvents = true
         inboxPanel.allowsTextFocus = { [weak self] in
             guard let self else { return true }
-            return inbox.focusedReply != nil || inbox.dictatingFor != nil
+            return inbox.focusedReply != nil
         }
         layout()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) {
@@ -202,7 +202,7 @@ extension AppDelegate {
             // Pinned: the keyboard is taken only by a deliberate act (the pin click, a click into the inbox), never
             // by the pointer drifting back; otherwise typing elsewhere gets stolen mid-sentence.
             if !openedByIntent { syncKeyboard() }
-        } else if inbox.dictatingFor == nil, !openedByIntent, inbox.selector == nil {
+        } else if !openedByIntent, inbox.selector == nil {
             // An open selector keeps the inbox up wherever the pointer goes; a click elsewhere closes it.
             hideInbox()
         }

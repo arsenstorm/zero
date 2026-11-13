@@ -37,6 +37,7 @@ zero done "PR #4821 merged, deployed, QA passed" --confirm <token>   # purple: f
 zero done "PR #4821 merged" --ask   # unsure: the user says whether it's done (end [zero: asked <id>])
 zero withdraw k3x9qa --reason "Answered in the chat" # take back an ask that no longer needs them
 zero close 01a1886cb3e40000                          # a worker you started, once you've read its result: off their board
+zero expect 20m "the migration"                      # before a command that may run long and quiet (a migration, a deploy, a big build or test run), so Zero doesn't take it for stuck
 ```
 
 A worker you start with `zero spawn` that ends `[zero: done]` leaves the board on its own once you have its report. One that finished otherwise (its answer, not waiting, asking or between steps) is put away an hour after you have its report, unless something of its own is still open (an ask, a follow, a watch, a wake-up). A message to a put-away worker (`zero send`, by id or name) brings it back to hear it, and `zero wait` finds it. Close any other you need nothing more from with `zero close` once you have read its result (`zero result`); a worker you may send back to stays. Why: their sidebar lists every open session under you, and finished reviewers and runners left open bury the ones that matter.
@@ -191,22 +192,6 @@ zero unfollow github/org/repo/42                          # or --all
 ```
 
 Events arrive as a message from Zero starting `N new events on what you follow`, grouped by topic with each event's text and link. In a channel followed with `--mine` or `--about`, a sender's message that names nothing (no pull request, ticket or link) is read as continuing that sender's last message that did, for half an hour, and comes marked so: a deploy bot's "Deploy complete" after its "Deploying … (#42)" reaches you as #42's. `(you)` marks events by the user's own account: often your own action echoing back (your comment, your push), so skip those unless it is something you didn't do. Unfollow what you are done with (merged, closed, resolved): follows outlive your memory of them, which is the point, so prune them.
-
-## Away from the user's Mac
-
-Zero's own `zero` binary speaks to the app over a socket, so it only works on their Mac. Anywhere else, Zero
-reaches you through a drop folder: a folder the Mac keeps in sync with where you are (on a remote machine,
-`.zero/` inside a checkout). Zero puts a `zero` client in it; call that one, same commands, same
-exit codes:
-
-```bash
-export PATH="$PWD/app/.zero:$PATH"      # once, from the checkout's parent; any checkout's .zero works
-zero note "Set up on the remote machine; reading the ticket"
-```
-
-Answers take a few seconds longer than on the Mac: the files ride the sync both ways. Never create the drop
-folder yourself and never write into `asks/` or `answers/` by hand; the client does, atomically, and Zero
-removes what it has consumed.
 
 ## Identity
 
