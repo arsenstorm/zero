@@ -432,6 +432,8 @@ struct QuietTurns<Content: View>: View {
                 open.toggle()
             } label: {
                 HStack(spacing: 6) {
+                    // Tasks' reports: theirs, in the pixel family. Zero's alone have no icon.
+                    if senders.contains(where: { $0 != "zero" }) { PixelIcon("px-robot-smile").padding(.trailing, 2) }
                     Text(title).lineLimit(1).truncationMode(.middle)
                     NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90))
                 }
@@ -463,7 +465,16 @@ struct GivenMessage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                NucleoIcon(from == "zero" ? "circle-info" : "robot", size: 14).foregroundStyle(.secondary).frame(width: 14, height: 16)
+                Group {
+                    // An agent's words (a worker's report, another task's message, its own wake-up) in the pixel
+                    // family; Zero's own in the UI's.
+                    if let icon = AgentIcons.given(from: from, text: text) {
+                        PixelIcon(icon)
+                    } else {
+                        NucleoIcon("circle-info", size: 14).frame(width: 14, height: 16)
+                    }
+                }
+                .foregroundStyle(.secondary)
                 // Another task's: its name, then what it says, on one line whatever their lengths, each cut short as
                 // needed (the name at its full width squeezed the words beside it into a column of lines). Opened, the
                 // whole report is below, first line and all, and the line holds just the name: no height changes.

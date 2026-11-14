@@ -67,6 +67,50 @@ struct NucleoIcon: View {
     }
 }
 
+/// One of Nucleo's pixel icons (ZeroCore's AgentIcons), at its own size: its 24 px grid on 12 pt, drawn once into a
+/// 24 px bitmap and shown without smoothing, so each of its pixels is one of the screen's wherever the row lands (drawn
+/// as a vector, it fell between them and blurred). In a row's 14 pt slot. Builds with Lucide draw its fallback as any
+/// icon.
+struct PixelIcon: View {
+    let label: String
+    var height: CGFloat = 16
+    private static var bitmaps: [String: NSImage] = [:]
+
+    init(_ label: String, height: CGFloat = 16) { self.label = label; self.height = height }
+
+    var body: some View {
+        Group {
+            if Nucleo.set == "Nucleo", let image = Self.bitmap(label) {
+                Image(nsImage: image).renderingMode(.template).interpolation(.none).resizable().frame(width: 12, height: 12)
+            } else {
+                NucleoIcon(label, size: 14)
+            }
+        }
+        .frame(width: 14, height: height)
+    }
+
+    private static func bitmap(_ label: String) -> NSImage? {
+        if let image = bitmaps[label] { return image }
+        guard let svg = Nucleo.url(label).flatMap(NSImage.init(contentsOf:)),
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: 24, pixelsHigh: 24, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return nil }
+        rep.size = NSSize(width: 24, height: 24)
+        NSGraphicsContext.saveGraphicsState()
+        let context = NSGraphicsContext(bitmapImageRep: rep)
+        context?.shouldAntialias = false
+        NSGraphicsContext.current = context
+        svg.draw(in: NSRect(x: 0, y: 0, width: 24, height: 24))
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: NSSize(width: 12, height: 12))
+        image.addRepresentation(rep)
+        image.isTemplate = true
+        bitmaps[label] = image
+        return image
+    }
+}
+
 /// A label with a Nucleo icon in place of an SF Symbol.
 struct NucleoLabel: View {
     let text: String

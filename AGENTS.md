@@ -62,6 +62,10 @@ is their UI and the inbox where agents reach the user. `docs/workspace.md` has t
   never in this one; builds without it draw Lucide's. A new icon goes into zero-private and gets its closest Lucide
   icon in `apps/macos/scripts/lucide.txt` (then `sh apps/macos/scripts/lucide.sh`). The site's are in this repo:
   Nucleo's licence caps it at 100 distinct icons (listed in THIRD_PARTY_LICENSES).
+- Lines an agent is responsible for (a worker's report, another task's message, its own steps through `zero` and its
+  wake-ups) take Nucleo's pixel family instead, and only they: one mapping (ZeroCore's `AgentIcons`), each icon
+  `px-<name>` with its Lucide fallback. `PixelIcon` draws one at its own 24 px grid, rasterized once and never
+  smoothed: 12 pt on the Mac, 16 pt on 3x iPhones. Zero's own lines, asks and approvals keep the UI family.
 - Concentric corners: an inner radius plus its inset equals the outer radius. `compositingGroup()` before `shadow`
   on a stack (otherwise every row in it casts a shadow).
 - Links in properties: medium weight on a dashed underline, no icon, no blue. States as pills.

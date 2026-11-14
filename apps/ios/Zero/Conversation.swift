@@ -617,9 +617,13 @@ struct UserMessage: View {
                 Button {
                     open.toggle()
                 } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(given.text.split(separator: "\n").first.map(String.init) ?? "").lineLimit(open ? nil : 1)
-                        if open { MarkdownView(text: given.text) }
+                    HStack(alignment: .top, spacing: 8) {
+                        // An agent's words (a worker's report, another task's message, its own wake-up), as the Mac's.
+                        if let icon = AgentIcons.given(from: given.from, text: given.text) { PixelIcon(icon) }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(given.text.split(separator: "\n").first.map(String.init) ?? "").lineLimit(open ? nil : 1)
+                            if open { MarkdownView(text: given.text) }
+                        }
                     }
                     .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -864,9 +868,15 @@ struct WorkBlock: View {
 struct StepLine: View {
     let item: ConversationItem
 
+    /// An agent's own `zero` step, once it went through, named as the Mac names it.
+    private var named: AgentIcons.Step? {
+        guard item.status == .done, case let .command(command, _, _, exitCode, _, _) = item.kind, (exitCode ?? 0) == 0 else { return nil }
+        return AgentIcons.step(command)
+    }
+
     var body: some View {
         HStack(spacing: 7) {
-            StatusIcon(status: item.status)
+            if let named { PixelIcon(named.icon) } else { StatusIcon(status: item.status) }
             text.lineLimit(1).truncationMode(.tail)
         }
         .font(.footnote)
@@ -876,7 +886,13 @@ struct StepLine: View {
     @ViewBuilder private var text: some View {
         switch item.kind {
         case let .command(command, _, _, _, _, description):
-            if description.isEmpty { Text("$ " + CommandText.line(command)).font(.footnote.monospaced()) } else { Text(description) }
+            if let named {
+                Text(named.words) + Text(named.detail.isEmpty ? "" : "  " + named.detail).foregroundStyle(.tertiary)
+            } else if description.isEmpty {
+                Text("$ " + CommandText.line(command)).font(.footnote.monospaced())
+            } else {
+                Text(description)
+            }
         case let .tool(name, detail): Text(ToolNames.name(name)).fontWeight(.medium) + Text(" " + ToolNames.detail(detail))
         case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))
         case let .agent(text, _), let .reasoning(text), let .plan(text): Text(text.split(separator: "\n").first.map(String.init) ?? "")
@@ -912,11 +928,23 @@ struct StepView: View {
                     open.toggle()
                 } label: {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .top, spacing: 8) {
-                            StatusIcon(status: item.status)
-                            Text("$ " + command).lineLimit(open ? nil : 1)
-                            Spacer(minLength: 0)
-                            if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption2).foregroundStyle(.red) }
+                        if item.status == .done, (exitCode ?? 0) == 0, let named = AgentIcons.step(command) {
+                            // An agent's own `zero` step, named as the Mac names it; its command a tap away.
+                            HStack(alignment: .top, spacing: 8) {
+                                PixelIcon(named.icon)
+                                Text(named.words).font(.footnote)
+                                if !named.detail.isEmpty { Text(named.detail).font(.footnote).foregroundStyle(.tertiary).lineLimit(1) }
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(.secondary)
+                            if open { Text("$ " + command) }
+                        } else {
+                            HStack(alignment: .top, spacing: 8) {
+                                StatusIcon(status: item.status)
+                                Text("$ " + command).lineLimit(open ? nil : 1)
+                                Spacer(minLength: 0)
+                                if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.caption2).foregroundStyle(.red) }
+                            }
                         }
                         if open, !output.isEmpty {
                             ScrollView(.horizontal) { Text(output).padding(10) }
@@ -950,7 +978,11 @@ struct StepView: View {
                 MarkdownView(text: ZeroEnding.split(text).0).foregroundStyle(.secondary)
             case let .notice(text, error):
                 // A server's sign-in link calls back to the Mac, where its CLI listens: here, the words alone.
-                Text(String(NoticeText.attributed(text).characters)).font(.footnote).foregroundStyle(error ? .red : .secondary)
+                HStack(alignment: .top, spacing: 8) {
+                    if !error, let icon = AgentIcons.notice(text) { PixelIcon(icon) }
+                    Text(String(NoticeText.attributed(text).characters))
+                }
+                .font(.footnote).foregroundStyle(error ? .red : .secondary)
             case let .table(title, columns, rows):
                 TableView(title: title, columns: columns, rows: rows)
             case let .reasoning(text):
@@ -1676,6 +1708,44 @@ private extension Array where Element == String {
             ?? AttributedString(text)
         inlineCache.setObject(Inline(parsed), forKey: text as NSString)
         return parsed
+    }
+}
+
+/// One of Nucleo's pixel icons (ZeroCore's AgentIcons), as the Mac draws them: its 24 px grid drawn once into a 24 px
+/// bitmap and shown without smoothing, at a whole multiple of it: 16 pt on a 3x screen (48 px), 12 pt on a 2x one. In
+/// a row's 14 pt slot, the larger one reaching a point past it each side. Builds with Lucide draw its fallback.
+struct PixelIcon: View {
+    let label: String
+    @Environment(\.displayScale) private var scale
+    private static let nucleo = NSDataAsset(name: "icons").map { String(decoding: $0.data, as: UTF8.self) } == "Nucleo"
+    nonisolated(unsafe) private static var bitmaps: [String: UIImage] = [:]
+
+    init(_ label: String) { self.label = label }
+
+    var body: some View {
+        Group {
+            if Self.nucleo, let image = Self.bitmap(label) {
+                let side: CGFloat = scale >= 3 ? 16 : 12
+                Image(uiImage: image).renderingMode(.template).interpolation(.none).resizable().frame(width: side, height: side)
+            } else {
+                Image(label + "-outline").resizable().frame(width: 14, height: 14)
+            }
+        }
+        .frame(width: 14, height: 16)
+    }
+
+    private static func bitmap(_ label: String) -> UIImage? {
+        if let image = bitmaps[label] { return image }
+        guard let svg = UIImage(named: label + "-outline") else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24), format: format).image { context in
+            context.cgContext.setShouldAntialias(false)
+            svg.draw(in: CGRect(x: 0, y: 0, width: 24, height: 24))
+        }
+        .withRenderingMode(.alwaysTemplate)
+        bitmaps[label] = image
+        return image
     }
 }
 

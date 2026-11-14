@@ -69,7 +69,13 @@ struct ItemView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Group {
                         // Running: something under way the agent is silent through, as compacting the conversation.
-                        if item.status == .running { StatusIcon(status: item.status) } else { NucleoIcon("circle-info", size: 14) }
+                        if item.status == .running {
+                            StatusIcon(status: item.status)
+                        } else if let icon = AgentIcons.notice(text) {
+                            PixelIcon(icon, height: 14)
+                        } else {
+                            NucleoIcon("circle-info", size: 14)
+                        }
                     }
                     .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
                     Text(NoticeText.attributed(text))
@@ -346,11 +352,22 @@ private struct CommandCard: View {
         // A row like every step's; opened, the command whole and its output in a box beneath it, under its words.
         VStack(alignment: .leading, spacing: 8) {
             StepRow(open: $open, opens: opens) {
-                StatusIcon(status: status)
-                if status == .running, let started {
-                    TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in title(running: context.date.timeIntervalSince(started)) }
+                // An agent's own `zero` step, once it went through: named for what it did, in the pixel family.
+                if status == .done, (exitCode ?? 0) == 0, let named = AgentIcons.step(command) {
+                    PixelIcon(named.icon)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(named.words).layoutPriority(1)
+                        if !named.detail.isEmpty { Text(named.detail).foregroundStyle(.tertiary) }
+                    }
+                    .lineLimit(1).truncationMode(.tail)
                 } else {
-                    title(running: nil)
+                    StatusIcon(status: status)
+                    if status == .running, let started {
+                        TimelineView(.periodic(from: .zeroBeat, by: 1)) { context in title(running: context.date.timeIntervalSince(started))
+                        }
+                    } else {
+                        title(running: nil)
+                    }
                 }
             } trailing: {
                 if let exitCode, exitCode != 0 { Text("exit \(exitCode)").font(.system(size: 11)).foregroundStyle(.red) }

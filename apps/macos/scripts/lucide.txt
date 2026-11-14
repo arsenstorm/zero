@@ -110,3 +110,25 @@ unordered-list           list
 wand-sparkle             wand-sparkles             outline
 waveform-lines           audio-lines               outline
 xmark                    x                         outline
+# Nucleo's pixel family: lines an agent is responsible for (ZeroCore AgentIcons).
+px-bookmark-plus         bookmark-plus             outline
+px-bot-minus             power-off                 outline
+px-bot-task              loader                    outline
+px-bot-xmark             circle-x                  outline
+px-bots                  messages-square           outline
+px-circle-check          circle-check              outline
+px-circle-question       message-circle-question-mark outline
+px-envelope-arrow-right  mail                      outline
+px-eye                   eye                       outline
+px-robot                 bot-off                   outline
+px-robot-angry           angry                     outline
+px-robot-ban             octagon-x                 outline
+px-robot-heart           bot-message-square        outline
+px-robot-minus           battery-low               outline
+px-robot-pen             notebook-pen              outline
+px-robot-plus            user-round-plus           outline
+px-robot-search          scan-eye                  outline
+px-robot-sleeping        hourglass                 outline
+px-robot-smile           smile                     outline
+px-robot-time            alarm-clock               outline
+px-ticket                ticket                    outline

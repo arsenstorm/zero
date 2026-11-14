@@ -379,6 +379,123 @@ public enum NoticeText {
     }
 }
 
+/// Nucleo's pixel family marks the lines an agent is responsible for: a worker's report, another task's message, its own
+/// wake-up, the steps it took through `zero`. Zero's own lines keep the UI family. One mapping, read from what zerod
+/// writes; each icon is `px-<name>`, with a Lucide fallback (scripts/lucide.txt).
+public enum AgentIcons {
+    /// A worker's state in its report (heard.rs report), in the words zerod writes after its name.
+    private static let states: [(String, String)] = [
+        (" is waiting on the user's answer", "px-circle-question"),
+        (" is waiting on a background run", "px-bot-task"),
+        (" is waiting:", "px-robot-sleeping"),
+        (" finished:", "px-robot-heart"),
+        (" failed:", "px-bot-xmark"),
+        (" looks stuck:", "px-robot-angry"),
+        (" hit a usage limit", "px-robot-minus"),
+        (" is blocked:", "px-robot-ban"),
+        (" stopped: its process ended", "px-bot-minus"),
+        (" stopped without an answer", "px-robot"),
+    ]
+
+    /// A message given to the session (ConversationItem.from): a worker's report by its state, another task's words,
+    /// its own scheduled wake-up. Nil for Zero's own words.
+    public static func given(from: String, text: String) -> String? {
+        if from == "zero" { return text.hasPrefix("Scheduled: ") ? "px-robot-time" : nil }
+        guard text.hasPrefix("Worker ") else { return "px-bots" }
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        // The earliest state named: the worker's own name comes before it, and may hold any words.
+        let found = states.compactMap { state, icon in line.range(of: state).map { ($0.lowerBound, icon) } }
+        return found.min { $0.0 < $1.0 }?.1 ?? "px-robot"
+    }
+
+    /// A quiet line an agent caused: what it follows, said as it followed it (or opened it).
+    public static func notice(_ text: String) -> String? { text.hasPrefix("Following ") ? "px-robot-search" : nil }
+
+    public struct Step: Equatable, Sendable {
+        public let icon: String
+        public let words: String
+        public let detail: String
+        public init(icon: String, words: String, detail: String) { self.icon = icon; self.words = words; self.detail = detail }
+    }
+
+    /// A `zero` command the agent ran, named for what it did; nil for the rest (asks have cards, lookups stay commands).
+    /// Shown so only once it succeeded: a refused `zero done` is still a command.
+    public static func step(_ command: String) -> Step? {
+        let words = shellWords(command)
+        guard words.count >= 2, words[0] == "zero" else { return nil }
+        let args = Array(words.dropFirst(2))
+        let (positional, flags) = split(args)
+        let first = positional.first ?? ""
+        switch words[1] {
+        case "spawn": return Step(icon: "px-robot-plus", words: "Started a worker", detail: flags["label"] ?? first)
+        case "send" where !first.isEmpty: return Step(icon: "px-envelope-arrow-right", words: "Wrote to", detail: first)
+        case "note": return Step(icon: "px-robot-pen", words: "Noted", detail: first)
+        case "issue" where positional.count >= 2:
+            return Step(
+                icon: "px-ticket", words: positional[0] + " → " + positional[1], detail: positional.dropFirst(2).joined(separator: " "))
+        case "later" where first == "save":
+            return Step(icon: "px-bookmark-plus", words: "Saved for later", detail: positional.dropFirst().joined(separator: " "))
+        case "follow" where !first.isEmpty: return Step(icon: "px-robot-search", words: "Followed", detail: short(first))
+        case "watch":
+            if let dash = args.firstIndex(of: "--") {
+                return Step(icon: "px-eye", words: "Watching", detail: args[(dash + 1)...].joined(separator: " "))
+            }
+            return flags["file"].map { Step(icon: "px-eye", words: "Watching", detail: $0) }
+        case "done" where flags["ask"] == nil: return Step(icon: "px-circle-check", words: "Done", detail: first)
+        case "blocked": return Step(icon: "px-robot-ban", words: "Blocked", detail: first)
+        default: return nil
+        }
+    }
+
+    /// A pull request's or issue's address as people say it: acme/app#318.
+    private static func short(_ url: String) -> String {
+        guard let parts = URL(string: url)?.pathComponents.filter({ $0 != "/" }), parts.count == 4, ["pull", "issues"].contains(parts[2])
+        else { return url }
+        return "\(parts[0])/\(parts[1])#\(parts[3])"
+    }
+
+    /// The arguments before `--`: positional ones, and each flag's value (a flag followed by another flag, or by
+    /// nothing, has an empty one).
+    private static func split(_ args: [String]) -> ([String], [String: String]) {
+        var positional: [String] = [], flags: [String: String] = [:], index = 0
+        while index < args.count, args[index] != "--" {
+            let arg = args[index]
+            if arg.hasPrefix("--") {
+                let next = index + 1 < args.count && !args[index + 1].hasPrefix("--") ? args[index + 1] : nil
+                flags[String(arg.dropFirst(2))] = next ?? ""
+                index += next == nil ? 1 : 2
+            } else {
+                positional.append(arg)
+                index += 1
+            }
+        }
+        return (positional, flags)
+    }
+
+    /// A command line's words as a shell reads them: quotes group, backslashes escape.
+    /// ponytail: no $(…), globs or variables; a command using them shows as a command.
+    static func shellWords(_ line: String) -> [String] {
+        var words: [String] = [], word = "", quote: Character?, escaped = false, started = false
+        for c in line.trimmingCharacters(in: .whitespacesAndNewlines) {
+            if escaped {
+                word.append(c); escaped = false
+            } else if c == "\\", quote != "'" {
+                escaped = true; started = true
+            } else if let q = quote {
+                if c == q { quote = nil } else { word.append(c) }
+            } else if c == "\"" || c == "'" {
+                quote = c; started = true
+            } else if c == " " || c == "\t" || c == "\n" {
+                if started { words.append(word); word = ""; started = false }
+            } else {
+                word.append(c); started = true
+            }
+        }
+        if started { words.append(word) }
+        return words
+    }
+}
+
 public enum ToolNames {
     /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so;
     /// anything else as it is.
