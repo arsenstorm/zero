@@ -85,9 +85,13 @@ struct NewTaskView: View {
                                     provider = picked.rawValue
                                     model = choice.id
                                     if !choice.levels.contains(where: { $0.id == effort }) { effort = "" }
+                                    NewTaskChoice.keep(chosen, model: model, effort: effort)
                                 })
                         }, level: { id in id == "\(chosen.rawValue)/\(model)" && !effort.isEmpty ? effort : nil },
-                        setLevel: { _, level in effort = level })
+                        setLevel: { _, level in
+                            effort = level
+                            NewTaskChoice.keep(chosen, model: model, effort: effort)
+                        })
                     ComposerChip(
                         id: "new.permissions", label: permissions == .auto ? "Permissions: Auto" : "Permissions: Unrestricted",
                         symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange,
@@ -137,6 +141,7 @@ struct NewTaskView: View {
         }
         .onAppear {
             if !folders.contains(project) { project = folders.first ?? "" }
+            (model, effort) = NewTaskChoice.kept(for: chosen)
             if let kept = Drafts.load("new") { prompt = kept.text; images = kept.images }
             // Started from something saved for later: its words, over whatever was being written.
             if let waiting = workspace.pendingDrafts.removeValue(forKey: "new") { prompt = waiting }

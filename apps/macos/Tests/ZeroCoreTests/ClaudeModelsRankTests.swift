@@ -63,3 +63,36 @@ import Testing
     let fresh = ClaudeModels.choices(used: ["claude-fable-5-1[1m]"], extras: [SpawnChoice(id: "fable[1m]", name: "Fable 5.1 (1M)")])
     #expect(ClaudeModels.row(for: "claude-fable-5-1[1m]", in: fresh) == "claude-fable-5-1[1m]")
 }
+
+/// Claude Code's own list (its `initialize`): its aliases in its order, the one its default runs marked; its extras;
+/// then every version it lists, newest first, with its own name, description and effort levels.
+@Test func claudeCodesOwnListIsTheCatalogue() {
+    typealias L = ClaudeModels.Listed
+    let listed = [
+        L(value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)", description: "Opus 5.5"),
+        L(
+            value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5", description: "For complex work",
+            supportedEffortLevels: ["low", "high"]),
+        L(value: "fable", resolvedModel: "claude-fable-5-2", displayName: "Fable 5.2", description: "For your toughest challenges"),
+        L(value: "claude-haiku-4-5-20251001", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", description: "Fastest"),
+        L(
+            value: "claude-fable-5-1", resolvedModel: "claude-fable-5-1", displayName: "Fable 5.1", description: "Most capable",
+            supportedEffortLevels: ["low", "max"]),
+        L(value: "claude-mythos-5-2", resolvedModel: "claude-mythos-5-2", displayName: "Mythos 5.2", description: ""),
+    ]
+    let choices = ClaudeModels.choices(
+        used: ["claude-opus-5-5", "claude-opus-4-1"], extras: [SpawnChoice(id: "claude-fable-5-2[1m]", name: "Fable 5.2 (1M)")],
+        listed: listed)
+    #expect(
+        choices.map(\.id) == [
+            "opus", "fable", "claude-fable-5-2[1m]", "claude-mythos-5-2", "claude-fable-5-1", "claude-haiku-4-5-20251001",
+            "claude-opus-4-1",
+        ])
+    #expect(choices.map(\.name).prefix(2) == ["Opus 5.5", "Fable 5.2"])
+    #expect(choices[0].detail == "Claude Code's default. For complex work. Follows the latest Opus.")
+    #expect(choices[1].detail?.hasPrefix("Claude Code's default") == false)
+    #expect(choices[0].levels.map(\.id) == ["low", "high"])
+    #expect(choices[4].detail == "Most capable · claude-fable-5-1")
+    #expect(choices[5].levels.isEmpty, "Haiku 4.5 takes no effort")
+    #expect(ClaudeModels.row(for: "claude-opus-5-5", in: choices) == "opus", "a task on what the alias runs is on the alias")
+}
