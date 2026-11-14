@@ -48,12 +48,16 @@ struct NewTaskSheet: View {
             ) { picked, m, e in
                 provider = picked.rawValue
                 chosen = m.map { ($0, e) }
+                var kept = UserDefaults.standard.dictionary(forKey: Self.keptKey) ?? [:]
+                kept[provider] = m.map { ["model": $0, "effort": e ?? ""] }
+                UserDefaults.standard.set(kept, forKey: Self.keptKey)
             }
         }
         // The share sheet starts its new tasks with the same agent (it can't read the app's defaults).
         .onChange(of: provider, initial: true) { _, now in Keychain.write("newTaskProvider", Data(now.utf8)) }
         .task {
             writing = true
+            chosen = Self.kept(agent)
             folders = await model.projects()
             if !folders.contains(folder) { folder = folders.first ?? "" }
         }
@@ -61,6 +65,16 @@ struct NewTaskSheet: View {
         .task {
             for agent in Self.agents { catalogue[agent] = await model.models(agent) }
         }
+    }
+
+    /// The model and effort last picked here for each agent, as the Mac's New task keeps them (NewTaskChoice): opened
+    /// with next time; none yet, the agent's first.
+    private static let keptKey = "newTaskModels"
+    private static func kept(_ agent: Provider) -> (model: String, effort: String?)? {
+        guard let kept = UserDefaults.standard.dictionary(forKey: keptKey)?[agent.rawValue] as? [String: String],
+            let model = kept["model"], !model.isEmpty
+        else { return nil }
+        return (model, kept["effort"].flatMap { $0.isEmpty ? nil : $0 })
     }
 
     private var top: some View {

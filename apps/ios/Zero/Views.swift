@@ -605,9 +605,12 @@ struct TaskView: View {
         // The keyboard's room is SwiftUI's own: it moves in the keyboard's own animation (and with a finger taking it
         // down from the conversation), so the composer stays on the keyboard's top. Followed by hand, a frame at a time,
         // the composer jumped ahead of the keyboard as it opened (measured in the Simulator: 313 pt in one frame).
-        // Photos and videos (a screen recording goes to the agent as a file, as from the Mac).
+        // Photos and videos (a screen recording goes to the agent as a file, as from the Mac). As they are: by default the
+        // picker made an H.264 copy of an HEVC video first (11 s for a 9 s one in the Simulator, nothing shown meanwhile, and
+        // a larger file to send); the Mac reads HEVC.
         .photosPicker(
-            isPresented: $panels.picking, selection: $panels.picked, maxSelectionCount: 10, matching: .any(of: [.images, .videos])
+            isPresented: $panels.picking, selection: $panels.picked, maxSelectionCount: 10, matching: .any(of: [.images, .videos]),
+            preferredItemEncoding: .current
         )
         .sheet(isPresented: $panels.selecting) { modelSheet(conversation) }
         // On screen, for Siri: "this" is this task ("save this for later", "what's it doing?").
@@ -889,6 +892,17 @@ private struct ComposerFade: View {
             self.still = .distantPast
             self.recount()
         }
+    }
+
+    /// What's above the latest message changed height by `delta` (its top now `top`, in the conversation): the page
+    /// moves by as much, when what's on screen is that message or after it. Further up, the page is left as it is.
+    /// ponytail: a change inside the latest group above the screen (an image in a long last turn) still moves it.
+    func movedAbove(_ delta: CGFloat, top: CGFloat) {
+        guard let scroll, abs(delta) > 0.5, top - delta < scroll.contentOffset.y + scroll.bounds.height else { return }
+        // Not clamped to the content's end: its size may not have caught up yet.
+        scroll.contentOffset.y = max(-scroll.adjustedContentInset.top, scroll.contentOffset.y + delta)
+        lastOffset = scroll.contentOffset.y
+        lastEnd = endY
     }
 
     /// ↓: the conversation's last row just above the page's foot.

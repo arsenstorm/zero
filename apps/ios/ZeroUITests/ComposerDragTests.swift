@@ -226,13 +226,51 @@ final class ComposerDragTests: XCTestCase {
         _ = wait(4) { false }
         try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/tmp/open-a.png"))
         let opened = deepest
-        let composer = app.staticTexts["Write to this task"].frame.minY
+        let composer = app.staticTexts["Reply"].frame.minY
         XCTAssertGreaterThan(opened, composer - 90, "the end just above the composer, not further up the page")
         XCTAssertLessThan(opened, composer, "the end above the composer, not under it")
         app.swipeUp(velocity: .fast)
         _ = wait(1.5) { false }
         try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/tmp/open-b.png"))
         XCTAssertEqual(deepest, opened, accuracy: 2, "nothing further down")
+    }
+
+    /// Images in earlier answers coming after the page opened (as the Mac's do, over the relay): the page holds still
+    /// at its end, rather than sliding down by each one (55 to 115 pt on the phone). Needs the fixture to hold some.
+    func testOpenedPageHoldsStillAsImagesAboveArrive() throws {
+        let fixture = "/tmp/zero-fixture/with-images.json"
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: fixture), "no fixture")
+        app.terminate()
+        app.launchArguments = ["-composerTest", "-fixture", fixture, "-slowImages"]
+        app.launch()
+        // Its last line (the fixture's last answer), read at once: `deepest` walks the whole page and took longer than
+        // the images do to come.
+        let last = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'when you' AND label CONTAINS 'big refactor'")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 4))
+        let opened = last.frame.minY
+        _ = wait(4) { false }
+        XCTAssertEqual(last.frame.minY, opened, accuracy: 2, "the end where it was as the images came")
+    }
+
+    /// A sent video's tile plays it: fetched from the Mac in parts (a stand-in here), how far shown meanwhile, then
+    /// playing. Needs a video at /tmp/zero-fixture/video.mp4.
+    func testSentVideoPlaysWhenTapped() throws {
+        let video = "/tmp/zero-fixture/video.mp4"
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: video), "no video")
+        app.terminate()
+        app.launchArguments = ["-composerTest", "-fixture", "/tmp/zero-fixture/recent-now.json", "-sendVideo", video, "-fetchVideos"]
+        app.launch()
+        let length = app.staticTexts["0:09"].firstMatch
+        XCTAssertTrue(length.waitForExistence(timeout: 10), "the video's tile, with its length")
+        _ = wait(3) { false }
+        length.tap()
+        let loading = app.descendants(matching: .any)["Loading the video"]
+        XCTAssertTrue(loading.waitForExistence(timeout: 3), "how far it's come, while it comes")
+        try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/tmp/vb/play-a.png"))
+        XCTAssertTrue(wait(20) { !loading.exists }, "it came")
+        XCTAssertFalse(app.staticTexts["Couldn't get the video from your Mac"].exists)
+        _ = wait(2) { false }
+        try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/tmp/vb/play-b.png"))
     }
 
     func testOpensAtTheEndWhenTheConversationComesAfter() throws { try opensAtTheEnd([]) }

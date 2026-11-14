@@ -12,6 +12,9 @@ final class TunnelLines: LineConnection, @unchecked Sendable {
     /// Lines written before the handshake is done: sent once it is.
     private var early: [String] = []
     private let socket: URLSessionWebSocketTask
+    /// Frames go out from here, in the order they were sealed, no faster than the relay takes them (Tunnel.Pace).
+    private let outgoing = DispatchQueue(label: "tunnel.outgoing")
+    private var pace = Tunnel.Pace()
     /// The handshake done and the first line in: the Mac knows this phone.
     var onHeard: (() -> Void)?
     init(pairing: Pairing) throws {
@@ -42,8 +45,8 @@ final class TunnelLines: LineConnection, @unchecked Sendable {
                     var frames = try self.phone.receive(frame)
                     for line in self.early { frames += try self.phone.send(Data(line.utf8)) }
                     self.early = []
+                    self.post(frames)
                     self.lock.unlock()
-                    frames.forEach { self.socket.send(.data($0)) { _ in } }
                 } else {
                     let heard = try self.phone.lines(frame).compactMap { String(data: $0, encoding: .utf8) }
                     let first = self.lines.isEmpty && !heard.isEmpty
@@ -65,8 +68,19 @@ final class TunnelLines: LineConnection, @unchecked Sendable {
         guard phone.ready else { early.append(line); lock.unlock(); return }
         let frames: [Data]
         do { frames = try phone.send(Data(line.utf8)) } catch { lock.unlock(); throw error }
+        post(frames)
         lock.unlock()
-        for frame in frames { socket.send(.data(frame)) { _ in } }
+    }
+
+    /// Queued while the lock that sealed them is held, so frames leave in their nonces' order.
+    private func post(_ frames: [Data]) {
+        outgoing.async { [self] in
+            for frame in frames {
+                let wait = pace.next()
+                if wait > 0 { Thread.sleep(forTimeInterval: wait) }
+                socket.send(.data(frame)) { _ in }
+            }
+        }
     }
 
     func readLine() -> String? {

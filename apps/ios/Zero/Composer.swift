@@ -237,19 +237,32 @@ struct Composer: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .overlay {
                                     if one.video != nil {
-                                        Image("media-play-glyph").resizable().frame(width: 10, height: 10).foregroundStyle(.white)
-                                            .frame(width: 22, height: 22).background(.black.opacity(0.55), in: Circle())
+                                        // While it goes up, how far: a ring filling round where its play mark was.
+                                        ZStack {
+                                            if sending, let up = model.uploaded[session] {
+                                                Circle().trim(from: 0, to: up).stroke(
+                                                    .white, style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                                                )
+                                                .rotationEffect(.degrees(-90)).frame(width: 14, height: 14)
+                                                .animation(.linear(duration: 0.2), value: up)
+                                            } else {
+                                                Image("media-play-glyph").resizable().frame(width: 10, height: 10).foregroundStyle(.white)
+                                            }
+                                        }
+                                        .frame(width: 22, height: 22).background(.black.opacity(0.55), in: Circle())
                                     }
                                 }
                                 .overlay(alignment: .topTrailing) {
-                                    Button {
-                                        let item = attached.remove(at: index).item
-                                        panels.picked.removeAll { $0 == item }
-                                    } label: {
-                                        Image("xmark-outline").resizable().frame(width: 9, height: 9).foregroundStyle(.white)
-                                            .frame(width: 18, height: 18).background(.black.opacity(0.6), in: Circle())
+                                    if !sending {
+                                        Button {
+                                            let item = attached.remove(at: index).item
+                                            panels.picked.removeAll { $0 == item }
+                                        } label: {
+                                            Image("xmark-outline").resizable().frame(width: 9, height: 9).foregroundStyle(.white)
+                                                .frame(width: 18, height: 18).background(.black.opacity(0.6), in: Circle())
+                                        }
+                                        .padding(3)
                                     }
-                                    .padding(3)
                                 }
                         }
                     }
@@ -423,7 +436,11 @@ struct Composer: View {
         let text = draft, choice = panels.chosen
         let photos = attached.filter { $0.video == nil }.compactMap { $0.image.jpegData(compressionQuality: 0.8) }
         let videos = attached.compactMap(\.video)
-        draft = ""; attached = []; panels.picked = []; panels.chosen = nil
+        // Sent, what's attached goes with the message (its bubble shows a video's tile and how far it's up); queued, it
+        // stays in the box until it's up (the queue's strip shows no tiles). Back in the box if it fails.
+        let held = attached, queued = busy
+        draft = ""; panels.chosen = nil
+        if !queued { attached = []; panels.picked = [] }
         // The keyboard can put words back that were mid-correction as the box emptied: emptied again once it's done.
         DispatchQueue.main.async { if !draft.isEmpty { draft = "" } }
         sending = true
@@ -432,12 +449,13 @@ struct Composer: View {
             do {
                 // While it works, always after this turn: never steering it (a model picked mid-turn is zerod's
                 // already, for the next turn). Sent with one that was, it interrupted the turn.
-                if busy {
+                if queued {
                     try await model.queue(text, images: photos, videos: videos, to: session)
                 } else {
                     try await model.send(text, images: photos, videos: videos, to: session, model: choice?.model, effort: choice?.effort)
                 }
-            } catch { draft = text } // Back in the box, to send again.
+                attached = []; panels.picked = []
+            } catch { draft = text; attached = held } // Back in the box, to send again, with what's attached.
         }
     }
 }

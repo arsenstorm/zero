@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 
 // A task's conversation on the phone, read as the Mac reads it (ZeroCore's TimelineBlock): your messages, each turn's
@@ -90,8 +91,17 @@ struct ConversationView: View {
                 // The gap between blocks above it is the group's own: a lift scrolls to it, so a lifted message has
                 // that gap below the bar, not against its edge.
                 .padding(.top, earlier || split > 0 ? Self.liftGap : 0)
+                // What's above it changing height (an image there coming from the Mac, after the page opened): the
+                // page moves with it, so what's read stays still. Held at its top, the page slid by it (the phone:
+                // 55 to 115 pt, a frame at a time and back as the page settled, then left there).
+                .onGeometryChange(for: GroupTop.self) {
+                    GroupTop(id: blocks[split...].first?.id, y: $0.frame(in: .named(Self.space)).minY)
+                } action: { old, new in
+                    if old.id == new.id { end?.movedAbove(new.y - old.y, top: new.y) }
+                }
                 .id(Self.lifted)
             }
+            .coordinateSpace(.named(Self.space))
             // A turn ending with nothing in its live row's place: the row's space kept until the next item takes it,
             // so the page at its end doesn't drop by it.
             .onChange(of: working) { was, now in if was && !now { held = height } }
@@ -111,10 +121,16 @@ struct ConversationView: View {
     static let lifted = "lifted"
     /// A lifted message's gap below the bar: the conversation's own between blocks.
     static let liftGap: CGFloat = 24
+    private static let space = "conversation"
+    /// The lifted group's first block and its top in the conversation: the same block moving is what's above it changing.
+    private struct GroupTop: Equatable { let id: String?; let y: CGFloat }
 
     @ViewBuilder private func row(_ block: TimelineBlock) -> some View {
         switch block {
-        case let .user(item): UserMessage(item: item).id(item.id).washed(washed == item.id)
+        case let .user(item):
+            // Yours being sent: its videos' tiles show how far they're up.
+            UserMessage(item: item, uploading: item.id.hasPrefix("sending-") ? model.uploaded[conversation.id] : nil)
+                .id(item.id).washed(washed == item.id)
         case let .work(id, items, start, end, live):
             WorkBlock(
                 model: model, session: conversation.id, items: items, start: start, end: end, live: live,
@@ -584,6 +600,8 @@ private struct SelectableText: UIViewRepresentable {
 /// Yours, on the right; another task's or Zero's words (a worker's report) as a quiet line.
 struct UserMessage: View {
     let item: ConversationItem
+    /// Its videos going up, 0 to 1.
+    var uploading: Double? = nil
     @State private var open = false
 
     /// A video's line for the agent (the Mac's composer adds it): its number, and the stills cut from it.
@@ -593,9 +611,9 @@ struct UserMessage: View {
 
     /// The tiles a message of yours shows and its words: a video once, by its first still; the images that aren't
     /// a video's stills; the words without the tokens or the video's line.
-    static func shown(_ text: String, images: [String]) -> (tiles: [(path: String, video: Bool)], words: String) {
+    static func shown(_ text: String, images: [String]) -> (tiles: [(path: String, video: String?, seconds: Double?)], words: String) {
         let whole = text as NSString
-        var stills = Set<Int>(), videos: [(path: String, video: Bool)] = []
+        var stills = Set<Int>(), videos: [(path: String, video: String?, seconds: Double?)] = []
         for match in videoLine.matches(in: text, range: NSRange(location: 0, length: whole.length)) {
             let line = whole.substring(with: match.range) as NSString
             let numbers = (try! NSRegularExpression(pattern: #"\[Image #(\d+)\]"#)).matches(
@@ -603,9 +621,25 @@ struct UserMessage: View {
             )
             .compactMap { Int(line.substring(with: $0.range(at: 1))) }
             stills.formUnion(numbers)
-            if let first = numbers.first, images.indices.contains(first - 1) { videos.append((images[first - 1], true)) }
+            // Its length, as the line gives it ("0:08.550 long").
+            let seconds = (try! NSRegularExpression(pattern: #", (\d+):(\d+(?:\.\d+)?) long"#)).firstMatch(
+                in: line as String, range: NSRange(location: 0, length: line.length)
+            )
+            .flatMap { match in
+                Double(line.substring(with: match.range(at: 1))).flatMap { minutes in
+                    Double(line.substring(with: match.range(at: 2))).map { minutes * 60 + $0 }
+                }
+            }
+            // Its first still; with none (sent before the phone cut them), the video itself, its frame cut by the Mac.
+            let video = whole.substring(with: match.range(at: 2))
+            if let first = numbers.first, images.indices.contains(first - 1) {
+                videos.append((images[first - 1], video, seconds))
+            } else if numbers.isEmpty {
+                videos.append((video, video, seconds))
+            }
         }
-        let tiles = videos + images.enumerated().filter { !stills.contains($0.offset + 1) }.map { ($0.element, false) }
+        let tiles =
+            videos + images.enumerated().filter { !stills.contains($0.offset + 1) }.map { ($0.element, nil as String?, nil as Double?) }
         var words = videoLine.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: whole.length), withTemplate: "")
         words = token.stringByReplacingMatches(in: words, range: NSRange(location: 0, length: (words as NSString).length), withTemplate: "")
         return (tiles, words.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -633,7 +667,7 @@ struct UserMessage: View {
                 // stills cut from it for the agent); the words without their tokens or the video's line for the agent.
                 let (tiles, words) = Self.shown(text, images: images)
                 VStack(alignment: .trailing, spacing: 6) {
-                    if !tiles.isEmpty { MessageImages(tiles: tiles) }
+                    if !tiles.isEmpty { MessageImages(tiles: tiles, uploading: uploading) }
                     if !words.isEmpty {
                         // Solid, as the Mac's: Zero's ink, the words in the opposite.
                         Text(words).foregroundStyle(Theme.onKnob).padding(.horizontal, 12).padding(.vertical, 8)
@@ -1806,26 +1840,50 @@ struct WrappingStack: Layout {
 
 struct MessageImages: View {
     /// Each tile's image, and whether it stands for a video (its first still, a play mark on it).
-    let tiles: [(path: String, video: Bool)]
+    let tiles: [(path: String, video: String?, seconds: Double?)]
+    /// Its videos going up, 0 to 1: a ring filling where the play mark is, as the composer's tile showed it.
+    var uploading: Double? = nil
     @State private var shown: String?
+    static let side: Int = 88
 
     var body: some View {
         // In rows from the right: several (a video's, say) wrap rather than widen the page past the screen.
         WrappingStack(spacing: 6, trailing: true) {
             ForEach(tiles, id: \.path) { tile in
-                ImageTile(path: tile.path, side: 88)
+                ImageTile(path: tile.path, side: CGFloat(Self.side))
                     .overlay {
-                        if tile.video {
-                            Image("media-play-glyph").resizable().frame(width: 12, height: 12).foregroundStyle(.white)
-                                .frame(width: 30, height: 30).background(.black.opacity(0.55), in: Circle())
+                        if tile.video != nil {
+                            ZStack {
+                                if let uploading {
+                                    Circle().trim(from: 0, to: uploading).stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                                        .rotationEffect(.degrees(-90)).frame(width: 16, height: 16)
+                                        .animation(.linear(duration: 0.2), value: uploading)
+                                } else {
+                                    Image("media-play-glyph").resizable().frame(width: 12, height: 12).foregroundStyle(.white)
+                                }
+                            }
+                            .frame(width: 30, height: 30).background(.black.opacity(0.55), in: Circle())
                         }
                     }
-                    .onTapGesture { shown = tile.path }
+                    .overlay(alignment: .bottomTrailing) {
+                        if let seconds = tile.seconds {
+                            Text(Duration.seconds(seconds).formatted(.time(pattern: .minuteSecond))).font(.caption2.weight(.semibold))
+                                .monospacedDigit().foregroundStyle(.white).padding(.horizontal, 5).padding(.vertical, 1.5)
+                                .background(.black.opacity(0.55), in: Capsule()).padding(5)
+                        }
+                    }
+                    // A video plays (fetched from the Mac the first time); an image opens full size.
+                    .onTapGesture { shown = tile.video.map { "video:" + $0 } ?? tile.path }
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .sheet(item: Binding(get: { shown.map(Shown.init) }, set: { shown = $0?.path })) { shown in
-            ImageViewer(path: shown.path)
+            if shown.path.hasPrefix("video:") {
+                let video = String(shown.path.dropFirst(6))
+                VideoViewer(path: video, poster: tiles.first { $0.video == video }?.path)
+            } else {
+                ImageViewer(path: shown.path)
+            }
         }
     }
 
@@ -1837,6 +1895,12 @@ struct ImageTile: View {
     let path: String
     let side: CGFloat
     @State private var image: UIImage?
+
+    init(path: String, side: CGFloat) {
+        self.path = path
+        self.side = side
+        _image = State(initialValue: PhoneModel.shared.cachedImage(path, side: Int(side * 3)))
+    }
 
     var body: some View {
         Group {
@@ -1854,8 +1918,15 @@ struct ImageTile: View {
 struct AnswerImage: View {
     let path: String
     let alt: String
+    /// Already fetched, in its first frame: a placeholder's height for a frame moved the page.
     @State private var image: UIImage?
     @State private var open = false
+
+    init(path: String, alt: String) {
+        self.path = path
+        self.alt = alt
+        _image = State(initialValue: PhoneModel.shared.cachedImage(path, side: 1600))
+    }
 
     var body: some View {
         Group {
@@ -1892,6 +1963,71 @@ struct ImageViewer: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .task { image = await PhoneModel.shared.image(path, side: 2400) }
+    }
+}
+
+/// A message's video, played: fetched from the Mac the first time (its still and how far it's come meanwhile), kept
+/// on the phone after that.
+struct VideoViewer: View {
+    let path: String
+    let poster: String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    @State private var got: Double = 0
+    @State private var failed = false
+    @State private var attempt = 0
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let player {
+                    VideoPlayer(player: player).ignoresSafeArea(edges: .bottom)
+                } else {
+                    PosterImage(path: poster).opacity(0.5)
+                    if failed {
+                        VStack(spacing: 12) {
+                            Text("Couldn't get the video from your Mac").foregroundStyle(.white)
+                            Button("Try again") {
+                                failed = false; attempt += 1
+                            }.buttonStyle(.borderedProminent)
+                        }
+                    } else {
+                        // How far it's come, as a sent video's tile shows it going up.
+                        ZStack {
+                            Circle().stroke(.white.opacity(0.25), lineWidth: 3)
+                            Circle().trim(from: 0, to: got).stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                .rotationEffect(.degrees(-90)).animation(.linear(duration: 0.2), value: got)
+                        }
+                        .frame(width: 44, height: 44)
+                        .accessibilityLabel("Loading the video").accessibilityValue("\(Int(got * 100)) %")
+                    }
+                }
+            }
+            .navigationTitle((path as NSString).lastPathComponent)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .task(id: attempt) {
+            guard let file = await PhoneModel.shared.video(path, got: { got = $0 }) else { failed = true; return }
+            let player = AVPlayer(url: file)
+            self.player = player
+            player.play()
+        }
+        .onDisappear { player?.pause() }
+    }
+}
+
+/// A still, filling the page's width, while what it stands for comes.
+private struct PosterImage: View {
+    let path: String?
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image { Image(uiImage: image).resizable().scaledToFit() } else { Color.clear }
+        }
+        .task(id: path) { if let path { image = await PhoneModel.shared.image(path, side: 1600) } }
     }
 }
 

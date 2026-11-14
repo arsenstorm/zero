@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 import UIKit
@@ -570,12 +571,22 @@ import UserNotifications
     #if DEBUG
         /// zerod's side of a message sent from the UI tests' task (no Mac): its copy of the message, keeping the id
         /// `send` gave it as `sent` (as zerod does), then the agent's long reply, which reads out.
-        private func sentForTests(_ text: String, to session: String, id: String) async -> Bool {
+        /// Sent with no Mac (the UI tests' task): its videos "going up" over two seconds, then zerod's copy of it.
+        private func sentForTests(_ echo: Sending, to session: String, uploading: Bool) async -> Bool {
             guard session.hasPrefix("test-"), var conversation = mirror.conversations[session] else { return false }
+            if uploading {
+                for step in 0...20 {
+                    uploaded[session] = Double(step) / 20
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                uploaded[session] = nil
+            }
             try? await Task.sleep(for: .milliseconds(500))
             let at = Int(Date().timeIntervalSince1970 * 1000)
             conversation.items.append(
-                ConversationItem(id: "sent-" + id, turn: nil, kind: .user(text: text, images: []), status: .done, at: at, sent: id))
+                ConversationItem(
+                    id: "sent-" + echo.id, turn: nil, kind: .user(text: echo.text, images: echo.images), status: .done, at: at,
+                    sent: echo.id))
             conversation.status = .working
             showForTests(conversation)
             Task {
@@ -588,7 +599,8 @@ import UserNotifications
                         + "| Three | Follows the keyboard | Every frame | The curve |", at: 3)
                 conversation.items.append(
                     ConversationItem(
-                        id: "reply-" + id, turn: nil, kind: .agent(text: lines.joined(separator: "\n\n"), finalAnswer: true), status: .done,
+                        id: "reply-" + echo.id, turn: nil, kind: .agent(text: lines.joined(separator: "\n\n"), finalAnswer: true),
+                        status: .done,
                         at: at + 1300))
                 conversation.status = .idle
                 showForTests(conversation)
@@ -644,7 +656,7 @@ import UserNotifications
         }
     #else
         private func answeredForTests(_ ask: Ask, option: Int?, text: String?) -> Bool { false }
-        private func sentForTests(_ text: String, to session: String, id: String) async -> Bool { false }
+        private func sentForTests(_ echo: Sending, to session: String, uploading: Bool) async -> Bool { false }
         private func queuedForTests(_ text: String, to session: String) async -> Bool { false }
     #endif
     func deliver(_ ask: Ask) async { try? await linked()?.deliver(ask.id) }
@@ -663,16 +675,27 @@ import UserNotifications
     func send(_ text: String, images: [Data], videos: [URL] = [], to session: String, model: String? = nil, effort: String? = nil)
         async throws
     {
+        let cut = await Self.cut(videos)
         // Shown at once, while its videos upload and its agent starts: the conversation's own takes its place, known
         // by this one's id (zerod keeps it as `sent`). Without it, zerod's copy was a new message to Playback, and the
-        // bubble was gone for a beat (measured: 117 ms) between the two.
-        let echo = Sending(text: text, images: [])
+        // bubble was gone for a beat (measured: 117 ms) between the two. Its photos and videos are the phone's own
+        // files until then, its videos' tiles showing how far they're up.
+        let local = (images + cut.flatMap { $0.stills.map(\.data) }).compactMap(Self.kept)
+        let echo = Sending(text: Self.withVideos(text, cut, paths: videos.map(\.path), after: images.count), images: local)
         sending[session, default: []].append(echo)
-        defer { sending[session]?.removeAll { $0.id == echo.id } }
-        if await sentForTests(text, to: session, id: echo.id) { return }
+        defer {
+            sending[session]?.removeAll { $0.id == echo.id }
+            for file in local { try? FileManager.default.removeItem(atPath: file) }
+        }
+        if await sentForTests(echo, to: session, uploading: !videos.isEmpty) { return }
+        let paths = try await upload(cut, to: session)
+        // After the videos: the link they finished on, if one dropped while they went.
         guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
-        let text = try await withVideos(text, videos, through: link)
-        try await link.send(session: session, text: text, images: upload(images, through: link), model: model, effort: effort, id: echo.id)
+        try await link.send(
+            session: session, text: Self.withVideos(text, cut, paths: paths, after: images.count),
+            images: upload(images + cut.flatMap { $0.stills.map(\.data) }, through: link), model: model, effort: effort, id: echo.id)
+        // Kept, by where the Mac has it: played from here, never fetched back.
+        for (video, path) in zip(videos, paths) { keepVideo(video, for: path) }
     }
 
     /// Messages sent from here that their conversation doesn't have yet, by session.
@@ -687,24 +710,83 @@ import UserNotifications
         queuing[session, default: []].append(Queued(id: id, text: text, images: nil))
         defer { queuing[session]?.removeAll { $0.id == id } }
         if await queuedForTests(text, to: session) { return }
+        let cut = await Self.cut(videos)
+        let paths = try await upload(cut, to: session)
+        // After the videos: the link they finished on, if one dropped while they went.
         guard let link = await linked() else { throw ZerodError(message: "Not connected to your Mac") }
-        let text = try await withVideos(text, videos, through: link)
-        try await link.queue(session: session, text: text, images: upload(images, through: link), id: id)
+        try await link.queue(
+            session: session, text: Self.withVideos(text, cut, paths: paths, after: images.count),
+            images: upload(images + cut.flatMap { $0.stills.map(\.data) }, through: link), id: id)
+        // Kept, by where the Mac has it: played from here, never fetched back.
+        for (video, path) in zip(videos, paths) { keepVideo(video, for: path) }
     }
 
-    /// Videos sent to a task, as the Mac's composer sends them (Attachments.withVideos): each kept on the Mac, and a
-    /// line after the words saying where it is and that `zero video` cuts its frames (an agent's CLI doesn't take a video).
-    private func withVideos(_ text: String, _ videos: [URL], through link: ZerodLink) async throws -> String {
-        var out = text
-        for (index, video) in videos.enumerated() {
-            let data = try Data(contentsOf: video)
-            let name = "video-\(index + 1)." + (video.pathExtension.isEmpty ? "mov" : video.pathExtension)
-            guard let path = try await link.call("upload", ["name": name, "data": data.base64EncodedString()]) as? String else { continue }
-            out += "\n\n[Video #\(index + 1): \(path). It's a video: cut the frames you need with `zero video \"\(path)\"`.]"
-            try? FileManager.default.removeItem(at: video)
+    /// A video as it's sent: its length and size, and three stills through it (as the Mac's composer cuts them,
+    /// Attachments.prepare): the agent sees them, and the message's tile is the first.
+    struct CutVideo { let url: URL; let info: VideoFrames.Info?; let stills: [(data: Data, at: Double)] }
+
+    private static func cut(_ videos: [URL]) async -> [CutVideo] {
+        var out: [CutVideo] = []
+        for video in videos {
+            let info = try? await VideoFrames.info(of: video)
+            let times = info.map { VideoFrames.spread(min(3, max(1, Int($0.seconds.rounded(.up)))), over: $0.seconds) } ?? []
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let frames = (try? await VideoFrames.frames(of: video, at: times, into: folder, largest: 1000)) ?? []
+            out.append(
+                CutVideo(
+                    url: video, info: info,
+                    stills: frames.compactMap { frame in FileManager.default.contents(atPath: frame.path).map { ($0, frame.at) } }))
+            try? FileManager.default.removeItem(at: folder)
         }
         return out
     }
+
+    /// An image of a message being sent, as a file of the phone's own for its bubble.
+    private static func kept(_ data: Data) -> String? {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sending-\(UUID().uuidString).jpg")
+        return (try? data.write(to: file)).map { file.path }
+    }
+
+    /// Each video kept on the Mac, its path there; `uploaded` says how far they are, for their tiles.
+    private func upload(_ videos: [CutVideo], to session: String) async throws -> [String] {
+        guard !videos.isEmpty else { return [] }
+        let sizes = videos.map { (try? $0.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0 }
+        let total = Double(max(1, sizes.reduce(0, +)))
+        var before = 0
+        uploaded[session] = 0
+        defer { uploaded[session] = nil }
+        var paths: [String] = []
+        for (index, video) in videos.enumerated() {
+            let name = "video-\(index + 1)." + (video.url.pathExtension.isEmpty ? "mov" : video.url.pathExtension)
+            paths.append(
+                try await ZerodLink.Upload.send(video.url, name: name, over: { await self.linked() }) { sent in
+                    self.uploaded[session] = Double(before + sent) / total
+                })
+            before += sizes[index]
+        }
+        return paths
+    }
+
+    /// The words, then a line for each video as the Mac's composer writes it (Attachments.withVideos): where it is, its
+    /// length and size, its stills (numbered after the `after` photos), and that `zero video` cuts more.
+    static func withVideos(_ text: String, _ videos: [CutVideo], paths: [String], after: Int) -> String {
+        var out = text, number = after
+        for (index, (video, path)) in zip(videos, paths).enumerated() {
+            var line = "[Video #\(index + 1): \(path)"
+            if let info = video.info, !video.stills.isEmpty {
+                line += ", \(VideoFrames.stamp(info.seconds)) long, \(info.width)×\(info.height). Stills from it: "
+                line += video.stills.map { still in
+                    number += 1
+                    return "[Image #\(number)] at \(VideoFrames.stamp(still.at))"
+                }.joined(separator: ", ")
+            }
+            out += "\n\n" + line + ". It's a video: cut the frames you need with `zero video \"\(path)\"`.]"
+        }
+        return out
+    }
+
+    /// How far a task's videos are up, 0 to 1, while they go: their tiles show it.
+    private(set) var uploaded: [String: Double] = [:]
 
     private func upload(_ images: [Data], through link: ZerodLink) async throws -> [String] {
         var paths: [String] = []
@@ -712,6 +794,8 @@ import UserNotifications
             if let path = try await link.call("upload", ["name": "photo-\(index + 1).jpg", "data": image.base64EncodedString()]) as? String
             {
                 paths.append(path)
+                // Its tile in the message, as the bubble showed it while it went: not fetched back, no placeholder.
+                if let shown = UIImage(data: image) { keepImage(shown, for: path, side: MessageImages.side * 3) }
             }
         }
         return paths
@@ -816,14 +900,64 @@ import UserNotifications
     @ObservationIgnored private let images: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>(); c.countLimit = 150; return c
     }()
+    /// Already fetched: drawn in the first frame, not a placeholder's height for one (the page jumped by it).
+    func cachedImage(_ path: String, side: Int) -> UIImage? { images.object(forKey: "\(side)|\(path)" as NSString) }
+    /// One of the phone's own (a message's attachment while it's sent) taken for the Mac's copy at `path`.
+    func keepImage(_ image: UIImage, for path: String, side: Int) { images.setObject(image, forKey: "\(side)|\(path)" as NSString) }
     func image(_ path: String, side: Int) async -> UIImage? {
         let key = "\(side)|\(path)" as NSString
         if let kept = images.object(forKey: key) { return kept }
+        // The phone's own file (a message being sent; in the Simulator, the Mac's too).
+        if FileManager.default.fileExists(atPath: path), let image = UIImage(contentsOfFile: path) {
+            #if DEBUG
+                // The UI tests' `-slowImages`: each comes as late as the Mac's do over the relay, after the page opened.
+                if CommandLine.arguments.contains("-slowImages") { try? await Task.sleep(for: .milliseconds(Int.random(in: 500...2500))) }
+            #endif
+            images.setObject(image, forKey: key)
+            return image
+        }
         guard let encoded = try? await linked()?.call("image", ["path": path, "side": side]) as? String,
             let data = Data(base64Encoded: encoded), let image = UIImage(data: data)
         else { return nil }
         images.setObject(image, forKey: key)
         return image
+    }
+
+    /// Where a message's video is kept on the phone, by its path on the Mac. ponytail: Caches, emptied only by iOS.
+    private static func keptVideo(_ path: String) -> URL {
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("videos")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+        return folder.appendingPathComponent(name).appendingPathExtension((path as NSString).pathExtension)
+    }
+
+    /// A video sent from here, kept as the Mac's copy at `path`.
+    private func keepVideo(_ file: URL, for path: String) {
+        let kept = Self.keptVideo(path)
+        try? FileManager.default.removeItem(at: kept)
+        if (try? FileManager.default.moveItem(at: file, to: kept)) == nil { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// A message's video to play: the phone's own, kept, or fetched from the Mac (`got`, how far, 0 to 1).
+    func video(_ path: String, got: @escaping (Double) -> Void) async -> URL? {
+        // The phone's own file (a message being sent; in the Simulator, the Mac's too).
+        var link: () async -> ZerodLink? = { await self.linked() }
+        #if DEBUG
+            // The UI tests' `-fetchVideos`: fetched through a stand-in for the Mac, slowly, never from the file.
+            if CommandLine.arguments.contains("-fetchVideos") {
+                let mac = ZerodLink(connection: MacForTests())
+                link = { mac }
+            }
+        #endif
+        if FileManager.default.fileExists(atPath: path), !CommandLine.arguments.contains("-fetchVideos") {
+            return URL(fileURLWithPath: path)
+        }
+        let kept = Self.keptVideo(path)
+        if FileManager.default.fileExists(atPath: kept.path) { return kept }
+        do {
+            try await ZerodLink.Download.fetch(path, into: kept, over: link, got: got)
+            return kept
+        } catch { return nil }
     }
 
     /// How many of a task's items came before those loaded.

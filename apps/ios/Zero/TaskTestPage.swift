@@ -25,6 +25,16 @@
                 {
                     var conversation = recent.result.conversation
                     conversation.id = session
+                    // With `-sendVideo <path>`: a copy of that video sent 2 s after the page opens, as the composer sends it.
+                    if let at = CommandLine.arguments.firstIndex(of: "-sendVideo"), at + 1 < CommandLine.arguments.count {
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("test-video.mp4")
+                            try? FileManager.default.removeItem(at: copy)
+                            try? FileManager.default.copyItem(atPath: CommandLine.arguments[at + 1], toPath: copy.path)
+                            try? await model.send("Here's the video", images: [], videos: [copy], to: session)
+                        }
+                    }
                     if CommandLine.arguments.contains("-fixtureFirst") {
                         model.showForTests(conversation, earlier: recent.result.earlier)
                         ready = true
@@ -85,6 +95,39 @@
 
         private func item(_ id: String, _ kind: ConversationItem.Kind, _ at: Date) -> ConversationItem {
             ConversationItem(id: id, turn: nil, kind: kind, status: .done, at: Int(at.timeIntervalSince1970 * 1000))
+        }
+    }
+
+    /// The Mac as the phone's video download meets it (Phones.swift's `downloadPart`), in the app, each part 150 ms
+    /// late: what a player shows while a video comes (`-fetchVideos`).
+    final class MacForTests: LineConnection, @unchecked Sendable {
+        private let lock = NSCondition()
+        private var lines: [String] = []
+        private var ended = false
+
+        func write(line: String) throws {
+            let request = (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]) ?? [:]
+            let reply: [String: Any] =
+                (request["op"] as? String == "downloadPart" ? ZerodLink.Download.answer(request) : nil)
+                .map { ["id": request["id"] ?? 0, "ok": true, "result": $0] } ?? ["id": request["id"] ?? 0, "ok": false, "error": "no"]
+            let out = String(decoding: (try? JSONSerialization.data(withJSONObject: reply)) ?? Data(), as: UTF8.self)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.15) {
+                self.lock.withLock {
+                    self.lines.append(out); self.lock.signal()
+                }
+            }
+        }
+        func readLine() -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            while lines.isEmpty && !ended { lock.wait() }
+            return lines.isEmpty ? nil : lines.removeFirst()
+        }
+        func shutdown() { close() }
+        func close() {
+            lock.withLock {
+                ended = true; lock.broadcast()
+            }
         }
     }
 
