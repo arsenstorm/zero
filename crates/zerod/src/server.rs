@@ -52,6 +52,8 @@ struct Request {
     label: Option<String>,
     ticket: Option<String>,
     sessions: Option<Vec<String>>,
+    /// The workspaces' ids in the user's order (reorderWorkspaces).
+    order: Option<Vec<String>>,
     any: Option<bool>,
     /// Seconds.
     timeout: Option<u64>,
@@ -301,6 +303,7 @@ pub(crate) const APP_ONLY: &[&str] = &[
     "deleteMcpServer",
     "saveWorkspace",
     "deleteWorkspace",
+    "reorderWorkspaces",
     "gitKey",
     "saveBrowserSettings",
     "saveSignIn",
@@ -506,15 +509,14 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         | "browserSettings"
         | "saveBrowserSettings"
         | "browserSetup" => browser::handle(zerod, request).await,
-        "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" | "accountActivity" => {
-            signins::handle(zerod, request).await
-        }
+        "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" | "accountActivity"
+        | "claudeModels" => signins::handle(zerod, request).await,
         "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun"
         | "deliver" | "message" | "close" | "switchModel" => inbox::handle(zerod, request).await,
         "gitAccount" | "gitCheck" | "gitTokenStatus" => git(zerod, request).await,
         "mcpSignIn" => mcp_sign_in(zerod, request).await,
-        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "settings"
-        | "configure" | "gitKey" => setup(zerod, request),
+        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "reorderWorkspaces"
+        | "settings" | "configure" | "gitKey" => setup(zerod, request),
         other => unknown(other),
     }
 }
@@ -582,6 +584,11 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
             daemon.workspaces.delete(&request.workspace_id().ok_or("Which workspace?")?)?;
             let _ = zerod.notices.send("workspaces");
             Ok(Value::Null)
+        }
+        "reorderWorkspaces" => {
+            let ordered = daemon.workspaces.reorder(request.order.as_deref().ok_or("In which order?")?)?;
+            let _ = zerod.notices.send("workspaces");
+            Ok(json!(ordered))
         }
         "workspaces" => Ok(json!(daemon.workspaces.list())),
         "settings" => {

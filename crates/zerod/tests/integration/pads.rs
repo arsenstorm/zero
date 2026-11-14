@@ -123,3 +123,36 @@ fn a_tasks_pads_keep_to_its_own_folder_out_of_the_way() {
     assert_eq!(titles(pads.list_in(None, Some("Tasks/ENG-1"))), ["State"], "asked for by its folder, a task's are there");
     assert_eq!(pads.read(&state.link, None).unwrap().folder, "Tasks/ENG-1", "and its link reads it as any pad's does");
 }
+
+#[test]
+fn a_pad_is_in_a_workspace_kept_beside_the_files_else_zeros() {
+    let root = temp_dir("pads-workspaces");
+    let pads = Pads::open(&root);
+    let mine = pads.create("Mine", "", "x").unwrap();
+    assert_eq!(mine.workspace, "zero");
+    let theirs = pads.place(&pads.create("Theirs", "", "y").unwrap().id, "acme").unwrap();
+    assert_eq!(theirs.workspace, "acme");
+    assert_eq!(std::fs::read_to_string(root.join("Theirs.md")).unwrap(), "y", "the Markdown stays plain");
+    let again = Pads::open(&root);
+    let placed = |list: Vec<Summary>| list.into_iter().map(|p| (p.title, p.workspace)).collect::<Vec<_>>();
+    assert_eq!(placed(again.list(None)), [("Mine".into(), "zero".into()), ("Theirs".into(), "acme".into())]);
+    // Through the tools: listed for one workspace, made in one; a workspace gone reads as Zero.
+    let gone = |w: &str| if w == "acme" { w.to_string() } else { "zero".to_string() };
+    let made = call(&again, "create", &serde_json::json!({"title": "Other", "workspace": "deleted"}), &gone).unwrap();
+    assert_eq!(made["workspace"], "zero");
+    let titles = |workspace: &str| {
+        call(&again, "list", &serde_json::json!({"workspace": workspace}), &gone).unwrap()["pads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["title"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(titles("acme"), ["Theirs"]);
+    let mut zeros = titles("zero");
+    zeros.sort();
+    assert_eq!(zeros, ["Mine", "Other"]);
+    let moved = call(&again, "place", &serde_json::json!({"pad": theirs.link, "workspace": "zero"}), &gone).unwrap();
+    assert_eq!(moved["workspace"], "zero");
+    assert!(titles("acme").is_empty());
+}

@@ -721,7 +721,7 @@ async fn every_op_is_routed_to_its_handler() {
         cancelRun choose close closeTerminal configure connectSlack create decide defaultSignIn deleteLoop deleteMcpServer deleteSignIn \
         deleteWorkspace deliver detach dismiss firefox follow following get hello interrupt items label later list loop loops \
         mcpServers message migrate notify openTerminal outline pad place placeInWorkspace queue recent release remind \
-        reply restartStatus result resume rewind rewindPreview saveBrowserSettings saveLoop saveMcpServer saveSignIn saveWorkspace \
+        reorderWorkspaces reply restartStatus result resume rewind rewindPreview saveBrowserSettings saveLoop saveMcpServer saveSignIn saveWorkspace \
         schedule schedules seen send setPermissions settings signIns spawn start stop switch switchModel \
         table takeBack unarchive unfollow unqueue unschedule unwatch wait watch watchFile watches window withdraw workers workspaces";
     for op in ops.split_whitespace() {
@@ -917,4 +917,53 @@ async fn settings_say_which_terminal_app_tasks_open_in_resolved() {
     assert!(unset["terminal"].is_null(), "the setting itself stays unset");
     client.call(json!({"op": "configure", "terminal": "/Applications/iTerm.app"})).await;
     assert_eq!(client.call(json!({"op": "settings"})).await["result"]["terminalApp"], "/Applications/iTerm.app");
+}
+
+#[tokio::test]
+async fn the_app_puts_the_workspaces_in_order() {
+    let h = harness("server-order").await;
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Personal", "glyph": ""}})).await;
+    let answer = client.call(json!({"op": "reorderWorkspaces", "order": ["personal", "zero"]})).await;
+    let ids =
+        |listed: &Value| listed["result"].as_array().unwrap().iter().map(|w| w["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(ids(&answer), ["personal", "zero"], "{answer}");
+    assert_eq!(ids(&client.call(json!({"op": "workspaces"})).await), ["personal", "zero"]);
+    assert!(client.call(json!({"op": "reorderWorkspaces"})).await["error"].is_string(), "an order is needed");
+}
+
+#[tokio::test]
+async fn loops_and_pads_are_listed_by_workspace_and_an_agents_pad_is_made_in_its_tasks() {
+    let h = harness("server-scoped").await;
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Personal", "glyph": "", "color": "teal"}})).await;
+    let listed = client.call(json!({"op": "workspaces"})).await;
+    assert_eq!(listed["result"][1]["color"], "teal");
+
+    client.call(json!({"op": "saveLoop", "name": "mine", "body": "Go."})).await;
+    let saved = client.call(json!({"op": "saveLoop", "name": "home", "body": "Go.", "workspace": "personal"})).await;
+    assert_eq!(saved["result"]["workspace"], "personal", "{saved}");
+    client.call(json!({"op": "saveLoop", "name": "home", "body": "Go on."})).await;
+    let names =
+        |result: &Value| result["result"].as_array().unwrap().iter().map(|l| l["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(names(&client.call(json!({"op": "loops", "workspace": "personal"})).await), ["home"], "kept its workspace");
+    assert_eq!(names(&client.call(json!({"op": "loops", "workspace": "zero"})).await), ["mine"]);
+    assert_eq!(names(&client.call(json!({"op": "loops"})).await), ["home", "mine"], "without one, all");
+
+    let started = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls", "workspace": "personal"})).await;
+    let session = started["result"]["session"].as_str().unwrap_or_else(|| panic!("{started}")).to_string();
+    let made = client.call(json!({"op": "pad", "tool": "create", "session": session, "args": {"title": "Agent's"}})).await;
+    assert_eq!(made["result"]["workspace"], "personal", "{made}");
+    client.call(json!({"op": "pad", "tool": "create", "args": {"title": "App's"}})).await;
+    let pads = |result: &Value| {
+        result["result"]["pads"].as_array().unwrap().iter().map(|p| p["title"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+    };
+    assert_eq!(pads(&client.call(json!({"op": "pad", "tool": "list", "args": {"workspace": "personal"}})).await), ["Agent's"]);
+
+    // The workspace deleted: its loops and pads are Zero's.
+    client.call(json!({"op": "deleteWorkspace", "workspace": "personal"})).await;
+    assert_eq!(names(&client.call(json!({"op": "loops", "workspace": "zero"})).await), ["home", "mine"]);
+    let mut zeros = pads(&client.call(json!({"op": "pad", "tool": "list", "args": {"workspace": "zero"}})).await);
+    zeros.sort();
+    assert_eq!(zeros, ["Agent's", "App's"]);
 }

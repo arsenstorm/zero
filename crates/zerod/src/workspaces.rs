@@ -20,11 +20,14 @@ pub struct Workspace {
     /// A Nucleo icon's name, or an emoji.
     #[serde(default)]
     pub glyph: String,
+    /// A colour's name ("teal"), or "" for none.
+    #[serde(default)]
+    pub color: String,
 }
 
 impl Workspace {
     fn zero() -> Workspace {
-        Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new() }
+        Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new(), color: String::new() }
     }
 }
 
@@ -43,7 +46,7 @@ impl Workspaces {
         Workspaces { file, list: Mutex::new(list) }
     }
 
-    /// Zero first, then the others as made.
+    /// In the user's order: Zero first and the others as made, until they're put in another.
     pub fn list(&self) -> Vec<Workspace> {
         self.list.lock().unwrap().clone()
     }
@@ -82,6 +85,25 @@ impl Workspaces {
         }
         self.keep(&list)?;
         Ok(workspace)
+    }
+
+    /// Puts them in the user's order, Zero included: those named first, as named (an id that isn't one passed over),
+    /// then any left out, as they were.
+    pub fn reorder(&self, order: &[String]) -> Result<Vec<Workspace>, String> {
+        let mut list = self.list.lock().unwrap();
+        let mut ordered: Vec<Workspace> = Vec::new();
+        for id in order {
+            if !ordered.iter().any(|w| &w.id == id)
+                && let Some(w) = list.iter().find(|w| &w.id == id)
+            {
+                ordered.push(w.clone())
+            }
+        }
+        let rest: Vec<Workspace> = list.iter().filter(|w| !ordered.iter().any(|o| o.id == w.id)).cloned().collect();
+        ordered.extend(rest);
+        self.keep(&ordered)?;
+        *list = ordered.clone();
+        Ok(ordered)
     }
 
     /// Removes a workspace; its tasks are Zero's again (they keep no record of it). Zero stays.

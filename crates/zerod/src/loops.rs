@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::workspaces::DEFAULT;
+
 pub struct Loops {
     root: PathBuf,
 }
@@ -18,6 +20,8 @@ pub struct Loop {
     pub name: String,
     pub description: String,
     pub body: String,
+    /// The workspace it's in: its header's `workspace:`, else Zero's.
+    pub workspace: String,
     /// The loops it names (`@child`), that exist.
     pub children: Vec<String>,
     pub uses: Vec<Use>,
@@ -54,24 +58,37 @@ impl Loops {
     pub fn read(&self, name: &str) -> Result<Loop, String> {
         let file = self.file(name)?;
         let text = std::fs::read_to_string(&file).map_err(|_| format!("No loop named {name}"))?;
-        let (description, body) = split(&text);
+        let (description, workspace, body) = split(&text);
         let children = self.children_of(&body);
-        Ok(Loop { name: name.into(), description, body, children, uses: self.uses(name) })
+        Ok(Loop { name: name.into(), description, body, workspace, children, uses: self.uses(name) })
     }
 
-    /// Saves it, refusing a name that isn't one and a body that leads back to itself through its children.
+    /// Saves it where it was (a new one in Zero's), refusing a name that isn't one and a body that leads back to itself
+    /// through its children.
     pub fn save(&self, name: &str, description: &str, body: &str) -> Result<Loop, String> {
+        self.save_in(name, description, body, None)
+    }
+
+    /// Saves it, in a workspace if one is given.
+    pub fn save_in(&self, name: &str, description: &str, body: &str, workspace: Option<&str>) -> Result<Loop, String> {
         let file = self.file(name)?;
         for child in self.children_of(body) {
             if child == name || self.reaches(&child, name, 0) {
                 return Err(format!("@{child} leads back to {name}: a loop names its children, never a parent"));
             }
         }
-        let text = if description.trim().is_empty() {
-            body.to_string()
-        } else {
-            format!("---\ndescription: {}\n---\n{}", description.trim(), body)
+        let workspace = match workspace {
+            Some(workspace) => workspace.trim().to_string(),
+            None => self.read(name).map(|l| l.workspace).unwrap_or_else(|_| DEFAULT.into()),
         };
+        let mut header = String::new();
+        if !description.trim().is_empty() {
+            header += &format!("description: {}\n", description.trim())
+        }
+        if !workspace.is_empty() && workspace != DEFAULT {
+            header += &format!("workspace: {workspace}\n")
+        }
+        let text = if header.is_empty() { body.to_string() } else { format!("---\n{header}---\n{body}") };
         std::fs::write(&file, text).map_err(|e| e.to_string())?;
         self.read(name)
     }
@@ -174,15 +191,16 @@ pub fn references(text: &str) -> Vec<String> {
     names
 }
 
-/// The description above the body, when the file has a header.
-fn split(text: &str) -> (String, String) {
+/// The description and workspace above the body, when the file has a header.
+fn split(text: &str) -> (String, String, String) {
     if let Some(rest) = text.strip_prefix("---\n")
         && let Some((header, body)) = rest.split_once("\n---\n")
     {
-        let description = header.lines().find_map(|l| l.strip_prefix("description:")).unwrap_or("").trim().to_string();
-        return (description, body.to_string());
+        let field = |key: &str| header.lines().find_map(|l| l.strip_prefix(key)).unwrap_or("").trim().to_string();
+        let workspace = Some(field("workspace:")).filter(|w| !w.is_empty()).unwrap_or_else(|| DEFAULT.into());
+        return (field("description:"), workspace, body.to_string());
     }
-    (String::new(), text.to_string())
+    (String::new(), DEFAULT.into(), text.to_string())
 }
 
 fn expanded(found: &Loop) -> String {

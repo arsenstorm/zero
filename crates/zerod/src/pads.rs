@@ -11,10 +11,14 @@ use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 
+use crate::workspaces::DEFAULT;
+
 pub struct Pads {
     root: PathBuf,
     /// Each pad's id to its file, relative to the root.
     index: Mutex<BTreeMap<String, String>>,
+    /// Each pad's id to its workspace, kept in .workspaces.json beside the files so they stay plain; none, Zero's.
+    workspaces: Mutex<BTreeMap<String, String>>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -31,6 +35,7 @@ pub struct Pad {
     pub link: String,
     /// When the file last changed, in seconds since 1970.
     pub updated: i64,
+    pub workspace: String,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -41,6 +46,7 @@ pub struct Summary {
     pub folder: String,
     pub link: String,
     pub updated: i64,
+    pub workspace: String,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -77,7 +83,9 @@ impl Pads {
     pub fn open(root: &Path) -> Pads {
         let _ = std::fs::create_dir_all(root);
         let index = std::fs::read(root.join(".index.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
-        let pads = Pads { root: root.into(), index: Mutex::new(index) };
+        let workspaces =
+            std::fs::read(root.join(".workspaces.json")).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
+        let pads = Pads { root: root.into(), index: Mutex::new(index), workspaces: Mutex::new(workspaces) };
         pads.sync();
         pads
     }
@@ -113,7 +121,14 @@ impl Pads {
                         return None;
                     }
                 }
-                Some(Summary { id: id.clone(), title: title_of(file), folder: folder_of(file), link: link(id), updated: modified(&path) })
+                Some(Summary {
+                    id: id.clone(),
+                    title: title_of(file),
+                    folder: folder_of(file),
+                    link: link(id),
+                    updated: modified(&path),
+                    workspace: self.workspace_of(id),
+                })
             })
             .collect();
         pads.sort_by(|a, b| b.updated.cmp(&a.updated).then(a.title.cmp(&b.title)));
@@ -223,6 +238,14 @@ impl Pads {
         self.relocate(&id, &file, join(&folder, &title_of(&file)))
     }
 
+    /// Puts a pad in a workspace.
+    pub fn place(&self, pad: &str, workspace: &str) -> Result<Pad, String> {
+        let (id, _) = parse_link(pad);
+        let (file, text) = self.load(&id)?;
+        self.set_workspace(&id, workspace);
+        Ok(self.pad(&id, &file, &text))
+    }
+
     /// Into the scratchpads' .trash folder, not away: a pad is the user's writing.
     pub fn delete(&self, pad: &str) -> Result<(), String> {
         let (id, _) = parse_link(pad);
@@ -236,6 +259,7 @@ impl Pads {
         std::fs::rename(self.root.join(&file), to).map_err(|e| e.to_string())?;
         self.index.lock().unwrap().remove(&id);
         self.save_index();
+        self.set_workspace(&id, DEFAULT);
         Ok(())
     }
 
@@ -278,6 +302,22 @@ impl Pads {
             sections: sections(text),
             link: link(id),
             updated: modified(&self.root.join(file)),
+            workspace: self.workspace_of(id),
+        }
+    }
+
+    fn workspace_of(&self, id: &str) -> String {
+        self.workspaces.lock().unwrap().get(id).cloned().unwrap_or_else(|| DEFAULT.into())
+    }
+
+    fn set_workspace(&self, id: &str, workspace: &str) {
+        let mut workspaces = self.workspaces.lock().unwrap();
+        match workspace.trim() {
+            "" | DEFAULT => workspaces.remove(id),
+            workspace => workspaces.insert(id.into(), workspace.into()),
+        };
+        if let Ok(data) = serde_json::to_vec_pretty(&*workspaces) {
+            let _ = std::fs::write(self.root.join(".workspaces.json"), data);
         }
     }
 
@@ -521,16 +561,31 @@ fn clean_title(title: &str) -> Result<String, String> {
     Ok(title.to_string())
 }
 
-/// One scratchpad tool by its name, as the app's `pad` op and the MCP server both call them.
-pub fn call(pads: &Pads, tool: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
+/// One scratchpad tool by its name, as the app's `pad` op and the MCP server both call them. `of` is the workspace a
+/// pad's recorded one stands for (one deleted is Zero's).
+pub fn call(pads: &Pads, tool: &str, args: &serde_json::Value, of: &dyn Fn(&str) -> String) -> Result<serde_json::Value, String> {
     use serde_json::json;
     let text = |key: &str| args[key].as_str();
     let need = |key: &str| text(key).ok_or_else(|| format!("{tool} needs {key}"));
-    let pad = |result: Result<Pad, String>| result.map(|pad| json!(pad));
+    let pad = |result: Result<Pad, String>| {
+        result.map(|mut pad| {
+            pad.workspace = of(&pad.workspace);
+            json!(pad)
+        })
+    };
     match tool {
-        "list" => Ok(json!({"pads": pads.list_in(text("query"), text("folder")), "folders": pads.folders()})),
+        "list" => {
+            let mut listed = pads.list_in(text("query"), text("folder"));
+            listed.iter_mut().for_each(|p| p.workspace = of(&p.workspace));
+            listed.retain(|p| text("workspace").is_none_or(|w| p.workspace == w));
+            Ok(json!({"pads": listed, "folders": pads.folders()}))
+        }
         "read" => pad(pads.read(need("pad")?, text("section"))),
-        "create" => pad(pads.create(text("title").unwrap_or(""), text("folder").unwrap_or(""), text("content").unwrap_or(""))),
+        "create" => {
+            let made = pads.create(text("title").unwrap_or(""), text("folder").unwrap_or(""), text("content").unwrap_or(""))?;
+            pad(pads.place(&made.id, text("workspace").unwrap_or(DEFAULT)))
+        }
+        "place" => pad(pads.place(need("pad")?, need("workspace")?)),
         "write" => pad(pads.write(need("pad")?, need("content")?, text("revision"))),
         "append" => pad(pads.append(need("pad")?, need("content")?, text("section"))),
         "edit" => pad(pads.edit(need("pad")?, need("section")?, need("content")?, text("revision"))),

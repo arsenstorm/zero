@@ -8,7 +8,7 @@ use zerod::pads::{Pads, call};
 
 async fn ask(pads: &Pads, message: Value) -> Option<Value> {
     respond(&message, |tool, args| {
-        let result = call(pads, &tool, &args);
+        let result = call(pads, &tool, &args, &|w: &str| w.to_string());
         async move { result }
     })
     .await

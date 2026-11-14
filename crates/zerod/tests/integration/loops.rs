@@ -65,3 +65,18 @@ fn each_use_is_recorded_by_session_and_role() {
     assert_eq!(uses.iter().map(|u| (u.session.as_str(), u.role.as_str())).collect::<Vec<_>>(), [("s1", "lead"), ("s2", "worker")]);
     assert!(uses.iter().all(|u| u.at > 0));
 }
+
+#[test]
+fn a_loop_is_in_a_workspace_named_in_its_header_else_zeros_and_keeps_it_when_saved_without_one() {
+    let root = temp_dir("loops-workspaces");
+    let loops = Loops::open(&root);
+    assert_eq!(loops.save("plain", "", "Go.").unwrap().workspace, "zero", "no header: Zero's");
+    let acme = loops.save_in("triage", "Bugs first", "Go.", Some("acme")).unwrap();
+    assert_eq!(acme.workspace, "acme");
+    assert_eq!(std::fs::read_to_string(root.join("triage.md")).unwrap(), "---\ndescription: Bugs first\nworkspace: acme\n---\nGo.");
+    let edited = loops.save_in("triage", "", "Go again.", None).unwrap();
+    assert_eq!((edited.workspace.as_str(), edited.body.as_str()), ("acme", "Go again."), "saved without one, it stays where it was");
+    assert_eq!(std::fs::read_to_string(root.join("triage.md")).unwrap(), "---\nworkspace: acme\n---\nGo again.");
+    assert_eq!(loops.save_in("triage", "", "Go.", Some("zero")).unwrap().workspace, "zero");
+    assert_eq!(std::fs::read_to_string(root.join("triage.md")).unwrap(), "Go.", "Zero's needs no header");
+}
