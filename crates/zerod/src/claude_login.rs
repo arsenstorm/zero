@@ -68,7 +68,8 @@ pub async fn sign_in(
     Ok(Account { email: said["email"].as_str().map(String::from), plan: said["subscriptionType"].as_str().map(String::from) })
 }
 
-/// Claude Code waiting on stream-json, with none of the user's settings, plugins or MCP servers: asked only for usage.
+/// Claude Code waiting on stream-json, with none of the user's settings, plugins or MCP servers: asked only for usage and
+/// its models.
 pub fn usage_command() -> Vec<String> {
     crate::adapter::login_shell(&[
         "claude",
@@ -88,6 +89,24 @@ pub fn usage_command() -> Vec<String> {
 /// How much of its plan's windows the account `env` signs in as has used, asked of Claude Code (`get_usage`): no turn,
 /// nothing spent.
 pub async fn usage(command: &[String], env: &[(String, String)]) -> Result<crate::model::Usage, String> {
+    let response = control(command, env, "usage", serde_json::json!({"subtype": "get_usage", "skip_behaviors": true})).await?;
+    // No plan limits for this account (API-billed); a Claude Code token can't read them (no profile scope), but
+    // tokens aren't read (server/signins.rs).
+    if response["rate_limits_available"] == false {
+        return Ok(crate::model::Usage { no_limits: true, ..Default::default() });
+    }
+    Ok(plan_usage(&response["rate_limits"]))
+}
+
+/// The models Claude Code offers the account `env` signs in as, as its `/model` picker lists them (`initialize`'s
+/// `models`: each its value, display name, description and effort levels): no turn, nothing spent.
+pub async fn models(command: &[String], env: &[(String, String)]) -> Result<Vec<serde_json::Value>, String> {
+    let response = control(command, env, "models", serde_json::json!({"subtype": "initialize"})).await?;
+    Ok(response["models"].as_array().cloned().unwrap_or_default())
+}
+
+/// One control request to a Claude Code started for it, and its answer.
+async fn control(command: &[String], env: &[(String, String)], id: &str, request: serde_json::Value) -> Result<serde_json::Value, String> {
     use tokio::io::AsyncWriteExt;
     let mut claude = tokio::process::Command::new(&command[0]);
     claude
@@ -98,25 +117,19 @@ pub async fn usage(command: &[String], env: &[(String, String)]) -> Result<crate
         .stderr(Stdio::null())
         .kill_on_drop(true);
     let mut child = claude.spawn().map_err(|e| format!("Couldn't start Claude Code: {e}"))?;
-    let ask =
-        serde_json::json!({"type": "control_request", "request_id": "usage", "request": {"subtype": "get_usage", "skip_behaviors": true}});
+    let ask = serde_json::json!({"type": "control_request", "request_id": id, "request": request});
     child.stdin.as_mut().ok_or("Claude Code has no input")?.write_all(format!("{ask}\n").as_bytes()).await.map_err(|e| e.to_string())?;
     let mut lines = tokio::io::BufReader::new(child.stdout.take().ok_or("Claude Code has no output")?).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
         let response = &message["response"];
-        if message["type"] != "control_response" || response["request_id"] != "usage" {
+        if message["type"] != "control_response" || response["request_id"] != id {
             continue;
         }
         if response["subtype"] != "success" {
             return Err(response["error"].as_str().unwrap_or("Claude Code didn't say").into());
         }
-        // No plan limits for this account (API-billed); a Claude Code token can't read them (no profile scope), but
-        // tokens aren't read (server/signins.rs).
-        if response["response"]["rate_limits_available"] == false {
-            return Ok(crate::model::Usage { no_limits: true, ..Default::default() });
-        }
-        return Ok(plan_usage(&response["response"]["rate_limits"]));
+        return Ok(response["response"].clone());
     }
     Err("Claude Code stopped before it answered".into())
 }

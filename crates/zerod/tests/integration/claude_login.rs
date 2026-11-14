@@ -56,3 +56,15 @@ async fn an_account_without_plan_limits_says_so() {
     let usage = usage(&sh(&script), &[]).await.unwrap();
     assert!(usage.no_limits && usage.windows.is_empty() && !usage.limited);
 }
+
+/// Claude Code's own model list for an account, as its `/model` picker has it: asked with `initialize`, no turn.
+#[tokio::test]
+async fn an_accounts_models_are_asked_of_claude_code_without_a_turn() {
+    let answer = r#"{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"commands":[],"models":[{"value":"default","resolvedModel":"claude-opus-5-5","displayName":"Default (recommended)","description":"Opus 5.5 · Best for everyday, complex tasks"},{"value":"claude-opus-4-8","displayName":"Opus 4.8","description":"Best for everyday, complex tasks","supportedEffortLevels":["low","high"]}],"claude_code_version":"2.1.323"}}}"#;
+    let script =
+        format!("read request; case \"$request\" in *initialize*) echo '{{\"type\":\"system\"}}'; echo '{answer}';; esac; sleep 5");
+    let models = zerod::claude_login::models(&sh(&script), &[]).await.unwrap();
+    let values: Vec<_> = models.iter().map(|m| m["value"].as_str().unwrap()).collect();
+    assert_eq!(values, ["default", "claude-opus-4-8"]);
+    assert_eq!(models[1]["supportedEffortLevels"], serde_json::json!(["low", "high"]));
+}

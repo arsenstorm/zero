@@ -45,7 +45,43 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
             daemon.signins.read_now.notify_one();
             Ok(Value::Null)
         }
+        // Claude Code's own model list for the account new Claude tasks start as (its default sign-in, else the CLI's
+        // own): what its `/model` offers, asked of it, never of Anthropic.
+        "claudeModels" => claude_models(daemon).await,
         other => unknown(other),
+    }
+}
+
+/// By account: when its list was read, and the list. Kept an hour: the account changing reads another's; a new Claude
+/// Code's list shows within the hour.
+// ponytail: an hour's TTL, not the CLI's version; key on `claude --version` if a stale list is ever seen.
+type KeptModels = std::collections::HashMap<String, (i64, Vec<Value>)>;
+static CLAUDE_MODELS: std::sync::Mutex<Option<KeptModels>> = std::sync::Mutex::new(None);
+
+async fn claude_models(daemon: &Daemon) -> Result<Value, String> {
+    let signin = daemon.signins.default_for(Provider::Claude);
+    let key = signin.as_ref().map_or(String::new(), |s| s.id.clone());
+    let kept = CLAUDE_MODELS.lock().unwrap().get_or_insert_default().get(&key).cloned();
+    if let Some((at, list)) = &kept
+        && crate::now() - at < 3600
+    {
+        return Ok(json!(list));
+    }
+    let env = match &signin {
+        Some(signin) => daemon.signins.environment(signin)?,
+        None => vec![],
+    };
+    let read =
+        tokio::time::timeout(std::time::Duration::from_secs(30), crate::claude_login::models(&crate::claude_login::usage_command(), &env))
+            .await
+            .unwrap_or_else(|_| Err("Claude Code didn't answer in time".into()));
+    match read {
+        Ok(list) if !list.is_empty() => {
+            CLAUDE_MODELS.lock().unwrap().get_or_insert_default().insert(key, (crate::now(), list.clone()));
+            Ok(json!(list))
+        }
+        // A read that fails keeps what was known.
+        failed => kept.map(|(_, list)| json!(list)).ok_or_else(|| failed.err().unwrap_or("Claude Code listed no models".into())),
     }
 }
 
