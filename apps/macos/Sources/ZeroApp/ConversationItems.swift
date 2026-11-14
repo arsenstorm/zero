@@ -12,15 +12,17 @@ struct ItemView: View {
         switch item.kind {
         case let .user(text, images):
             VStack(alignment: .trailing, spacing: 6) {
-                if !images.isEmpty {
+                // A video sent with no stills (from the phone, before it cut them) is a tile too.
+                let tiles = ImageToken.tiles(text, images: images)
+                if !tiles.isEmpty {
                     // In rows, from the right: many images wrap rather than widen the message past the page.
-                    let tiles = ImageToken.tiles(text, images: images)
                     let pictures = tiles.filter { $0.video == nil }.map(\.path)
                     WrappingStack(spacing: 6, trailing: true) {
                         ForEach(tiles, id: \.path) { tile in
                             if let video = tile.video {
                                 Thumbnail(
-                                    path: tile.path, side: 200, fit: true, tap: { NSWorkspace.shared.open(URL(fileURLWithPath: video)) }
+                                    path: tile.path.isEmpty ? video : tile.path, side: 200, fit: true,
+                                    tap: { NSWorkspace.shared.open(URL(fileURLWithPath: video)) }
                                 )
                                 .overlay { VideoBadge() }
                             } else {

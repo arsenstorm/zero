@@ -14,6 +14,7 @@ arrow-up-right           arrow-up-right            outline
 badge-check              badge-check               glyph
 ban                      ban                       outline
 bolt-lightning           zap                       glyph
+book-open                book-open
 bookmark                 bookmark                  glyph
 brain                    brain                     outline
 check                    check                     outline
@@ -29,29 +30,34 @@ circle-pause             circle-pause              glyph
 circle-question          circle-question-mark      glyph
 circle-user              circle-user
 circle-xmark             circle-x                  glyph
+city-building            building-2
 clock                    clock                     glyph
 code                     code
 code-branch              git-branch
 command                  command
 compose                  square-pen
 copy                     copy                      outline
+crown                    crown
 dots                     ellipsis                  glyph outline
 eye                      eye
 file                     file
 file-content             file-text
 file-link                file-symlink
+fire                     flame
 folder                   folder                    glyph
 folder-download          folder-down
 folder-plus              folder-plus
 gear                     settings                  glyph outline
 github                   git-pull-request
 globe                    globe
+graduation-cap           graduation-cap
 hand-3                   hand                      glyph
 hand-holding-box         hand-platter              glyph
 hashtag                  hash
 heading-1                heading-1
 heading-2                heading-2
 heading-3                heading-3
+heart                    heart
 hourglass                hourglass                 glyph
 house-4                  house
 image                    image                     glyph outline

@@ -183,16 +183,24 @@ struct TaskStateIcon: View {
     var next: String?
     @ObservationIgnored private var building: Task<Void, Never>?
 
+    /// The page to build hidden after a short rest (a row's, or a rail workspace's last task), nil for none.
+    func build(_ session: String?) {
+        building?.cancel()
+        guard let session else {
+            if next != nil { next = nil }
+            return
+        }
+        building = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled, let self, self.next != session else { return }
+            self.next = session
+        }
+    }
+
     func hover(_ session: String, top: CGFloat, inside: Bool) {
         pending?.cancel()
-        building?.cancel()
-        if !inside, next != nil { next = nil }
+        build(inside ? session : nil)
         if inside {
-            building = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(120))
-                guard !Task.isCancelled, let self, self.next != session else { return }
-                self.next = session
-            }
             // None while a menu is open, as tips.
             guard WorkspaceSelector.shared.open == nil else { return }
             // Open already: on to this row at once. Else after a rest, so passing over the list shows nothing.

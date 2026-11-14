@@ -60,15 +60,6 @@ enum Theme {
     static let rowHover = dynamic(dark: NSColor(white: 0.21, alpha: 1), light: NSColor(white: 1, alpha: 1))
     static let railSelected = dynamic(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.84, alpha: 1))
     static let railHover = dynamic(dark: NSColor(white: 0.15, alpha: 1), light: NSColor(white: 0.885, alpha: 1))
-    private static func hex(_ value: UInt32) -> NSColor {
-        NSColor(
-            srgbRed: CGFloat((value >> 16) & 0xff) / 255, green: CGFloat((value >> 8) & 0xff) / 255, blue: CGFloat(value & 0xff) / 255,
-            alpha: 1)
-    }
-    /// The sidebars' blueprint heading as drafting paper: dark ink on the panels' neutral-200 (neutral-800 with light
-    /// ink in dark mode), so it reads as a surface of its own rather than a faded black.
-    static let blueprint = dynamic(dark: hex(0x262626), light: hex(0xe5e5e5))
-    static let onBlueprint = dynamic(dark: hex(0xfafafa), light: hex(0x0a0a0a))
     /// The workspace window's own grey, under its panel: the outer rail.
     static let rail = dynamic(dark: NSColor(white: 0.07, alpha: 1), light: NSColor(white: 0.925, alpha: 1))
     /// A row's fill on frosted glass (the new task page's composer): see-through, so it takes the tint under it.

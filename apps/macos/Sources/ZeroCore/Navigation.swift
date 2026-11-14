@@ -7,7 +7,7 @@ import Observation
 public final class Navigation {
     public enum Place: Hashable, Sendable {
         case home, inbox, board, task(String), agent(String), settings, pads, pad(String), loops, loop(String), later,
-            laterItem(String)
+            laterItem(String), newWorkspace
     }
 
     /// Where the window is. A worker's task set here by its own id (a link, an inbox card, a report: every way into a
@@ -37,7 +37,8 @@ public final class Navigation {
     private var at = Place.home
     /// The lead whose page shows a worker (the app's: its tasks' parents), nil for a lead.
     @ObservationIgnored public var leadOf: (@MainActor (String) -> String?)?
-    /// Where Home was last: the task that was open, so the rail's Home goes back to it rather than to New task.
+    /// Where the tasks were last: the task that was open, so the rail's workspace (and a page's way back) returns to it
+    /// rather than to New task.
     public private(set) var homePlace = Place.home
     /// On a task's page: the worker shown instead of its lead. Showing one is a step in the history too: back from a
     /// worker is its lead, not the page before the lead.
@@ -87,6 +88,9 @@ public final class Navigation {
         UserDefaults.standard.set(lastTasks, forKey: "lastTasks")
     }
 
+    /// The task open last in a workspace: what arriving there opens.
+    public func lastTask(in workspace: String) -> String? { lastTasks[workspace]?.first }
+
     /// The workspace shown changed: the task open last there, while it's still there (`keeps`: not archived, not
     /// moved to another workspace); else a new task. Away from the tasks (Settings, a scratchpad), the window stays.
     public func arrive(in workspace: String, keeps: (String) -> Bool) {
@@ -117,6 +121,8 @@ public final class Navigation {
         // Integrations was a place of its own before it became Settings' pages.
         if kept == "integrations" { place = .settings; settingsPage = "GitHub" }
         worker = UserDefaults.standard.string(forKey: "placeWorker")
+        // Where it opens is where its history starts: no way back to the New task it was made on.
+        behind.removeAll(); ahead.removeAll()
     }
 
     public func goBack() {
@@ -156,6 +162,7 @@ public extension Navigation.Place {
         case let .loop(name): "loop:" + name
         case .later: "later"
         case let .laterItem(id): "later:" + id
+        case .newWorkspace: "newWorkspace"
         }
     }
 
@@ -173,6 +180,7 @@ public extension Navigation.Place {
         case "loops": self = .loops
         case "loop": self = .loop(value)
         case "later": self = value.isEmpty ? .later : .laterItem(value)
+        case "newWorkspace": self = .newWorkspace
         default: return nil
         }
     }

@@ -514,11 +514,13 @@ struct RailUsage: View {
                 }
             }
         }
+        // Its place kept while nothing's known yet (a first run), so nothing below it moves when it comes.
+        .frame(width: 32, height: 32)
         .task {
-            await workspace.loadSignIns()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
-                await workspace.loadSignIns()
+                // zerod not connected yet (at launch): again in a second, not a minute.
+                let read = await workspace.loadSignIns()
+                try? await Task.sleep(for: .seconds(read ? 60 : 1))
             }
         }
     }
@@ -586,6 +588,10 @@ struct RailPeek<Mark: View, Card: View>: View {
                     .onHover { overCard = $0 }
                     .offset(x: 32)
                 }
+            }
+            // Away with the page it was over (a task opened from it, say), until the pointer comes onto the mark again.
+            .closesWithFloating {
+                overMark = false; overCard = false
             }
     }
 }

@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import CoreImage.CIFilterBuiltins
 import CryptoKit
@@ -418,23 +419,25 @@ private final class Bridge {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             guard (try? data.write(to: file)) != nil else { return nil }
             result = file.path
+        case "uploadPart", "uploadDone":
+            // A video in parts (ZerodLink.Upload): kept where zerod reads it, as an image is.
+            guard let answer = ZerodLink.Upload.answer(request, in: Paths.dir.appendingPathComponent("uploads")) else { return nil }
+            result = answer
+        case "downloadPart":
+            // A message's video, in parts, for the phone to play (ZerodLink.Download): videos only.
+            guard let answer = ZerodLink.Download.answer(request) else { return nil }
+            result = answer
         case "name":
             // The Mac's own name (System Settings › General › Sharing), for the phone to say which it's paired with.
             result = Host.current().localizedName ?? "your Mac"
         case "projects":
             result = Projects.folders
         case "image":
-            // An image in a message (an upload, a screenshot): a JPEG of it no bigger than asked, for the phone to show.
-            // Only images: anything else isn't read.
-            guard let path = request["path"] as? String, let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-                let type = CGImageSourceGetType(source) as String?, UTType(type)?.conforms(to: .image) == true,
-                let image = CGImageSourceCreateThumbnailAtIndex(
-                    source, 0,
-                    [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceThumbnailMaxPixelSize: min(request["side"] as? Int ?? 600, 2400),
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                    ] as CFDictionary),
+            // An image in a message (an upload, a screenshot), or a video's first frame (one the phone sent with no
+            // stills): a JPEG of it no bigger than asked, for the phone to show. Only images and videos are read.
+            guard let path = request["path"] as? String else { return nil }
+            let side = min(request["side"] as? Int ?? 600, 2400)
+            guard let image = Self.videoFrame(path, side: side) ?? Self.picture(path, side: side),
                 let jpeg = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: 0.8])
             else { return nil }
             result = jpeg.base64EncodedString()
@@ -470,6 +473,35 @@ private final class Bridge {
             return nil
         }
         return try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "ok": true, "result": result])
+    }
+
+    private static func picture(_ path: String, side: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+            let type = CGImageSourceGetType(source) as String?, UTType(type)?.conforms(to: .image) == true
+        else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(
+            source, 0,
+            [
+                kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: side,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+            ] as CFDictionary)
+    }
+
+    /// A video's frame a moment in (its very first is often black).
+    private static func videoFrame(_ path: String, side: Int) -> CGImage? {
+        let url = URL(fileURLWithPath: path)
+        guard UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true else { return nil }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: side, height: side)
+        let done = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var frame: CGImage?
+        generator.generateCGImageAsynchronously(for: CMTime(seconds: 0.5, preferredTimescale: 600)) { image, _, _ in
+            frame = image
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + 5)
+        return frame
     }
 
     /// The phone's requests answered once the Mac has looked: the MCP servers (zerod's own list has their values).

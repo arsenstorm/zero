@@ -114,3 +114,15 @@ private func invite(_ host: Tunnel.Host, at now: Date) -> Tunnel.Invite {
     #expect(try Tunnel.open(sealed, with: phone, from: host.publicKey) == Data("Merge it?".utf8))
     #expect(throws: (any Error).self) { try Tunnel.open(sealed, with: stranger, from: host.publicKey) }
 }
+
+@Test func paceSendsABurstAtOnceThenAtItsRate() {
+    let start = Date(timeIntervalSince1970: 1_000_000)
+    var pace = Tunnel.Pace(burst: 3, rate: 10, now: start)
+    #expect((0..<3).map { _ in pace.next(now: start) } == [0, 0, 0])
+    #expect(abs(pace.next(now: start) - 0.1) < 1e-9)
+    #expect(abs(pace.next(now: start) - 0.2) < 1e-9)
+    // Later, the waits served: the bucket refilled from there, never past its burst.
+    let later = start.addingTimeInterval(10)
+    #expect((0..<3).map { _ in pace.next(now: later) } == [0, 0, 0])
+    #expect(pace.next(now: later) > 0)
+}

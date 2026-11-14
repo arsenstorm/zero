@@ -41,3 +41,17 @@ private let panel = CGRect(x: 1064, y: 300, width: 380, height: 320)
     #expect(!MenuAim.holds(CGPoint(x: 1450, y: 700), from: CGPoint(x: 1450, y: 690), bar: bar, panel: panel))
     #expect(!MenuAim.holds(CGPoint(x: 1450, y: 470), from: nil, bar: bar, panel: panel))
 }
+
+@Test func crossingTheBarOnTheWayIntoThePanelIsPassingThrough() {
+    // From the inbox button down and left towards the panel's lower part, over the settings button (the bar's foot)
+    // to the panel's edge: every step heads in.
+    let start = CGPoint(x: 1478, y: 504), end = CGPoint(x: 1446, y: 410)
+    let path = (0...8).map { CGPoint(x: start.x + (end.x - start.x) * Double($0) / 8, y: start.y + (end.y - start.y) * Double($0) / 8) }
+    for (from, to) in zip(path, path.dropFirst()) { #expect(MenuAim.passing(to, from: from, panel: panel)) }
+}
+
+@Test func downTheBarOrRestingIsNotPassingThrough() {
+    #expect(!MenuAim.passing(CGPoint(x: 1478, y: 470), from: CGPoint(x: 1478, y: 490), panel: panel))
+    #expect(!MenuAim.passing(CGPoint(x: 1478, y: 490), from: CGPoint(x: 1478, y: 490), panel: panel))
+    #expect(!MenuAim.passing(CGPoint(x: 1478, y: 490), from: nil, panel: panel))
+}

@@ -23,7 +23,7 @@ struct LoopsPage: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SidebarColumn(title: "Loops") {
+            SidebarColumn(title: "Loops", back: { navigation.place = navigation.homePlace }) {
                 HStack(spacing: 4) {
                     Spacer(minLength: 0)
                     Button {
@@ -36,7 +36,7 @@ struct LoopsPage: View {
                 .padding(.bottom, 6)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) {
-                        ForEach(workspace.loops) { loop in
+                        ForEach(workspace.loopsHere) { loop in
                             Button {
                                 navigation.place = .loop(loop.name)
                             } label: {

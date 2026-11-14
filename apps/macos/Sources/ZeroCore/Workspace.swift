@@ -59,9 +59,13 @@ public final class Workspace {
     /// The scratchpads and their folders, as zerod last listed them.
     public private(set) var pads: [PadSummary] = []
     public private(set) var padFolders: [String] = []
+    /// The current workspace's pads; `pads` keeps them all, for links to any. Folders are every workspace's.
+    public var padsHere: [PadSummary] { pads.filter { $0.workspace == current } }
     /// The loops (named instructions, zerod's loops.rs), as zerod last listed them; bumped when one changes.
     public private(set) var loopsVersion = 0
     public private(set) var loops: [ZerodLink.Loop] = []
+    /// The current workspace's loops; `loops` keeps them all, for `@name` anywhere.
+    public var loopsHere: [ZerodLink.Loop] { loops.filter { $0.workspace == current } }
     /// What sessions follow (pull requests, issues, threads; zerod's following.rs), as zerod last listed them; bumped
     /// when a follow is made, taken back, or read again.
     public private(set) var followingVersion = 0
@@ -239,6 +243,19 @@ public final class Workspace {
 
     public init() {
         onBehind = { [weak self] in Task { try? await self?.link?.subscribe() } }
+        // The rail's usage mark from the last run, so it's there from the first frame, not once zerod answers.
+        if let data = UserDefaults.standard.data(forKey: Self.usageCacheKey),
+            let cached = try? JSONDecoder().decode(UsageCache.self, from: data)
+        {
+            signins = cached.signins; signinUsage = cached.usage; signinLastTurn = cached.lastTurn
+        }
+    }
+
+    private static let usageCacheKey = "usageCache"
+    private struct UsageCache: Codable {
+        var signins: [ZerodLink.SignIn]
+        var usage: [String: Usage]
+        var lastTurn: [String: Int]
     }
 
     // The connection.
@@ -265,6 +282,7 @@ public final class Workspace {
                         case .following: self?.followingVersion += 1
                         case .workspaces: self?.workspacesVersion += 1; Task { await self?.loadWorkspaces() }
                         case .signins: Task { await self?.loadSignIns() }
+                        case .mcp: Task { await self?.loadMcpServers() }
                         case .restarting: self?.followUpdate()
                         case .clear: break
                         case let .uses(tasks): if self?.uses != tasks { self?.uses = tasks }
@@ -284,7 +302,8 @@ public final class Workspace {
                     updating = nil
                     // Opened while zerod restarts (an install reopens the app first): said straight away.
                     if (try? await fresh.restartStatus())?.restarting == true { followUpdate() }
-                    await loadWorkspaces(); await loadIntegrations()
+                    // The MCP servers too, so the New workspace page and its form have them from their first frame.
+                    await loadWorkspaces(); await loadIntegrations(); await loadMcpServers()
                     Task { await refreshLinearTeams() }
                 }
             }
@@ -512,7 +531,8 @@ public final class Workspace {
 
     /// One the user writes: their note, and anything behind it. Its id.
     public func saveLater(note: String, artifact: String) async -> String? {
-        let saved = await attempt { try await $0.later("save", ["note": note, "artifact": artifact]) } as? [String: Any]
+        let saved =
+            await attempt { try await $0.later("save", ["note": note, "artifact": artifact, "workspace": current]) } as? [String: Any]
         await loadLater()
         return saved?["id"] as? String
     }
@@ -566,7 +586,11 @@ public final class Workspace {
     /// Saved, or why not (a name that isn't one, a child that leads back to it).
     public func saveLoop(_ name: String, description: String, body: String) async -> String? {
         guard let link = await linked() else { return "Zero's daemon isn't running" }
-        do { _ = try await link.saveLoop(name, description: description, body: body); await loadLoops(); return nil } catch {
+        // A new loop goes in the current workspace; one already made stays in its own.
+        let workspace = loops.contains { $0.name == name } ? nil : current
+        do {
+            _ = try await link.saveLoop(name, description: description, body: body, workspace: workspace); await loadLoops(); return nil
+        } catch {
             return error.localizedDescription
         }
     }
@@ -591,6 +615,16 @@ public final class Workspace {
     public func deleteWorkspace(_ id: String) async {
         _ = await attempt { try await $0.deleteWorkspace(id) }
         await loadWorkspaces()
+    }
+
+    /// The workspaces in the user's order: shown in it at once, in the caller's animation (a drag lands where it's let
+    /// go), then as zerod keeps it.
+    public func reorderWorkspaces(_ ids: [String]) {
+        workspaces = ids.compactMap { id in workspaces.first { $0.id == id } } + workspaces.filter { !ids.contains($0.id) }
+        Task {
+            _ = await attempt { try await $0.reorderWorkspaces(ids) }
+            await loadWorkspaces()
+        }
     }
 
     /// Puts a task in a workspace (nil: Zero).
@@ -679,14 +713,16 @@ public final class Workspace {
     }
 
     public func createPad(in folder: String) async -> Pad? {
-        let pad = await attempt { try await $0.pad("create", ["folder": folder, "title": "Untitled"], as: Pad.self) }
+        let pad = await attempt { try await $0.pad("create", ["folder": folder, "title": "Untitled", "workspace": current], as: Pad.self) }
         await loadPads()
         return pad
     }
 
     /// A pad with something in it already (a message saved from a task).
     public func createPad(title: String, folder: String, content: String) async -> Pad? {
-        let pad = await attempt { try await $0.pad("create", ["title": title, "folder": folder, "content": content], as: Pad.self) }
+        let pad = await attempt {
+            try await $0.pad("create", ["title": title, "folder": folder, "content": content, "workspace": current], as: Pad.self)
+        }
         await loadPads()
         return pad
     }
@@ -702,6 +738,11 @@ public final class Workspace {
         let pad = await attempt { try await $0.pad("rename", ["pad": id, "title": title], as: Pad.self) }
         await loadPads()
         return pad
+    }
+
+    public func placePad(_ id: String, in workspace: String) async {
+        _ = await attempt { try await $0.pad("place", ["pad": id, "workspace": workspace], as: Pad.self) }
+        await loadPads()
     }
 
     public func movePad(_ id: String, to folder: String) async {
@@ -994,13 +1035,20 @@ public final class Workspace {
     /// When a turn last ended on each sign-in, by id (Unix seconds): zerod's record of the account each CLI ran as.
     public private(set) var signinLastTurn: [String: Int] = [:]
 
-    public func loadSignIns() async {
-        guard let (list, defaults, usage, refused, lastTurn) = try? await link?.signIns() else { return }
+    /// False when zerod couldn't be asked (not connected yet).
+    @discardableResult
+    public func loadSignIns() async -> Bool {
+        guard let (list, defaults, usage, refused, lastTurn) = try? await link?.signIns() else { return false }
+        let changed = lastTurn != signinLastTurn || list != signins || usage != signinUsage
         if lastTurn != signinLastTurn { signinLastTurn = lastTurn }
         if refused != signinRefused { signinRefused = refused }
         if list != signins { signins = list }
         if defaults != signinDefaults { signinDefaults = defaults }
         if usage != signinUsage { signinUsage = usage }
+        if changed, let data = try? JSONEncoder().encode(UsageCache(signins: list, usage: usage, lastTurn: lastTurn)) {
+            UserDefaults.standard.set(data, forKey: Self.usageCacheKey)
+        }
+        return true
     }
 
     /// Every account's finished turns by day: the Activity graph's.

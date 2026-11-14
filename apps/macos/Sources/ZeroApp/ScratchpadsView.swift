@@ -51,7 +51,7 @@ struct ScratchpadsPage: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SidebarColumn(title: "Scratchpads") {
+            SidebarColumn(title: "Scratchpads", back: { navigation.place = navigation.homePlace }) {
                 searchBar.padding(.bottom, 6)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) { rows }.padding(.bottom, 8)
@@ -147,7 +147,7 @@ struct ScratchpadsPage: View {
     @ViewBuilder private var rows: some View {
         let query = search.trimmingCharacters(in: .whitespaces).lowercased()
         if !query.isEmpty {
-            ForEach(workspace.pads.filter { $0.title.lowercased().contains(query) || $0.folder.lowercased().contains(query) }) { pad in
+            ForEach(workspace.padsHere.filter { $0.title.lowercased().contains(query) || $0.folder.lowercased().contains(query) }) { pad in
                 padRow(pad, depth: 0, showFolder: true)
             }
         } else {
@@ -165,7 +165,7 @@ struct ScratchpadsPage: View {
                     if opened.contains(child) { tree(in: child, depth: depth + 1) }
                 }
                 ForEach(
-                    workspace.pads.filter { $0.folder == folder }.sorted {
+                    workspace.padsHere.filter { $0.folder == folder }.sorted {
                         $0.title.localizedStandardCompare($1.title) == .orderedAscending
                     }
                 ) { pad in
@@ -183,7 +183,7 @@ struct ScratchpadsPage: View {
                 NucleoIcon("folder", size: 15).foregroundStyle(.secondary)
                 Text(name(of: folder)).font(.system(size: 13)).lineLimit(1)
                 Spacer(minLength: 0)
-                Text("\(workspace.pads.filter { $0.folder == folder || $0.folder.hasPrefix(folder + "/") }.count)")
+                Text("\(workspace.padsHere.filter { $0.folder == folder || $0.folder.hasPrefix(folder + "/") }.count)")
                     .font(.system(size: 11.5)).foregroundStyle(.tertiary).monospacedDigit()
             }
             .padding(.leading, 10 + CGFloat(depth) * 14).padding(.trailing, 10).frame(height: 30)

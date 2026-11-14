@@ -131,10 +131,14 @@ extension AppDelegate {
     /// its neighbours, so the pointer never has to find the dot itself.
     private func hoverBar(at mouse: NSPoint) {
         guard pill.isVisible, pill.frame.contains(mouse), NSEvent.pressedMouseButtons == 0 else { inbox.barHover = nil; return }
+        // On the way into the open panel, what the pointer crosses doesn't take over (aimAtPanel).
+        guard !inbox.barAiming else { return }
         let local = pill.convertPoint(fromScreen: mouse)
         let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
         // Among the controls shown now, the one whose slot is nearest: slots meet, so a point on their seam is in two.
-        let shown = Set([InboxController.inboxSlot, InboxController.newSlot, InboxController.workspacesSlot] + inbox.barOrder)
+        let shown = Set(
+            [InboxController.inboxSlot, InboxController.newSlot, InboxController.workspacesSlot, InboxController.settingsSlot]
+                + inbox.barOrder)
         let under = inbox.barSlots.filter { shown.contains($0.key) && $0.value.insetBy(dx: -8, dy: -1).contains(point) }
             .min { abs($0.value.midY - point.y) < abs($1.value.midY - point.y) }?.key
         guard let under, under != inbox.barHover else { if under == nil { inbox.barHover = nil }; return }
@@ -143,6 +147,8 @@ extension AppDelegate {
         case InboxController.inboxSlot: peek(nil)
         case InboxController.newSlot: peekNewAgent()
         case InboxController.workspacesSlot: peekWorkspaces()
+        // Down to the bar's settings: a peeked inbox goes (one opened by a click stays).
+        case InboxController.settingsSlot: if !openedByIntent && inboxPanel.isVisible { hideInbox() }
         default: peek(under)
         }
     }
@@ -200,6 +206,9 @@ extension AppDelegate {
     /// up the screen edge or away, it closes a moment later unless the pointer comes back.
     func trackPointer() {
         let mouse = NSEvent.mouseLocation
+        let from = lastPointer
+        lastPointer = mouse
+        aimAtPanel(mouse, from: from)
         hoverBar(at: mouse)
         // "Follow the active screen": move whenever the pointer is on a different display than Zero.
         if settings.followActiveScreen, let here = NSScreen.screens.first(where: { $0.frame.contains(mouse) }),
@@ -208,8 +217,6 @@ extension AppDelegate {
             layout()
             placeBar()
         }
-        let from = lastPointer
-        lastPointer = mouse
         guard inboxPanel.isVisible else { return }
         if inboxHolds(mouse, from: from) {
             closingInbox?.cancel()
@@ -232,8 +239,26 @@ extension AppDelegate {
     private func inboxHolds(_ mouse: NSPoint, from: NSPoint?) -> Bool {
         guard inboxPanel.screen?.frame.contains(mouse) ?? false else { return false }
         let bar = NSRect(x: pill.frame.minX, y: pill.frame.midY - inbox.barHeight / 2, width: pill.frame.width, height: inbox.barHeight)
+        return MenuAim.holds(mouse, from: from, bar: bar, panel: inboxSurface)
+    }
+
+    /// The cards' surface on screen.
+    private var inboxSurface: NSRect {
         let s = inbox.surfaceFrame, panel = inboxPanel.frame
-        let surface = NSRect(x: panel.minX + s.minX, y: panel.maxY - s.maxY, width: s.width, height: s.height).intersection(panel)
-        return MenuAim.holds(mouse, from: from, bar: bar, panel: surface)
+        return NSRect(x: panel.minX + s.minX, y: panel.maxY - s.maxY, width: s.width, height: s.height).intersection(panel)
+    }
+
+    /// On the bar with the panel open, a step heading into the cards (MenuAim's triangle) passes over the bar: the
+    /// controls and buttons it crosses stay as they are (`barAiming`). Out of the triangle, or resting 150 ms (as
+    /// Amazon's menus wait), the control under the pointer takes over.
+    private func aimAtPanel(_ mouse: NSPoint, from: NSPoint?) {
+        let aiming = inboxPanel.isVisible && pill.frame.contains(mouse) && MenuAim.passing(mouse, from: from, panel: inboxSurface)
+        if inbox.barAiming != aiming { inbox.barAiming = aiming }
+        guard aiming else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, lastPointer == mouse, inbox.barAiming else { return }
+            inbox.barAiming = false
+            hoverBar(at: mouse)
+        }
     }
 }

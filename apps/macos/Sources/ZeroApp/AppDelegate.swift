@@ -110,6 +110,7 @@ import ZeroCore
         }
         NSApp.setActivationPolicy(.accessory)
         Task { await CustomModels.shared.load() }
+        ClaudeModels.refresh()
         HealthMonitor.shared.start()
         // Before connecting: launchd starts zerod, rather than the app (ZerodLink.ensureRunning).
         ZerodAgent.register()
@@ -125,6 +126,7 @@ import ZeroCore
         settings.onChange = { [weak self] in self?.applySettings() }
         registerHotKey()
         monitorEvents()
+        watchFloating()
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
             DispatchQueue.main.async { self?.updateDock() }
         }

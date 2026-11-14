@@ -1,10 +1,11 @@
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 import ZeroCore
 
-/// The workspace window, laid out as ChatGPT's: an outer rail (home, settings) on the window's grey, and a panel
-/// holding an inner sidebar and the page. Home's sidebar is the tasks (a lead session with its workers); its page a new
-/// task, every task at once, or one. Everything comes from `Workspace`; nothing here knows a provider's protocol.
+/// The workspace window, laid out as ChatGPT's: an outer rail (the inbox, the workspaces, settings) on the window's grey,
+/// and a panel holding an inner sidebar and the page. A workspace's sidebar is its tasks (a lead session with its
+/// workers); its page a new task, every task at once, or one. Everything comes from `Workspace`; nothing here knows a provider's protocol.
 struct WorkspaceView: View {
     @Bindable var workspace: Workspace
     @Bindable var navigation: Navigation
@@ -104,47 +105,41 @@ struct WorkspaceView: View {
 
     private var window: some View {
         HStack(spacing: 0) {
-            Rail(place: $navigation.place, homePlace: navigation.homePlace, inbox: inbox, workspace: workspace) {
-                navigation.openSettings(SettingsView.Page.general.rawValue)
-            } open: { id in
+            Rail(navigation: navigation, inbox: inbox, workspace: workspace) { id in
                 // A worker opens under its lead, as its row does.
                 if let lead = workspace.conversation(id)?.parent {
                     navigation.place = .task(lead); navigation.worker = id
                 } else {
                     navigation.place = .task(id)
                 }
-            } openAccounts: {
-                navigation.openSettings(SettingsView.Page.signins.rawValue)
             }
             .zIndex(1) // its cards go over the panel
-            Group {
+            ZStack {
+                // The tasks (sidebar, kept pages) stay under the other places, hidden: back from one, or a workspace
+                // switch from one, shows them as they were rather than building them again.
+                tasks
+                    .opacity(onTasks ? 1 : 0).allowsHitTesting(onTasks).disabled(!onTasks).accessibilityHidden(!onTasks)
                 switch navigation.place {
                 case .settings: settings()
                 case .pads, .pad: ScratchpadsPage(workspace: workspace, navigation: navigation)
                 case .loops, .loop: LoopsPage(workspace: workspace, navigation: navigation)
                 case .later, .laterItem: LaterPage(workspace: workspace, navigation: navigation)
+                case .newWorkspace:
+                    NewWorkspacePage(
+                        workspace: workspace,
+                        // Made, it's the workspace shown (zerod's save makes it current): its New task page.
+                        created: { _ in navigation.place = .home },
+                        cancel: { if navigation.canGoBack { navigation.goBack() } else { navigation.place = navigation.homePlace } },
+                        openServers: { navigation.openSettings(SettingsView.Page.mcp.rawValue) }
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
                 case .inbox:
                     HStack(spacing: 0) {
                         InboxSidebar(controller: inbox)
                         Rectangle().fill(Theme.stroke).frame(width: 1)
                         AsksPage(controller: inbox).frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
                     }
-                default:
-                    HStack(spacing: 0) {
-                        TasksSidebar(workspace: workspace, navigation: navigation)
-                        Rectangle().fill(Theme.stroke).frame(width: 1)
-                        page.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
-                    }
-                    .coordinateSpace(.named("tasks"))
-                    // A task's details, beside the sidebar where the pointer rests on its row: over the page, since the
-                    // sidebar clips what it scrolls.
-                    .overlay(alignment: .topLeading) {
-                        TaskPeekCard(
-                            workspace: workspace,
-                            open: {
-                                navigation.place = .task($0); navigation.worker = $1
-                            })
-                    }
+                default: EmptyView()
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -192,14 +187,46 @@ struct WorkspaceView: View {
         }
     }
 
-    @ViewBuilder private var page: some View {
+    /// The window on the tasks: a task, New task, All tasks or an agent's page, rather than a place of its own.
+    private var onTasks: Bool {
         switch navigation.place {
-        case .board: BoardView(workspace: workspace, navigation: navigation)
-        case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
-        case .task(let id) where workspace.conversation(id) != nil:
-            TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: id)
-                .background { TaskCopyKeys(id: navigation.worker ?? id, workspace: workspace) }
-        default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
+        case .settings, .pads, .pad, .loops, .loop, .later, .laterItem, .inbox, .newWorkspace: false
+        default: true
+        }
+    }
+
+    private var tasks: some View {
+        HStack(spacing: 0) {
+            TasksSidebar(workspace: workspace, navigation: navigation)
+            Rectangle().fill(Theme.stroke).frame(width: 1)
+            page.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.card)
+        }
+        .coordinateSpace(.named("tasks"))
+        // A task's details, beside the sidebar where the pointer rests on its row: over the page, since the
+        // sidebar clips what it scrolls.
+        .overlay(alignment: .topLeading) {
+            TaskPeekCard(
+                workspace: workspace,
+                open: {
+                    navigation.place = .task($0); navigation.worker = $1
+                })
+        }
+    }
+
+    /// The task pages always there, whatever the page shows: in the switch with New task and All tasks, a visit to
+    /// either threw every kept page away, and each workspace switch after it built its task's page again.
+    @ViewBuilder private var page: some View {
+        let task: String? =
+            if case .task(let id) = navigation.place, workspace.conversation(id) != nil { id } else { nil }
+        ZStack {
+            TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: task)
+                .background { if let task { TaskCopyKeys(id: navigation.worker ?? task, workspace: workspace) } }
+            switch navigation.place {
+            case .board: BoardView(workspace: workspace, navigation: navigation)
+            case .agent(let name): AgentPage(controller: inbox, name: name).id(name)
+            case _ where task != nil || !onTasks: EmptyView()
+            default: NewTaskView(workspace: workspace, started: { navigation.place = .task($0) })
+            }
         }
     }
 }
@@ -295,61 +322,63 @@ private struct ArchiveDialog: View {
 /// The title bar adds however far the sidebar has been dragged from that.
 let pageStart: CGFloat = 48 + CGFloat(SidebarWidth.standard) + 1
 
-/// The outer rail: home and Zero's pages at the top; what tasks use, the accounts' usage and settings at the foot.
-private struct Rail: View {
-    @Binding var place: Navigation.Place
-    /// Where Home was last (a task, say): what its icon goes back to.
-    var homePlace: Navigation.Place = .home
+/// The outer rail: the inbox (every workspace's) at the top, then the workspaces, each its glyph (or its coloured mark),
+/// the one shown marked by a bar at the rail's edge, ⌥1 to ⌥9 switching between them; a + under them for a new one.
+/// What tasks use, the accounts' usage and settings at the foot.
+struct Rail: View {
+    @Bindable var navigation: Navigation
     let inbox: InboxController
     let workspace: Workspace
-    /// Settings › General, whose Health section the gear's dot points to (opened at the top, not scrolled there).
-    let openGeneral: () -> Void
     /// Opens a task by its session (the Tasks card's).
     let open: (String) -> Void
-    /// Settings › Accounts and models (the usage mark's click).
-    let openAccounts: () -> Void
+    @State private var editing: ZerodLink.Workspace?
+    /// The workspace being dragged and how far: the others make way, and it lands where it's let go.
+    @State private var drag: (id: String, y: CGFloat)?
+    /// A drag just ended: the release that ends it isn't a click on the mark.
+    @State private var dragged = false
+    /// From one workspace's mark to the next.
+    private static let step: CGFloat = 32 + 6
+    @State private var monitor: Any?
 
-    private var home: Bool {
+    private var place: Navigation.Place { navigation.place }
+
+    /// The rail's item for where the window is: the inbox, Settings, a workspace being made (the +), or else the
+    /// workspace shown (its tasks, its notes and loops). The bar marks it.
+    private var marked: String {
         switch place {
-        case .inbox, .settings, .pads, .pad, .loops, .loop, .later, .laterItem: false;
-        default: true
+        case .inbox: "inbox"
+        case .settings: "settings"
+        case .newWorkspace: "new"
+        default: "workspace:" + workspace.current
         }
     }
 
+    /// The bar's move: ease-out cubic, quick; a jump under Reduce Motion.
+    private static let slide = Animation.timingCurve(0.215, 0.61, 0.355, 1, duration: 0.2)
+
     var body: some View {
         VStack(spacing: 6) {
-            item("house-4", selected: home, help: "Home") { if !home { place = homePlace } }
-            // What agents are waiting on you for, and how many.
-            // Always to what's waiting on you, whichever of the inbox's lists was open last.
-            item("inbox", selected: place == .inbox, help: "Inbox") {
+            // What agents are waiting on you for, in every workspace. Always to what's waiting on you, whichever of the
+            // inbox's lists was open last.
+            item("inbox", selected: marked == "inbox", help: "Inbox") {
                 UserDefaults.standard.set(InboxFilter.waiting, forKey: InboxFilter.key)
                 UserDefaults.standard.set("", forKey: InboxFilter.titleKey)
-                place = .inbox
+                navigation.place = .inbox
             }
-            .overlay(alignment: .topTrailing) {
-                let waiting = AsksPage.waiting(inbox).count
-                if waiting > 0 {
-                    Text("\(waiting)").font(.system(size: 9.5, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
-                        .padding(.horizontal, 4).frame(minWidth: 15, minHeight: 15).background(Color.red, in: Capsule())
-                        // A ring in the rail's colour, as the Dock cuts its badges out.
-                        .padding(1.5).background(Theme.composer, in: Capsule())
-                        .offset(x: 4.5, y: -3.5).allowsHitTesting(false)
-                }
+            .overlay(alignment: .topTrailing) { RailDot().opacity(AsksPage.waiting(inbox).isEmpty ? 0 : 1) }
+            Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 18, height: 1).padding(.vertical, 2)
+            ForEach(Array(workspace.workspaces.enumerated()), id: \.element.id) { index, space in
+                spaceItem(space, index: index)
             }
-            let later = { if case .laterItem = place { true } else { place == .later } }()
-            item("bookmark", selected: later, help: "Later") { if !later { place = .later } }
-            let pads = { if case .pad = place { true } else { place == .pads } }()
-            item("note-3", selected: pads, help: "Scratchpads") { if !pads { place = .pads } }
-            let loops = { if case .loop = place { true } else { place == .loops } }()
-            item("animation-repeat", selected: loops, help: "Loops") { if !loops { place = .loops } }
+            add
             Spacer()
             RailTasks(workspace: workspace, open: open)
-            RailUsage(workspace: workspace, openAccounts: openAccounts)
+            RailUsage(workspace: workspace) { navigation.openSettings(SettingsView.Page.signins.rawValue) }
             // Zero's own trouble (HealthMonitor), said quietly: a dot on Settings, which then opens on General.
             let trouble = HealthMonitor.shared.trouble
             let help = trouble ? "Settings · General › Health has something to look at" : "Settings"
-            item("gear", selected: place == .settings, help: help, shortcut: "⌘,") {
-                if trouble { openGeneral() } else { place = .settings }
+            item("gear", selected: marked == "settings", help: help, shortcut: "⌘,") {
+                if trouble { navigation.openSettings(SettingsView.Page.general.rawValue) } else { navigation.place = .settings }
             }
             .overlay(alignment: .topTrailing) {
                 Circle().fill(.orange).frame(width: 6, height: 6).padding(6).opacity(trouble ? 1 : 0).allowsHitTesting(false)
@@ -358,6 +387,162 @@ private struct Rail: View {
         }
         .padding(.top, 50).padding(.bottom, 12)
         .frame(width: 48)
+        .contentShape(Rectangle())
+        // One bar for the whole rail, at its edge beside the item marked: it slides from item to item, never fading.
+        .overlayPreferenceValue(RailMarks.self) { marks in
+            GeometryReader { rail in
+                if let mark = marks[marked] {
+                    // In the marked workspace's colour, if it has one, changing as it slides: never black beside red.
+                    let space = workspace.workspaces.first { "workspace:" + $0.id == marked }
+                    Capsule().fill(space.flatMap { WorkspaceColors.color($0.color) } ?? Color.primary)
+                        .frame(width: 3, height: 20).position(x: 1.5, y: rail[mark].midY)
+                        .animation(Motion.animation(Self.slide), value: marked)
+                }
+            }
+            .allowsHitTesting(false)
+        }
+        .onAppear(perform: watchOption)
+        .onDisappear {
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+        }
+        .zeroDialog(item: $editing) { space in
+            WorkspaceForm(
+                workspace: space, model: workspace, save: { edited in Task { await workspace.saveWorkspace(edited) } },
+                openServers: { navigation.openSettings(SettingsView.Page.mcp.rawValue) })
+        }
+    }
+
+    /// A workspace: a click shows it (its tasks, from the inbox or Settings), and on the one shown, back to its tasks.
+    private func spaceItem(_ space: ZerodLink.Workspace, index: Int) -> some View {
+        let shown = marked == "workspace:" + space.id
+        // Something in it is waiting on the user.
+        let needs = workspace.board.contains { $0.workspace == space.id && $0.state == .needsYou }
+        let moving = drag?.id == space.id
+        return Button {
+            if !dragged { show(space.id) }
+        } label: {
+            WorkspaceMark(workspace: space, selected: shown, size: 17).frame(width: 32, height: 32)
+        }
+        .buttonStyle(Hovering(fill: .clear, hover: space.color.isEmpty ? Theme.railHover : .clear))
+        .anchorPreference(key: RailMarks.self, value: .bounds) { ["workspace:" + space.id: $0] }
+        .overlay(alignment: .topTrailing) { RailDot().opacity(needs ? 1 : 0) }
+        // Its last task's page built while the pointer rests, as a sidebar row's is: the click only shows it.
+        .onHover { inside in
+            TaskPeek.shared.build(inside && space.id != workspace.current ? navigation.lastTask(in: space.id) : nil)
+        }
+        .tip(space.name, shortcut: index < 9 ? "⌥\(index + 1)" : nil, side: .right)
+        .zeroContextMenu("workspace-\(space.id)") {
+            [
+                [MenuItem("Edit \(space.name)", "pen") { editing = space }],
+                [
+                    MenuItem("New workspace", "plus") { navigation.place = .newWorkspace },
+                    MenuItem("Workspace settings", "sliders") { navigation.openSettings(SettingsView.Page.workspaces.rawValue) },
+                ],
+            ]
+        }
+        // Dragged up or down, the others make way (eased); the bar, placed from the mark, goes with it.
+        .offset(y: moving ? drag?.y ?? 0 : shift(of: space.id))
+        .animation(moving ? nil : Motion.animation(.easeOut(duration: 0.2)), value: dropIndex())
+        .zIndex(moving ? 1 : 0)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 4)
+                .onChanged { change in drag = (space.id, change.translation.height) }
+                .onEnded { _ in land() })
+    }
+
+    /// Where the dragged workspace would land now: past each mark whose middle it has crossed.
+    private func dropIndex() -> Int? {
+        let ids = workspace.workspaces.map(\.id)
+        guard let drag, let from = ids.firstIndex(of: drag.id) else { return nil }
+        return min(max(from + Int((drag.y / Self.step).rounded()), 0), ids.count - 1)
+    }
+
+    /// While one is dragged, those between where it came from and where it would land move a place towards its start.
+    private func shift(of id: String) -> CGFloat {
+        let ids = workspace.workspaces.map(\.id)
+        guard let drag, let from = ids.firstIndex(of: drag.id), let to = dropIndex(), let i = ids.firstIndex(of: id) else { return 0 }
+        if from < to, i > from, i <= to { return -Self.step }
+        if to < from, i >= to, i < from { return Self.step }
+        return 0
+    }
+
+    /// Let go: the order as it now shows, kept by zerod; the mark settles into its place.
+    private func land() {
+        guard let drag else { return }
+        var ids = workspace.workspaces.map(\.id)
+        let to = dropIndex()
+        dragged = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { dragged = false }
+        withAnimation(Motion.animation(.easeOut(duration: 0.2))) {
+            if let from = ids.firstIndex(of: drag.id), let to, to != from {
+                ids.remove(at: from)
+                ids.insert(drag.id, at: to)
+                workspace.reorderWorkspaces(ids)
+            }
+            self.drag = nil
+        }
+    }
+
+    /// Under the workspaces: a + to make one, on its own page (the bar beside it while that's open).
+    private var add: some View {
+        let open = place == .newWorkspace
+        return Button {
+            navigation.place = .newWorkspace
+        } label: {
+            AddMark(open: open)
+        }
+        .buttonStyle(Hovering(fill: .clear, hover: Theme.railHover))
+        .anchorPreference(key: RailMarks.self, value: .bounds) { ["new": $0] }
+        .tip("New workspace", side: .right)
+    }
+
+    /// The workspace shown: another, its tasks (the inbox and Settings left for them; a note open stays on its page's
+    /// list, since the note is the other workspace's); the one shown, back to its tasks from its notes and loops.
+    private func show(_ id: String) {
+        if id == workspace.current {
+            if !isTasks(place) { navigation.place = navigation.homePlace }
+            return
+        }
+        switch place {
+        case .inbox, .settings, .agent, .newWorkspace: navigation.place = .home
+        case .pad: navigation.place = .pads
+        case .loop: navigation.place = .loops
+        case .laterItem: navigation.place = .later
+        default: break
+        }
+        workspace.current = id
+    }
+
+    private func isTasks(_ place: Navigation.Place) -> Bool {
+        switch place {
+        case .home, .board, .task: true
+        default: false
+        }
+    }
+
+    /// The digit keys' places, 1 to 9: ⌥ with one shows that workspace, whatever the layout puts on the key.
+    static let digits = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+
+    /// ⌥1 to ⌥9 in the window show the workspaces, and only that, even while typing (the composer's type-anywhere
+    /// leaves them alone); ⇧⌥ and the digit types what ⌥ and it would.
+    private func watchOption() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
+            guard flags == .option || flags == [.option, .shift], let index = Self.digits.firstIndex(of: Int(event.keyCode)),
+                event.window != nil, event.window === (NSApp.delegate as? AppDelegate)?.workspaceWindow
+            else { return event }
+            // ⇧⌥ and a digit: what ⌥ and the digit types on this layout (German's [ ] | { }, a British #), into the text.
+            if flags.contains(.shift) {
+                guard let text = event.window?.firstResponder as? NSTextView,
+                    let typed = event.characters(byApplyingModifiers: .option), !typed.isEmpty
+                else { return event }
+                text.insertText(typed, replacementRange: NSRange(location: NSNotFound, length: 0))
+                return nil
+            }
+            if index < workspace.workspaces.count { show(workspace.workspaces[index].id) }
+            return nil
+        }
     }
 
     private func item(_ symbol: String, selected: Bool, help: String, shortcut: String? = nil, action: @escaping () -> Void) -> some View {
@@ -366,7 +551,38 @@ private struct Rail: View {
                 .foregroundStyle(selected ? .primary : .secondary)
                 .frame(width: 32, height: 32)
         }
-        .buttonStyle(Hovering(selected: selected, fill: Theme.railSelected, hover: Theme.railHover)).tip(help, shortcut: shortcut)
+        // Marked by the rail's bar, as the workspaces are: no fill of its own, the pointer's only.
+        .buttonStyle(Hovering(hover: Theme.railHover))
+        .anchorPreference(key: RailMarks.self, value: .bounds) { [symbol == "gear" ? "settings" : symbol: $0] }
+        .tip(help, shortcut: shortcut, side: .right)
+    }
+}
+
+/// Where each rail item that can be the place is, by its key ("inbox", "settings", "workspace:<id>"): for the bar.
+private struct RailMarks: PreferenceKey {
+    static let defaultValue: [String: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+/// The rail's +: the glyph alone, in the secondary tone, the primary under the pointer or while its page is open.
+private struct AddMark: View {
+    let open: Bool
+    @State private var hovering = false
+    var body: some View {
+        NucleoIcon("plus", size: 15).foregroundStyle(open || hovering ? .primary : .secondary)
+            .frame(width: 32, height: 32).contentShape(Rectangle())
+            .onHover { hovering = $0 }
+    }
+}
+
+/// Something waiting on the user, in the rail: a red dot, cut out of the rail as the Dock cuts out its badges.
+struct RailDot: View {
+    var body: some View {
+        Circle().fill(Color.red).frame(width: 8, height: 8)
+            .padding(1.5).background(Theme.rail, in: Circle())
+            .offset(x: 1, y: 0).allowsHitTesting(false)
     }
 }
 

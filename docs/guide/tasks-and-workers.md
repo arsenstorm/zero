@@ -6,11 +6,11 @@ order: 2
 
 A task is one agent working on one job for you, such as "Fix the flaky login test". It runs Claude Code, Codex or OpenCode in a folder on your Mac. You start, read and steer tasks in Zero's window. A task can also start workers: tasks of its own, each taking part of the job.
 
-To open the window, choose **Show Zero** from the menu bar icon. While that menu is open, <kbd>⌘</kbd> <kbd>0</kbd> does the same. The rail runs down its left edge. Next to it, the tasks sidebar lists the tasks in the workspace you're looking at.
+To open the window, choose **Show Zero** from the menu bar icon. While that menu is open, <kbd>⌘</kbd> <kbd>0</kbd> does the same. The rail runs down its left edge: **Inbox** at the top, then a button for each workspace. Next to it, the tasks sidebar lists the tasks in the workspace you're looking at.
 
 ## Start a task
 
-1. Click **New task** at the top of the tasks sidebar, or press <kbd>⌘</kbd> <kbd>N</kbd>. The **Home** button at the top of the rail opens the same page.
+1. Click **New task** at the top of the tasks sidebar, or press <kbd>⌘</kbd> <kbd>N</kbd>.
 2. In the box that says **Do anything**, write what you want done. Paste or drop images into it too.
 3. Check the chips under the box:
    - **The project**: the folder the task starts in. Click it to pick another from **Projects**. Zero lists the folders you added in **Settings › Workspaces › Projects**. Until you add a folder, **Add a project in Settings › Workspaces** shows in place of the chips. See [Workspaces and folders](/docs/workspaces-and-folders).
@@ -32,8 +32,9 @@ Zero keeps what you write on this page as a draft until you send it, and remembe
 
 The tasks sidebar shows, from the top:
 
-- **The workspace's name.** Click it to switch workspace, make one with **New workspace…**, or open **Workspace settings…**.
+- **The workspace's name.** To show another workspace, click its button on the rail.
 - **New task** and **All tasks**. All tasks opens the board. See "See every task at once" below.
+- **Later**, **Scratchpads** and **Loops**, with this workspace's items. See [Later, scratchpads and loops](/docs/later-scratchpads-loops).
 - **Tasks**, then a row for each task, with its state icon on the right.
 - **Earlier**: tasks that stopped some time ago and need nothing from you.
 

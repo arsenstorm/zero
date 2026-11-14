@@ -64,6 +64,8 @@ An agent's screen, such as a command's picker, can open in the panel. While it's
 |---|---|
 | <kbd>⌘</kbd> <kbd>N</kbd> | Opens **New task**. |
 | <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Opens the first nine tasks, in the order of the sidebar. |
+| <kbd>⌥</kbd> <kbd>1</kbd> to <kbd>⌥</kbd> <kbd>9</kbd> | Shows the first nine workspaces, in the order of the rail, even while you type. Point at a workspace to see its name and keys. |
+| <kbd>⇧</kbd> <kbd>⌥</kbd> <kbd>1</kbd> to <kbd>⇧</kbd> <kbd>⌥</kbd> <kbd>9</kbd> | Types what <kbd>⌥</kbd> and the number type on your keyboard, such as <kbd>[</kbd> or <kbd>#</kbd>. |
 | <kbd>⌘</kbd> <kbd>,</kbd> | Opens Settings. |
 | <kbd>⌘</kbd> <kbd>[</kbd> | Goes back. |
 | <kbd>⌘</kbd> <kbd>]</kbd> | Goes forward. |

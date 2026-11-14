@@ -17,7 +17,12 @@ public enum MenuAim {
     /// A peeked inbox stays open while the pointer is on the bar or the panel, or on its way from the bar to the
     /// panel (left of it); anywhere else lets it go. `from`: the pointer's last position, nil when there is none.
     public static func holds(_ pointer: CGPoint, from: CGPoint?, bar: CGRect, panel: CGRect) -> Bool {
-        bar.contains(pointer) || panel.contains(pointer)
-            || from.map { heading(from: $0, to: pointer, menu: panel, leading: true) } ?? false
+        bar.contains(pointer) || panel.contains(pointer) || passing(pointer, from: from, panel: panel)
+    }
+
+    /// The step from `from` heads into the open panel (left of the bar): what it crosses on the bar on the way (the
+    /// settings button, another control) doesn't take over. Resting, or no step to read, isn't passing.
+    public static func passing(_ pointer: CGPoint, from: CGPoint?, panel: CGRect) -> Bool {
+        from.map { heading(from: $0, to: pointer, menu: panel, leading: true) } ?? false
     }
 }

@@ -6,9 +6,14 @@ extension View {
     /// does. Codex's: a dark pill above the view (under it where the screen ends), with the view's shortcut as a key
     /// beside the words. Shown after a short rest, at once when moving on from another; gone when the pointer leaves
     /// or clicks. An empty text shows nothing.
-    func tip(_ text: String, shortcut: String? = nil) -> some View { modifier(Tipped(text: text, shortcut: shortcut)) }
+    func tip(_ text: String, shortcut: String? = nil, side: TipSide = .above) -> some View {
+        modifier(Tipped(text: text, shortcut: shortcut, side: side))
+    }
 
 }
+
+/// Where a tip goes: above the view (under it where the screen ends), or beside it.
+enum TipSide { case above, left, right }
 
 /// The pointer on the view as SwiftUI sees it (its hover goes to what's on top, not to what's under a card or panel
 /// drawn over it), and the view's frame in AppKit's terms, for where the tip goes. The frame's NSView is there only
@@ -16,12 +21,12 @@ extension View {
 private struct Tipped: ViewModifier {
     let text: String
     let shortcut: String?
-    var left = false
+    var side = TipSide.above
     @State private var over = false
 
     func body(content: Content) -> some View {
         content
-            .background { if over { TipAnchor(text: text, shortcut: shortcut, left: left) } }
+            .background { if over { TipAnchor(text: text, shortcut: shortcut, side: side) } }
             .onHover { over = $0 }
     }
 }
@@ -30,9 +35,9 @@ private struct Tipped: ViewModifier {
 private struct TipAnchor: NSViewRepresentable {
     let text: String
     let shortcut: String?
-    let left: Bool
+    let side: TipSide
     func makeNSView(context: Context) -> TipView {
-        let view = TipView(); view.shortcut = shortcut; view.left = left; view.text = text; return view
+        let view = TipView(); view.shortcut = shortcut; view.side = side; view.text = text; return view
     }
     func updateNSView(_ view: TipView, context: Context) { view.shortcut = shortcut; view.text = text }
     static func dismantleNSView(_ view: TipView, coordinator: ()) { view.leave() }
@@ -45,12 +50,11 @@ final class TipView: NSView {
     var text = "" {
         didSet {
             guard text != oldValue, TipPanel.shared.owner === self else { return }
-            if text.isEmpty { leave() } else { TipPanel.shared.show(text, shortcut: shortcut, over: self, left: left) }
+            if text.isEmpty { leave() } else { TipPanel.shared.show(text, shortcut: shortcut, over: self, side: side) }
         }
     }
     var shortcut: String?
-    /// Beside the view on its left rather than above it.
-    var left = false
+    var side = TipSide.above
     private var pending: Task<Void, Never>?
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -65,7 +69,7 @@ final class TipView: NSView {
         pending = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(wait))
             guard !Task.isCancelled, let self, self.window != nil, !self.text.isEmpty else { return }
-            TipPanel.shared.show(self.text, shortcut: self.shortcut, over: self, left: self.left)
+            TipPanel.shared.show(self.text, shortcut: self.shortcut, over: self, side: self.side)
         }
     }
 
@@ -102,7 +106,7 @@ final class TipView: NSView {
     /// A tip showing, or one just gone: the next shows at once, as moving along a row of buttons.
     var recently: Bool { panel.isVisible || Date().timeIntervalSince(hiddenAt) < 0.4 }
 
-    func show(_ text: String, shortcut: String?, over view: NSView, left: Bool = false) {
+    func show(_ text: String, shortcut: String?, over view: NSView, side: TipSide = .above) {
         guard let window = view.window, let screen = window.screen ?? NSScreen.main else { return }
         // Zero's window's tips while Zero is in front only: its views see the pointer through another app's window over
         // them, and a tip floats over every app. The control bar's panels (used from other apps) keep theirs.
@@ -119,8 +123,13 @@ final class TipView: NSView {
         let room = screen.visibleFrame
         var origin = CGPoint(x: anchor.midX - size.width / 2, y: anchor.maxY + 6)
         if origin.y + size.height > room.maxY { origin.y = anchor.minY - size.height - 6 }
+        switch side {
+        case .above: break
         // Left of the view, clear of the control bar (a bar control sits 6 pt in from the bar's edge).
-        if left { origin = CGPoint(x: anchor.minX - size.width - 14, y: anchor.midY - size.height / 2) }
+        case .left: origin = CGPoint(x: anchor.minX - size.width - 14, y: anchor.midY - size.height / 2)
+        // Right of it: the rail's, out over the sidebar rather than off the window's edge.
+        case .right: origin = CGPoint(x: anchor.maxX + 8, y: anchor.midY - size.height / 2)
+        }
         origin.x = min(max(origin.x, room.minX + 4), room.maxX - size.width - 4)
         panel.contentView = host.view
         panel.setFrame(CGRect(origin: origin, size: size), display: true)

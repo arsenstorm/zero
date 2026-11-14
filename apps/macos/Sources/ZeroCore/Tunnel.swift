@@ -233,3 +233,25 @@ public enum Tunnel {
         return (nil, try? JSONSerialization.data(withJSONObject: reply))
     }
 }
+
+extension Tunnel {
+    /// A phone's frames kept under the relay's rate (apps/relay `limits`: 1000 frames at once, then 100 a second, both
+    /// ways for a Mac; past it the relay closes the phone). Half the burst and 60 a second, the rest left for the Mac's
+    /// frames (a video's parts' answers among them): a video goes up at about 2.8 MB a second, rather than all at once
+    /// and cut.
+    public struct Pace {
+        let burst: Double, rate: Double
+        var allowance: Double, at: Date
+        public init(burst: Double = 500, rate: Double = 60, now: Date = Date()) {
+            self.burst = burst; self.rate = rate; allowance = burst; at = now
+        }
+
+        /// One frame more: how long to wait before sending it.
+        public mutating func next(now: Date = Date()) -> TimeInterval {
+            allowance = min(burst, allowance + max(0, now.timeIntervalSince(at)) * rate)
+            at = now
+            allowance -= 1
+            return allowance >= 0 ? 0 : -allowance / rate
+        }
+    }
+}

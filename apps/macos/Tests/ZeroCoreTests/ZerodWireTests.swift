@@ -108,3 +108,25 @@ private let recordings = [
     conversation.apply(try JSONDecoder().decode(Change.self, from: Data(#"{"type":"terminal","terminal":null}"#.utf8)))
     #expect(conversation.terminal == nil)
 }
+
+/// Workspaces' colours and where pads and loops are: what an older zerod leaves out reads as none and Zero's.
+@Test func workspaceColourAndPadsAndLoopsPlacesDecodeWithDefaults() throws {
+    let decode = { (json: String) in json.data(using: .utf8)! }
+    let old = try JSONDecoder().decode(ZerodLink.Workspace.self, from: decode(#"{"id": "acme", "name": "Acme"}"#))
+    #expect((old.glyph, old.color) == ("", ""))
+    let teal = try JSONDecoder().decode(
+        ZerodLink.Workspace.self, from: decode(#"{"id": "acme", "name": "Acme", "glyph": "", "color": "teal"}"#))
+    #expect(teal.color == "teal")
+    let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(teal)) as? [String: Any]
+    #expect(encoded?["color"] as? String == "teal")
+
+    let summary = #"{"id": "a", "title": "T", "folder": "", "link": "zero://pad/a", "updated": 1"#
+    #expect(try JSONDecoder().decode(PadSummary.self, from: decode(summary + "}")).workspace == "zero")
+    #expect(try JSONDecoder().decode(PadSummary.self, from: decode(summary + #", "workspace": "acme"}"#)).workspace == "acme")
+    let pad = #"{"id": "a", "title": "T", "folder": "", "content": "", "revision": "r", "sections": [], "link": "l", "updated": 1"#
+    #expect(try JSONDecoder().decode(Pad.self, from: decode(pad + "}")).workspace == "zero")
+    #expect(try JSONDecoder().decode(Pad.self, from: decode(pad + #", "workspace": "acme"}"#)).workspace == "acme")
+    let loop = #"{"name": "x", "description": "", "body": "Go.", "children": [], "uses": []"#
+    #expect(try JSONDecoder().decode(ZerodLink.Loop.self, from: decode(loop + "}")).workspace == "zero")
+    #expect(try JSONDecoder().decode(ZerodLink.Loop.self, from: decode(loop + #", "workspace": "acme"}"#)).workspace == "acme")
+}

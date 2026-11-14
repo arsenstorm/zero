@@ -116,7 +116,7 @@ struct SettingsView: View {
         case .mcp: McpServersPage(workspace: workspace)
         case .workspaces:
             Sections {
-                WorkspacesPage(workspace: workspace)
+                WorkspacesPage(workspace: workspace) { page = .mcp }
                 FoldersPage(inbox: inbox)
             }
         case .github, .linear, .slack: IntegrationPage(integration: page.integration!, workspace: workspace)
@@ -131,14 +131,12 @@ enum SidebarWidth {
     static let range: ClosedRange<Double> = 200...420
 }
 
-/// An inner sidebar: its title on a blueprint, then its rows, on the sidebar's grey. Its right edge drags it wider or
-/// narrower.
+/// An inner sidebar: its title, small, at the top (a page reached from the tasks' sidebar has a way back beside it), then
+/// its rows, on the sidebar's grey. Its right edge drags it wider or narrower.
 struct SidebarColumn<Content: View>: View {
     let title: String
-    /// The heading as a selector (the tasks sidebar's workspace): the rows it opens.
-    var picker: (() -> [SelectorSection])? = nil
-    /// The heading's logo: a workspace's glyph; none, Zero's mark.
-    var glyph = ""
+    /// Back to where it was reached from (the tasks' sidebar), as a chevron before the title.
+    var back: (() -> Void)? = nil
     @ViewBuilder let content: () -> Content
     @AppStorage(SidebarWidth.key) private var width = SidebarWidth.standard
     /// The width when the drag began.
@@ -146,11 +144,10 @@ struct SidebarColumn<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            SidebarHeader(title: title, picker: picker, glyph: glyph)
-                .padding(.horizontal, -10).padding(.bottom, -4)
+            SidebarTitle(title: title, back: back).padding(.bottom, 4)
             content()
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 10).padding(.top, 8)
         .frame(width: width)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.composer)
@@ -173,60 +170,25 @@ struct SidebarColumn<Content: View>: View {
     }
 }
 
-/// The heading as a blueprint on drafting paper: dark lines and lettering on light grey (light on dark grey in dark
-/// mode). Its foot fades into the sidebar.
-struct SidebarHeader: View {
+/// Where the sidebar is (the workspace, Settings, a page): its name in the rows' line, in from the edge as their text
+/// is, so the rows below keep their places whether or not it has a way back.
+struct SidebarTitle: View {
     let title: String
-    var picker: (() -> [SelectorSection])? = nil
-    var glyph = ""
-    @State private var anchor = CGRect.zero
-    @State private var hovered = false
+    var back: (() -> Void)? = nil
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            // The panel fades out on an eased curve (a straight ramp bands); only the drawing blurs as it goes,
-            // since blurring a flat fill just smudges its edge.
-            Theme.blueprint.mask(LinearGradient(stops: ProgressiveBlur<EmptyView>.eased, startPoint: .top, endPoint: .bottom))
-            ProgressiveBlur { Blueprint().foregroundStyle(Theme.onBlueprint) }
-            // The mark over the rows' icons and the title over their text (10 + 10 + an 18 pt icon + 9), level with the
-            // rail's home icon (its centre 28 pt under the panel's top).
-            HStack(spacing: 9) {
-                if let picker {
-                    let open = WorkspaceSelector.shared.open == "workspace"
-                    // The logo and the name, one button: either opens the workspaces.
-                    Button {
-                        WorkspaceSelector.shared.toggle("workspace", kind: .menu, anchor: anchor, rows: picker)
-                    } label: {
-                        HStack(spacing: 5) {
-                            WorkspaceGlyph(glyph: glyph, size: 18).frame(width: 18).padding(.trailing, 4)
-                            Text(title).font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                            NucleoIcon("chevron-down", size: 11).rotationEffect(.degrees(open ? 180 : 0)).opacity(
-                                hovered || open ? 1 : 0.55)
-                        }
-                        .padding(.horizontal, 6).frame(height: 26)
-                        .background(open || hovered ? Theme.onBlueprint.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 7))
-                        .contentShape(Rectangle())
-                        // The fill reaches 6 pt past the text on both sides; pulled left by that, the text stays where the title was.
-                        .padding(.leading, -6)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovered = $0 }
-                    .onGeometryChange(for: CGRect.self) {
-                        $0.frame(in: .global)
-                    } action: {
-                        anchor = $0
-                    }
-                    .tip("Switch workspace")
-                } else {
-                    ZeroMark(small: true).frame(width: 20, height: 19).frame(width: 18)
-                    Text(title).font(.system(size: 17, weight: .semibold))
+        HStack(spacing: 4) {
+            if let back {
+                Button(action: back) {
+                    NucleoIcon("chevron-right", size: 12).rotationEffect(.degrees(180)).foregroundStyle(.secondary).frame(
+                        width: 22, height: 22
+                    ).contentShape(Rectangle())
                 }
+                .buttonStyle(Hovering(radius: 6)).tip("Back to tasks").padding(.leading, -5)
             }
-            .foregroundStyle(Theme.onBlueprint)
-            .frame(height: 22)
-            .padding(.leading, 20).padding(.top, 17)
+            Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
         }
-        .frame(height: 96) // its fade ends just above the first row
+        .padding(.horizontal, 10).frame(height: 30, alignment: .leading)
     }
 }
 
@@ -1016,6 +978,13 @@ extension View {
     }
 }
 
+private struct PausedSendPicker: View {
+    @AppStorage(PausedSend.key) private var pausedSend = PausedSend.ask
+    var body: some View {
+        SettingChoice(id: "pausedSend", choices: [PausedSend.allCases.map { (title: $0.title, value: $0) }], selection: $pausedSend)
+    }
+}
+
 /// How agents run and reach Zero: what everyone meets first, then stuck commands, then what few change, folded.
 private struct AgentsPage: View {
     @Bindable var settings: Settings
@@ -1037,6 +1006,9 @@ private struct AgentsPage: View {
                     }
                     SettingRow(title: "Suggest files after @", detail: "Files from the task's project as you type.") {
                         Switch(isOn: $settings.suggestFiles)
+                    }
+                    SettingRow(title: "Sending to a paused task", detail: "Ask each time, resume it, or queue the message for Resume.") {
+                        PausedSendPicker()
                     }
                 }
             }
@@ -1713,94 +1685,5 @@ struct HotKeyRecorder: View {
         ]
         let key = names[Int(event.keyCode)] ?? (event.charactersIgnoringModifiers ?? "?").uppercased()
         return parts.joined() + " " + key
-    }
-}
-
-/// A drafting-table backdrop: a fine grid, a dashed circle with its crosshair, a dashed rectangle, a dimension
-/// line with end ticks, and a few plus marks, all faint, with a soft light over the top right.
-private struct Blueprint: View {
-    var body: some View {
-        Canvas { context, size in
-            let ink = GraphicsContext.Shading.foreground
-            var grid = Path()
-            stride(from: 0, through: size.width, by: 12).forEach { x in
-                grid.move(to: CGPoint(x: x, y: 0)); grid.addLine(to: CGPoint(x: x, y: size.height))
-            }
-            stride(from: 0, through: size.height, by: 12).forEach { y in
-                grid.move(to: CGPoint(x: 0, y: y)); grid.addLine(to: CGPoint(x: size.width, y: y))
-            }
-            context.opacity = 0.07
-            context.stroke(grid, with: ink, lineWidth: 0.5)
-            context.opacity = 0.35
-            let dashed = StrokeStyle(lineWidth: 0.8, dash: [3, 3])
-            let center = CGPoint(x: size.width - 70, y: 46)
-            context.stroke(Path(ellipseIn: CGRect(x: center.x - 18, y: center.y - 18, width: 36, height: 36)), with: ink, style: dashed)
-            var cross = Path()
-            cross.move(to: CGPoint(x: center.x - 7, y: center.y)); cross.addLine(to: CGPoint(x: center.x + 7, y: center.y))
-            cross.move(to: CGPoint(x: center.x, y: center.y - 7)); cross.addLine(to: CGPoint(x: center.x, y: center.y + 7))
-            context.stroke(cross, with: ink, lineWidth: 0.8)
-            context.stroke(Path(CGRect(x: size.width - 66, y: 76, width: 50, height: 20)), with: ink, style: dashed) // clear of the badge
-            var dimension = Path()
-            let x = size.width - 16
-            dimension.move(to: CGPoint(x: x, y: 14)); dimension.addLine(to: CGPoint(x: x, y: 70))
-            dimension.move(to: CGPoint(x: x - 4, y: 14)); dimension.addLine(to: CGPoint(x: x + 4, y: 14))
-            dimension.move(to: CGPoint(x: x - 4, y: 70)); dimension.addLine(to: CGPoint(x: x + 4, y: 70))
-            context.stroke(dimension, with: ink, lineWidth: 0.8)
-            var plus = Path()
-            for p in [CGPoint(x: size.width - 120, y: 30), CGPoint(x: 110, y: 18), CGPoint(x: 150, y: 64)] {
-                plus.move(to: CGPoint(x: p.x - 3, y: p.y)); plus.addLine(to: CGPoint(x: p.x + 3, y: p.y))
-                plus.move(to: CGPoint(x: p.x, y: p.y - 3)); plus.addLine(to: CGPoint(x: p.x, y: p.y + 3))
-            }
-            context.stroke(plus, with: ink, lineWidth: 0.8)
-            context.opacity = 0.16
-            context.fill(
-                Path(ellipseIn: CGRect(x: size.width - 150, y: -70, width: 180, height: 140)),
-                with: .radialGradient(
-                    Gradient(colors: [.white, .clear]), center: CGPoint(x: size.width - 60, y: 0), startRadius: 0, endRadius: 90))
-        }
-    }
-}
-
-/// A progressive blur: the content is sharp at the top and dissolves toward the bottom, each layer more blurred
-/// and shown over a lower band, the last fading out entirely, so the edge melts instead of cutting off.
-private struct ProgressiveBlur<Content: View>: View {
-    @ViewBuilder let content: () -> Content
-    private static var layers: [(blur: CGFloat, from: CGFloat, to: CGFloat)] {
-        [(0, 0.0, 0.7), (1.5, 0.62, 0.8), (3, 0.72, 0.88), (5, 0.8, 0.95), (8, 0.88, 1.0)]
-    }
-    var body: some View {
-        ZStack {
-            ForEach(Array(Self.layers.enumerated()), id: \.offset) { index, layer in
-                content().blur(radius: layer.blur, opaque: false)
-                    .mask(
-                        LinearGradient(
-                            stops: band(layer.from, layer.to, last: index == Self.layers.count - 1), startPoint: .top, endPoint: .bottom))
-            }
-        }
-        .compositingGroup()
-        .mask(LinearGradient(stops: Self.eased, startPoint: .top, endPoint: .bottom))
-    }
-
-    /// Solid to clear over the bottom third along a smootherstep curve, sampled finely: it leaves the solid and
-    /// arrives at clear with no visible start or end, so the colour melts into the sidebar instead of passing
-    /// through a band of grey.
-    static var eased: [Gradient.Stop] {
-        let start = 0.64
-        return [Gradient.Stop(color: .black, location: 0)]
-            + (0...16).map { step in
-                let t = Double(step) / 16
-                let ease = t * t * t * (t * (t * 6 - 15) + 10)
-                return Gradient.Stop(color: .black.opacity(1 - ease), location: start + (1 - start) * t)
-            }
-    }
-
-    /// Opaque over its band, ramping in at the top of it; a layer's band overlaps the next so there are no seams.
-    private func band(_ from: CGFloat, _ to: CGFloat, last: Bool) -> [Gradient.Stop] {
-        let ramp = (to - from) / 3
-        return [
-            .init(color: .clear, location: max(0, from - 0.001)), .init(color: from == 0 ? .black : .clear, location: from),
-            .init(color: .black, location: min(1, from + ramp)), .init(color: .black, location: to),
-            .init(color: last ? .black : .clear, location: min(1, to + ramp)),
-        ]
     }
 }

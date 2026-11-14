@@ -10,7 +10,7 @@ Three places in Zero's window keep things that you and your agents come back to:
 - **Scratchpads**: Markdown notes that you and every agent can read and write.
 - **Loops**: named instructions that you give an agent when you type `@name`.
 
-Each has a button on the window's left rail, below **Inbox**, in this order. Point at a button to see its name. To open the window, choose **Show Zero**, <kbd>⌘</kbd> <kbd>0</kbd>, in the menu bar icon's menu.
+Each opens from its row in the tasks sidebar, below **All tasks**, in this order. Each shows the items of the workspace you're looking at. An item you make goes into that workspace. An item an agent makes goes into its task's workspace. Agents can still read every pad and use every loop. To go back to the tasks, click the arrow beside the page's name. To open the window, choose **Show Zero**, <kbd>⌘</kbd> <kbd>0</kbd>, in the menu bar icon's menu.
 
 ## Save something for later
 
@@ -22,7 +22,7 @@ Items come to Later in four ways.
 
 **Write one yourself.**
 
-1. Click **Later** on the rail.
+1. Click **Later** in the tasks sidebar.
 2. At the top of its list, click the compose button, **Write one**.
 3. Fill in **What's to be done, in a sentence**.
 4. Fill in **Anything behind it, in Markdown (optional)**, or leave it empty.
@@ -67,7 +67,7 @@ Zero keeps Later items in `~/.zero/later`.
 
 Scratchpads are Markdown notes in folders that you and your agents share. Use them for plans, checklists, findings, or anything else for an agent to read.
 
-Click **Scratchpads** on the rail. At the top of the list:
+Click **Scratchpads** in the tasks sidebar. At the top of the list:
 
 - **Search** finds pads by their title or folder. The ×, **Clear**, empties the search.
 - **New scratchpad** makes a pad.
@@ -134,7 +134,7 @@ A loop can name other loops in its text, such as `@tests`. Zero doesn't add thos
 
 ### Make a loop
 
-1. Click **Loops** on the rail. At the top of the list, click the compose button, **New loop**. When no loop is open, the page also has a **New loop** button.
+1. Click **Loops** in the tasks sidebar. At the top of the list, click the compose button, **New loop**. When no loop is open, the page also has a **New loop** button.
 2. Type a name and click **Create**. Zero writes the name in lower case, with hyphens for spaces.
 3. Under the loop's name, write **What this loop is for, in a line**. This line shows in the list and when you type `@`.
 4. Write the instruction below it, in Markdown. Zero saves as you type.

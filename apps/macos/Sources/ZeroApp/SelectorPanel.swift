@@ -234,3 +234,63 @@ extension AppDelegate {
         layer.add(group, forKey: "selector")
     }
 }
+
+/// Zero's floating things: menus and selectors (this file's panel, the inbox's), tips, the task cards, and the cards
+/// views keep of their own (the + and @ lists, the rail's cards, the status card). All put away at once when what's
+/// under them changes: the place, the worker shown or the Settings page; the window losing the keys or Zero going to
+/// the back; a dialog opening (AppDelegate.watchFloating, Dialogs.show). Not per caller.
+@MainActor @Observable final class Floating {
+    static let shared = Floating()
+    /// Counted up each time they're put away: a view's own card goes on a change (closesWithFloating).
+    private(set) var closings = 0
+
+    func closeAll() {
+        closings += 1
+        WorkspaceSelector.shared.close()
+        if let app = NSApp.delegate as? AppDelegate, app.inbox.selector != nil { app.inbox.closeSelector() }
+        TipPanel.shared.hideAny()
+        TaskPeek.shared.close()
+    }
+}
+
+extension View {
+    /// A card or list of the view's own, put away (`close`) with Zero's other floating things (Floating).
+    func closesWithFloating(_ close: @escaping () -> Void) -> some View {
+        onChange(of: Floating.shared.closings) { close() }
+    }
+}
+
+extension AppDelegate {
+    /// What puts Zero's floating things away (Floating), all here.
+    func watchFloating() {
+        watchPlace()
+        let center = NotificationCenter.default
+        for name in [NSApplication.didResignActiveNotification, NSApplication.didHideNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in MainActor.assumeIsolated { Floating.shared.closeAll() } }
+        }
+        // A window losing the keys (another of Zero's, a minimise, a close), but not to the menu itself taking them for a
+        // row's words (SelectorState.enter).
+        center.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let window = note.object as? NSWindow else { return }
+                if self.selectorHosts.contains(where: { $0.panel === window }) { return }
+                DispatchQueue.main.async {
+                    if let key = NSApp.keyWindow, self.selectorHosts.contains(where: { $0.panel === key }) { return }
+                    if window === self.workspaceWindow { Floating.shared.closeAll() }
+                }
+            }
+        }
+    }
+
+    /// The place, the worker shown and the Settings page: a change to any puts them away, once it's made.
+    private func watchPlace() {
+        withObservationTracking {
+            _ = (navigation.place, navigation.worker, navigation.settingsPage)
+        } onChange: {
+            DispatchQueue.main.async { [weak self] in
+                Floating.shared.closeAll()
+                self?.watchPlace()
+            }
+        }
+    }
+}

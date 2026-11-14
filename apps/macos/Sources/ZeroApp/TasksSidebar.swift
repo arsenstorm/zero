@@ -102,51 +102,32 @@ struct TasksSidebar: View {
         .compactMap { BoardRow.starting(session: $0.id, task: Workspace.label(of: $0), workspace: workspace.current) }
     }
 
-    @State private var namingWorkspace = false
-
-    /// The heading's selector: the workspaces, the current one marked; New workspace… and Workspace settings… under them.
-    private func workspaceRows() -> [SelectorSection] {
-        ComposerRows.menu([
-            workspace.workspaces.map { w in (w.id, w.name, w.glyph, w.id == workspace.current, { workspace.current = w.id }) },
-            [
-                ("new", "New workspace…", "plus", false, { namingWorkspace = true }),
-                (
-                    "settings", "Workspace settings…", "sliders", false,
-                    {
-                        navigation.openSettings(SettingsView.Page.workspaces.rawValue)
-                    }
-                ),
-            ],
-        ])
-    }
-
     var body: some View {
-        SidebarColumn(title: workspace.currentWorkspace.name, picker: workspaceRows, glyph: workspace.currentWorkspace.glyph) {
+        SidebarColumn(title: workspace.currentWorkspace.name) {
             SidebarItem("New task", icon: "compose", selected: place == .home, shortcut: "⌘N") { place = .home }
                 .keyboardShortcut("n", modifiers: .command)
             SidebarItem("All tasks", icon: "list-checkbox", selected: place == .board) { place = .board }
+            // This workspace's notes and loops: their pages take the sidebar's place, with a way back to here.
+            SidebarItem("Later", icon: "bookmark") { place = .later }
+            SidebarItem("Scratchpads", icon: "note-3") { place = .pads }
+            SidebarItem("Loops", icon: "animation-repeat") { place = .loops }
             // Each lead's workers looked up once per update, not by searching every task for every row.
             let all = workspace.conversations
             let workersOf = Dictionary(grouping: all.filter { $0.parent != nil }, by: { $0.parent ?? "" })
             // Not before the first board: until then every lead looks like it isn't on it.
             let earlier = workspace.board.isEmpty ? [] : earlier(all).filter { workspace.workspace(of: $0) == workspace.current }
             ScrollViewReader { proxy in
-                ScrollView { taskList(all: all, workersOf: workersOf, earlier: earlier) }
-                    // The task open, however it was opened (a link, a card, a report): its lead's workers unfolded and
-                    // its row scrolled into view, as when it's opened here.
-                    .onChange(of: place.key + "|" + (navigation.worker ?? ""), initial: true) { reveal(in: proxy) }
+                // A list of its own per workspace: a switch swaps it at once, rather than animating every row out and
+                // the other workspace's in (the list's .animation took a switch for tasks coming and going: 250 ms).
+                ScrollView {
+                    taskList(all: all, workersOf: workersOf, earlier: earlier).id(workspace.current)
+                }
+                // The task open, however it was opened (a link, a card, a report): its lead's workers unfolded and
+                // its row scrolled into view, as when it's opened here.
+                .onChange(of: place.key + "|" + (navigation.worker ?? ""), initial: true) { reveal(in: proxy) }
             }
             .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
             .scrollIndicators(.never)
-            .zeroDialog(isPresented: $namingWorkspace) {
-                NameSheet(title: "New workspace", name: "", action: "Create") { name in
-                    Task {
-                        if let error = await workspace.saveWorkspace(ZerodLink.Workspace(name: name)) {
-                            NSSound.beep(); Log.write("workspace: \(error)")
-                        }
-                    }
-                }
-            }
             .background { taskShortcuts }
             // Soft edges, as the conversation has: more above, more below.
             .softEdges(top: 20, bottom: 28)

@@ -60,9 +60,12 @@ struct PillView: View {
     /// The settings button in the bar's foot (Settings › Control bar), and the pointer on the bar that brings it out.
     @AppStorage("barFoot") private var barFoot = false
     @State private var overBar = false
-    /// The pointer on one of the two buttons: only the one under it comes out (the inbox stays out while asks wait).
-    @State private var overInbox = false
-    @State private var overSettings = false
+    /// Which of the two buttons the pointer on the bar brings out: the one it's nearer (`BarReach`).
+    @State private var reach = BarReach.both
+    /// Where the pointer is on the bar, kept while it's on its way into the panel (`barAiming`) to place it after.
+    @State private var hoverPoint: CGPoint?
+    /// Bumped as a new ask comes in while the inbox is folded: its arc brightens once.
+    @State private var inboxPulse = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A dot being dragged up or down the bar, and how far.
     @State private var drag: (name: String, y: CGFloat)?
@@ -161,7 +164,22 @@ struct PillView: View {
             }
         }
         .frame(width: 44)
-        .onHover { overBar = $0 }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point):
+                overBar = true
+                hoverPoint = point
+                // On the way into the open panel, the buttons crossed stay as they are.
+                if !controller.barAiming { reach = BarReach.at(point.y, height: controller.barHeight, was: reach) }
+            case .ended:
+                overBar = false
+                hoverPoint = nil
+                reach = .both
+            }
+        }
+        .onChange(of: controller.barAiming) { _, aiming in
+            if !aiming, let hoverPoint { reach = BarReach.at(hoverPoint.y, height: controller.barHeight, was: reach) }
+        }
         .onChange(of: names, initial: true) { controller.barOrder = $1 }
         // Nothing switched on: no bar at all, rather than an empty tab at the edge.
         .opacity(slim && !inbox ? 0 : 1)
@@ -214,8 +232,8 @@ struct PillView: View {
         .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
     }
 
-    /// The inbox, in the top hollow: out while asks wait (with their dot), while its panel is open, or with the
-    /// pointer on the bar; otherwise folded to its arc. The pointer on it opens the inbox, as the other slots do.
+    /// The inbox, in the top hollow: out while its panel is open or with the pointer on the bar's upper part;
+    /// otherwise folded to its arc, blue while asks wait. The pointer on it opens the inbox, as the other slots do.
     /// Nothing in the body: the two buttons alone, 12 pt apart, joined from the screen edge by a low bump that's always
     /// there, so a button that's out never floats alone. Without the settings button its arc stays, for the same reason.
     private var slimPair: some View {
@@ -227,27 +245,30 @@ struct PillView: View {
         .background { BarPeak().fill(Theme.pill).overlay(BarPeak().stroke(Theme.stroke, lineWidth: 1)) }
     }
 
-    /// The inbox is out while asks wait, while its panel is open, or with the pointer on the bar.
+    /// The inbox is out while its panel is open, or with the pointer on the bar and not nearer the settings button.
     private var inboxOut: Bool {
-        settings.shows(.inbox) && (!controller.store.open.isEmpty || (!overSettings && (overBar || controller.panelOpen)))
+        settings.shows(.inbox) && (controller.panelOpen || overBar && (reach != .settings || !barFoot))
     }
-    /// The settings button is out with the pointer on the bar, and in while the inbox's panel is open.
-    private var settingsOut: Bool { barFoot && overBar && !overInbox && !controller.panelOpen }
+    /// The settings button is out with the pointer on the bar and not nearer the inbox, and in while the inbox's
+    /// panel is open.
+    private var settingsOut: Bool {
+        barFoot && overBar && (reach != .inbox || !settings.shows(.inbox)) && !controller.panelOpen
+    }
 
     private var inboxKnob: some View {
-        let waiting = controller.store.open.count
         let selected = controller.agentFilter
-        return BarKnob(top: true, out: inboxOut) { hovered in
+        return BarKnob(
+            top: true, out: inboxOut, passing: controller.barAiming, waiting: !controller.store.open.isEmpty, pulse: inboxPulse
+        ) { hovered in
             // 16 pt, on whole points in the 32 pt disc; half a point up, as the tray's ink sits low in its box.
             NucleoIcon("inbox", size: 16).offset(y: -0.5)
                 .foregroundStyle(hovered || (controller.panelOpen && selected == nil && !controller.newAgentOpen) ? .primary : .secondary)
                 .overlay(alignment: .topTrailing) {
-                    if controller.pinned && selected == nil && !controller.newAgentOpen {
-                        PinBadge().offset(x: 4, y: -6)
-                    } else if waiting > 0 {
-                        Circle().fill(AgentStatus.needsYou.color).frame(width: 7, height: 7).offset(x: 3, y: -3)
-                    }
+                    if controller.pinned && selected == nil && !controller.newAgentOpen { PinBadge().offset(x: 4, y: -6) }
                 }
+        }
+        .onChange(of: controller.store.open.count) { before, now in
+            if now > before, !inboxOut, !reduceMotion { inboxPulse += 1 }
         }
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
@@ -256,19 +277,24 @@ struct PillView: View {
         }
         .onDisappear { controller.barSlots[InboxController.inboxSlot] = nil }
         .onTapGesture(perform: openInbox)
-        .onHover { overInbox = $0 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Open asks")
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The settings button, in the bottom hollow: out with the pointer on the bar, in while the inbox's panel is open.
+    /// The settings button, in the bottom hollow: out with the pointer on the bar's lower part, in while the inbox's
+    /// panel is open.
     private var settingsKnob: some View {
-        BarKnob(out: settingsOut) { hovered in
+        BarKnob(out: settingsOut, passing: controller.barAiming) { hovered in
             NucleoIcon("gear", size: 16).foregroundStyle(hovered ? .primary : .secondary)
         }
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            controller.barSlots[InboxController.settingsSlot] = $0
+        }
+        .onDisappear { controller.barSlots[InboxController.settingsSlot] = nil }
         .onTapGesture(perform: customiseBar)
-        .onHover { overSettings = $0 }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Customise bar")
         .accessibilityAddTraits(.isButton)

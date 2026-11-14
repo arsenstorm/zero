@@ -137,7 +137,7 @@ The agents' GitHub token and how they push are on the GitHub page, under **Agent
 
 Each row has a workspace's icon and name. **Shown** marks the one the window shows. Point at a row for the pen, **Edit**, and the bin, **Delete: its tasks are Zero's again**. The **Zero** workspace is always there: it can't be deleted or renamed.
 
-**Add workspace** opens **New workspace**: a **Name** and an **Icon**. Editing a workspace also lists the **MCP servers** its tasks get.
+**Add workspace** opens **New workspace**: a **Name**, an **Icon** and a **Colour**. Editing a workspace also lists the **MCP servers** its tasks get.
 
 | Setting | Where | What it does |
 |---|---|---|

@@ -40,6 +40,9 @@ struct TaskDetails: View {
             .compositingGroup()
             .floatingShadow(!docked)
             .coordinateSpace(name: "details")
+            .closesWithFloating {
+                release(); overPill = false; overCard = false
+            }
             .overlay(alignment: .topLeading) {
                 if peek, let row {
                     StatusCard(row: row, inbox: inbox)

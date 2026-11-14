@@ -39,3 +39,20 @@ public enum BarPins {
         return pins.sorted().joined(separator: "\n")
     }
 }
+
+/// Which of the bar's two buttons (the inbox at its top, the settings at its foot) the pointer on the bar brings out:
+/// the one it's near, the nearer one where it's near both, and both where it's near neither (over the agents).
+public enum BarReach: Sendable {
+    case inbox, settings, both
+
+    /// Near is within 12 pt of a button's edge. `was` is what's out now: it holds on for 3 pt past each line, so a
+    /// pointer resting on one doesn't flicker the buttons.
+    public static func at(_ y: Double, height: Double, was: BarReach, button: Double = 32) -> BarReach {
+        let top = button / 2, foot = height - button / 2, near = button / 2 + 12, slack = 3.0
+        let split = (top + foot) / 2 + (was == .inbox ? slack : was == .settings ? -slack : 0)
+        let nearInbox = y - top <= near + (was == .inbox ? slack : 0)
+        let nearSettings = foot - y <= near + (was == .settings ? slack : 0)
+        if nearInbox, !nearSettings || y < split { return .inbox }
+        return nearSettings ? .settings : .both
+    }
+}

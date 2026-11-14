@@ -110,3 +110,13 @@ import Testing
     let navigation = Navigation(restoring: true)
     #expect(navigation.place == .settings && navigation.settingsPage == "GitHub")
 }
+
+/// Opened again where it was (after an update or a quit): that's where the history starts, nothing behind it.
+@MainActor @Test func aRestoredWindowHasNoWayBack() {
+    UserDefaults.standard.set("task:zero", forKey: "place")
+    UserDefaults.standard.set("w1", forKey: "placeWorker")
+    let navigation = Navigation(restoring: true)
+    #expect(navigation.place == .task("zero"))
+    #expect(!navigation.canGoBack && !navigation.canGoForward)
+    UserDefaults.standard.removeObject(forKey: "placeWorker")
+}

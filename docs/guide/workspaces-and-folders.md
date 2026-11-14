@@ -10,7 +10,7 @@ Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> or the gear at the foot of the wi
 
 ## What a workspace is for
 
-Each task belongs to one workspace. The window's tasks sidebar, the board, **All tasks**, and the control bar show only the tasks of the workspace you're looking at.
+Each task belongs to one workspace. The window's tasks sidebar, the board, **All tasks**, and the control bar show only the tasks of the workspace you're looking at. **Later**, **Scratchpads** and **Loops** show only that workspace's items.
 
 Switching changes only what you see. Tasks in every workspace keep running, and their asks still reach your inbox.
 
@@ -21,6 +21,7 @@ These things act on the workspace you're looking at:
 - **New task** starts tasks there, unless you pick another in its workspace chip.
 - The workers a task starts go into its workspace.
 - <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> open that workspace's first nine tasks.
+- A note, pad or loop you make goes into that workspace. One an agent makes goes into its task's workspace.
 - **Pause all tasks** and **Resume paused tasks**, in the sliders menu beside the sidebar's **Tasks** heading, act on that workspace's tasks only.
 
 A workspace can also have MCP servers for its own tasks only. See [Browsers and MCP servers](/docs/browsers-and-mcp).
@@ -29,9 +30,9 @@ A workspace can also have MCP servers for its own tasks only. See [Browsers and 
 
 From the window:
 
-1. Click the workspace's name at the top of the tasks sidebar.
-2. Choose **New workspace…**.
-3. Type a name and click **Create**.
+1. Click **+**, **New workspace**, under the workspaces' buttons on the rail.
+2. Type a **Name**, and pick an **Icon**, a **Colour** and the **MCP servers** its tasks get. The preview shows how the workspace will look on the rail.
+3. Click **Create workspace**, or press <kbd>Return</kbd>. Zero shows the new workspace and opens its **New task** page. **Cancel**, or <kbd>Esc</kbd>, goes back to where you were.
 
 From Settings:
 
@@ -43,19 +44,19 @@ A new workspace gets the first icon in the grid until you pick another.
 
 ## Switch workspace
 
-- **In the window**: click the workspace's name at the top of the tasks sidebar, then click another workspace. A tick marks the one you're looking at. **Workspace settings…**, in the same menu, opens **Settings › Workspaces**.
+- **In the window**: click the workspace's button on the rail, or press <kbd>⌥</kbd> <kbd>1</kbd> to <kbd>⌥</kbd> <kbd>9</kbd> for the first nine, in the rail's order. Point at its button to see its name and keys. A bar at the rail's edge marks the workspace you're looking at. A red dot on a workspace's button means a task there needs you.
 - **In the control bar**: click the workspace's icon, below the inbox. The icon shows only when you have more than one workspace.
 
 Each workspace reopens the task you last had open in it. When you open a task from another workspace, for example from the inbox or a notification, the window goes to that task's workspace.
 
-## Change a workspace's name, icon or servers
+## Change a workspace's name, icon, colour or servers
 
 1. Go to **Settings › Workspaces**. The workspace you're looking at has a **Shown** pill.
-2. Point at a workspace and click the pen, **Edit**, or double-click its row.
-3. Change its **Name**, pick an **Icon** from the grid, or tick the **MCP servers** its tasks get. Servers that every workspace gets show as "(every workspace)", and you can't untick them here. Add and change servers in **Settings › MCP servers**.
+2. Point at a workspace and click the pen, **Edit**, or double-click its row. In the window, you can also right-click the workspace's button on the rail and choose **Edit**.
+3. Change its **Name**, pick an **Icon** from the grid, pick a **Colour**, or tick the **MCP servers** its tasks get. Servers that every workspace gets show as "(every workspace)", and you can't untick them here. Add and change servers in **Settings › MCP servers**.
 4. Click **Save**.
 
-The icon shows beside the workspace's name in the tasks sidebar, in the control bar and in Settings. Zero's own workspace shows Zero's mark until you pick an icon for it.
+The icon shows on the workspace's button on the rail, in the control bar and in Settings. Zero's own workspace shows Zero's mark until you pick an icon for it. With no colour, the default, the icon looks like the rail's other buttons. With a colour, it shows in white on a tile of that colour.
 
 ## Delete a workspace
 

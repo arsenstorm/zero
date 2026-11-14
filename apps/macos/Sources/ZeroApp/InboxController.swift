@@ -36,9 +36,12 @@ final class InboxController {
     @ObservationIgnored var barSlots: [String: CGRect] = [:]
     /// The agents the bar shows now, top to bottom: a slot of one gone from the bar is not under the pointer.
     @ObservationIgnored var barOrder: [String] = []
-    static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new", workspacesSlot = "\u{0}workspaces"
+    static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new", workspacesSlot = "\u{0}workspaces", settingsSlot = "\u{0}settings"
     /// The control the bar last opened from the pointer, so moving within it doesn't reopen it.
     @ObservationIgnored var barHover: String?
+    /// The pointer is on its way from the bar into the open panel (MenuAim): the bar's controls it crosses, and the
+    /// bar's buttons, stay as they are until it stops heading in or rests.
+    var barAiming = false
 
     /// The new-agent view: just the composer, opened from the bar's + button.
     var newAgentOpen = false

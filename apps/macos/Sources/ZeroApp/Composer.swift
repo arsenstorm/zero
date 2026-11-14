@@ -79,6 +79,9 @@ struct Composer<Controls: View>: View {
     var body: some View {
         card
             .onChange(of: adding == nil) { _, closed in closed ? stopWatchingAdd() : watchAdd() }
+            .closesWithFloating {
+                adding = nil; mention = nil
+            }
             .task(id: workspace?.loopsVersion) { await workspace?.loadLoops() }
             .onChange(of: adding) { _, page in if page == .pads { Task { await workspace?.loadPads() } } }
             .onDrop(of: [.fileURL, .image], isTargeted: $cardDropping) { providers in
@@ -137,8 +140,22 @@ struct Composer<Controls: View>: View {
                 }
                 return nil
             }
-            // Words, not shortcuts (⌘, ⌃) or keys that move about (Return, Tab, Esc, arrows, Space).
-            guard flags.isDisjoint(with: [.command, .control]), let typed = event.characters, Self.isWords(typed) else {
+            // Space and the deletes are typing too: ⌫ the last character, ⌥⌫ the last word, ⌘⌫ back to the line's start.
+            let keys = flags.subtracting([.capsLock, .numericPad, .function])
+            if event.keyCode == 49, keys.isSubset(of: .shift) { // Space
+                land(" ")
+                return nil
+            }
+            if event.keyCode == 51, keys == [] || keys == .option || keys == .command { // Delete
+                draft.wrappedValue = Self.deleting(draft.wrappedValue, word: keys == .option, line: keys == .command)
+                caret.wrappedValue = (draft.wrappedValue as NSString).length
+                focused.wrappedValue = true
+                return nil
+            }
+            // Words, not shortcuts (⌘, ⌃, ⌥ and a digit: the rail's) or keys that move about (Return, Tab, Esc, arrows).
+            guard flags.isDisjoint(with: [.command, .control]), !(flags.contains(.option) && Rail.digits.contains(Int(event.keyCode))),
+                let typed = event.characters, Self.isWords(typed)
+            else {
                 return event
             }
             land(typed)
@@ -315,6 +332,18 @@ struct Composer<Controls: View>: View {
     }
 
     /// Printable characters other than a lone space: what starts a message.
+    /// The words less what ⌫ takes from their end: a character, a word (⌥, with the spaces after it), or back to the
+    /// line's start (⌘), as a text field does with its caret at the end.
+    static func deleting(_ text: String, word: Bool, line: Bool) -> String {
+        if line {
+            guard let newline = text.lastIndex(of: "\n") else { return "" }
+            return text.index(after: newline) == text.endIndex ? String(text.dropLast()) : String(text[...newline])
+        }
+        guard word else { return String(text.dropLast()) }
+        let trimmed = text.reversed().drop { $0.isWhitespace }
+        return String(trimmed.drop { !$0.isWhitespace }.reversed())
+    }
+
     private static func isWords(_ text: String) -> Bool {
         guard !text.isEmpty, text != " " else { return false }
         return text.unicodeScalars.allSatisfy { scalar in

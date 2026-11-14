@@ -10,7 +10,7 @@ struct QueueStrip: View {
     /// Sent on by zerod already, waiting only for playback to reach them: shown, not changed.
     var sent: Set<String> = []
     let held: Bool
-    /// Paused by you, with how many events wait for your Resume: the strip says so, with Resume.
+    /// Paused by you, with how many events wait for your Resume: the strip says so, with Resume and a row counting them.
     var paused: Int?
     /// The agent at it, as the page shows it (ConversationView.shownWorking): a row steers it mid-turn; not, a row
     /// is sent now.
@@ -53,6 +53,14 @@ struct QueueStrip: View {
             // As a docked card's heading sits (its shell's 2 and 14), so "Queued" and "Question" line up, sunk or not.
             .padding(.horizontal, 16).frame(height: Self.heading)
             VStack(spacing: 0) {
+                // Paused: how much came in meanwhile (it goes to the agent first on Resume), a quiet row over the queue.
+                if let count = paused, count > 0 {
+                    Text(count == 1 ? "1 event since you paused" : "\(count) events since you paused")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 14).frame(height: 32)
+                        .padding(.bottom, queued.isEmpty ? 12 : 0)
+                }
                 // By place, not id: a message just queued shows at once as Zero's own copy, then as zerod's (a new id),
                 // in the same place; by id, the row went and another came in its stead.
                 ForEach(Array(queued.enumerated()), id: \.offset) { index, item in
@@ -134,8 +142,7 @@ struct QueueStrip: View {
     }
 
     private var title: String {
-        guard let paused else { return held ? "Held" : "Queued" }
-        return paused == 0 ? "Paused" : "Paused · \(paused) held while paused"
+        paused == nil ? (held ? "Held" : "Queued") : "Paused"
     }
 
     private func square(_ symbol: String, help: String, id: String, action: @escaping () -> Void) -> some View {
@@ -149,7 +156,7 @@ struct QueueStrip: View {
     }
 
     /// The message as one line, all of it (cut at the row's end), not its first line: that can be only "for this:".
-    private static func gist(_ item: Queued) -> String {
+    static func gist(_ item: Queued) -> String {
         let line =
             item.text.replacingOccurrences(of: #"\s*\[Image #\d+\]"#, with: "", options: .regularExpression)
             .split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -453,7 +460,10 @@ extension EnvironmentValues {
 
     private static func own(_ provider: Provider) -> [SpawnChoice] {
         switch provider {
-        case .claude: AgentModels.spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
+        case .claude:
+            {
+                ClaudeModels.refresh(); return AgentModels.spawnModels(for: SpawnChoice(id: "claude", name: "Claude"))
+            }()
         case .codex: AgentModels.spawnModels(for: SpawnChoice(id: "codex", name: "Codex"))
         // Its own list, read in the background: the rows fill in once it's in.
         case .opencode:
@@ -512,5 +522,61 @@ extension Provider {
         case .codex: CGSize(width: 10, height: 10)
         case .opencode: CGSize(width: 7.5, height: 9.5)
         }
+    }
+}
+
+/// What Send does on a paused task: ask each time, or resume it (the message going after what came meanwhile), or
+/// queue the message for Resume. Kept in Settings › Agents › Tasks.
+enum PausedSend: String, CaseIterable {
+    case ask, resume, queue
+    static let key = "pausedSend"
+
+    var title: String {
+        switch self {
+        case .ask: "Ask"
+        case .resume: "Resume and send"
+        case .queue: "Queue message"
+        }
+    }
+
+    /// The composer's placeholder on a paused task: what sending will do.
+    var placeholder: String {
+        switch self {
+        case .ask: "Paused · send to resume it or queue your message"
+        case .resume: "Paused · sending resumes it"
+        case .queue: "Paused · your message waits until you resume"
+        }
+    }
+}
+
+/// Send on a paused task: resume it for the message, or let the message wait for Resume. Remembered, it's not asked
+/// again (Settings changes it back). Return resumes, Escape leaves the draft as it was.
+struct ResumeDialog: View {
+    let choose: (PausedSend) -> Void
+    @State private var remember = false
+    @AppStorage(PausedSend.key) private var pausedSend = PausedSend.ask
+    @Environment(\.closeDialog) private var close
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            DialogTitle(
+                text: "Resume this task?",
+                detail: "If you resume it, the agent first gets what came in while it was paused, then your message.")
+            Toggle("Don't ask again", isOn: $remember).toggleStyle(.dialogCheckbox)
+                .tip("Settings › Agents changes it back")
+            HStack(spacing: 8) {
+                DialogButton(title: "Cancel") { close() }
+                Spacer()
+                DialogButton(title: "Queue message") { pick(.queue) }
+                DialogButton(title: "Resume and send", kind: .primary) { pick(.resume) }
+            }
+        }
+        .frame(width: 400)
+    }
+
+    private func pick(_ choice: PausedSend) {
+        if remember { pausedSend = choice }
+        close()
+        choose(choice)
     }
 }

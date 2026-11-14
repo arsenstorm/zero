@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 // zerod, Zero's daemon (crates/zerod), runs the agent sessions; the app is its client. This is zerod's model as it
 // comes over the wire (crates/zerod/src/model.rs), how a copy of it is kept (`ZerodMirror`), and the link to the daemon.
@@ -209,6 +210,21 @@ public struct PadSummary: Decodable, Equatable, Sendable, Identifiable {
     public var folder: String
     public var link: String
     public var updated: Int
+    /// The workspace it's in ("zero" when zerod doesn't say).
+    public var workspace: String
+}
+
+extension PadSummary {
+    private enum Keys: String, CodingKey { case id, title, folder, link, updated, workspace }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        folder = try c.decode(String.self, forKey: .folder)
+        link = try c.decode(String.self, forKey: .link)
+        updated = try c.decode(Int.self, forKey: .updated)
+        workspace = try c.decodeIfPresent(String.self, forKey: .workspace) ?? "zero"
+    }
 }
 
 /// A heading in a pad, with its anchor (zero://pad/<id>#<slug>).
@@ -230,6 +246,23 @@ public struct Pad: Decodable, Equatable, Sendable {
     public var sections: [PadSection]
     public var link: String
     public var updated: Int
+    public var workspace: String
+}
+
+extension Pad {
+    private enum Keys: String, CodingKey { case id, title, folder, content, revision, sections, link, updated, workspace }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        folder = try c.decode(String.self, forKey: .folder)
+        content = try c.decode(String.self, forKey: .content)
+        revision = try c.decode(String.self, forKey: .revision)
+        sections = try c.decode([PadSection].self, forKey: .sections)
+        link = try c.decode(String.self, forKey: .link)
+        updated = try c.decode(Int.self, forKey: .updated)
+        workspace = try c.decodeIfPresent(String.self, forKey: .workspace) ?? "zero"
+    }
 }
 
 public struct PadList: Decodable, Equatable, Sendable {
@@ -469,7 +502,7 @@ public struct Opened: Decodable, Equatable, Sendable {
     public init(id: String, mark: Int) { self.id = id; self.mark = mark }
 }
 
-public struct UsageWindow: Decodable, Equatable, Sendable {
+public struct UsageWindow: Codable, Equatable, Sendable {
     public var name: String
     /// The share used, 0 to 1.
     public var used: Double
@@ -478,7 +511,7 @@ public struct UsageWindow: Decodable, Equatable, Sendable {
     public var readAt: Int?
 }
 
-public struct Usage: Decodable, Equatable, Sendable {
+public struct Usage: Codable, Equatable, Sendable {
     public var limited: Bool
     /// Unix seconds.
     public var resetsAt: Int?
@@ -954,6 +987,7 @@ public final class ZerodLink: @unchecked Sendable {
         case following
         case workspaces
         case signins
+        case mcp
         /// zerod is restarting as a new build: pausing turns between steps first.
         case restarting
         /// Notifications to take off a phone, by id: seen on the Mac (from the Mac's bridge, not zerod).
@@ -1342,16 +1376,31 @@ public final class ZerodLink: @unchecked Sendable {
         public let name: String
         public let description: String
         public let body: String
+        /// The workspace it's in ("zero" when zerod doesn't say).
+        public let workspace: String
         public let children: [String]
         public let uses: [Use]
         public struct Use: Decodable, Equatable, Sendable { public let session: String; public let role: String; public let at: Int }
+        private enum Keys: String, CodingKey { case name, description, body, workspace, children, uses }
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            name = try c.decode(String.self, forKey: .name)
+            description = try c.decode(String.self, forKey: .description)
+            body = try c.decode(String.self, forKey: .body)
+            workspace = try c.decodeIfPresent(String.self, forKey: .workspace) ?? "zero"
+            children = try c.decode([String].self, forKey: .children)
+            uses = try c.decode([Use].self, forKey: .uses)
+        }
     }
 
     private func loops(from result: Any) throws -> [Loop] {
         try JSONDecoder().decode([Loop].self, from: JSONSerialization.data(withJSONObject: result))
     }
 
-    public func loops() async throws -> [Loop] { try loops(from: try await call("loops")) }
+    /// A workspace's loops; with none, all.
+    public func loops(workspace: String? = nil) async throws -> [Loop] {
+        try loops(from: try await call("loops", ["workspace": workspace]))
+    }
 
     /// Something saved for later (zerod's later.rs): a note in plain words and, when viewed, the artifact behind it.
     public struct LaterItem: Decodable, Equatable, Sendable, Identifiable {
@@ -1402,8 +1451,10 @@ public final class ZerodLink: @unchecked Sendable {
         try loops(from: [try await call("loop", ["name": name])]).first!
     }
 
-    public func saveLoop(_ name: String, description: String, body: String) async throws -> Loop {
-        try loops(from: [try await call("saveLoop", ["name": name, "description": description, "body": body])]).first!
+    /// Saved in a workspace if one is given; without one, a loop stays where it is (a new one goes in Zero).
+    public func saveLoop(_ name: String, description: String, body: String, workspace: String? = nil) async throws -> Loop {
+        try loops(from: [try await call("saveLoop", ["name": name, "description": description, "body": body, "workspace": workspace])])
+            .first!
     }
 
     public func deleteLoop(_ name: String) async throws { _ = try await call("deleteLoop", ["name": name]) }
@@ -1498,7 +1549,19 @@ public final class ZerodLink: @unchecked Sendable {
         public var name: String
         /// A Nucleo icon's name, or an emoji.
         public var glyph: String
-        public init(id: String = "", name: String, glyph: String = "") { self.id = id; self.name = name; self.glyph = glyph }
+        /// A colour's name ("teal"), or "" for none.
+        public var color: String
+        public init(id: String = "", name: String, glyph: String = "", color: String = "") {
+            self.id = id; self.name = name; self.glyph = glyph; self.color = color
+        }
+        private enum Keys: String, CodingKey { case id, name, glyph, color }
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            id = try c.decode(String.self, forKey: .id)
+            name = try c.decode(String.self, forKey: .name)
+            glyph = try c.decodeIfPresent(String.self, forKey: .glyph) ?? ""
+            color = try c.decodeIfPresent(String.self, forKey: .color) ?? ""
+        }
     }
 
     public func workspaces() async throws -> [Workspace] { try decode([Workspace].self, from: await call("workspaces")) }
@@ -1637,6 +1700,11 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     public func deleteWorkspace(_ id: String) async throws { _ = try await call("deleteWorkspace", ["workspace": id]) }
+
+    /// Puts the workspaces in the user's order (Zero too); zerod's list as it now is.
+    public func reorderWorkspaces(_ ids: [String]) async throws -> [Workspace] {
+        try decode([Workspace].self, from: await call("reorderWorkspaces", ["order": ids]))
+    }
 
     /// Puts a session in a workspace; nil puts it back in Zero.
     public func placeInWorkspace(session: String, workspace: String?) async throws {
@@ -1886,6 +1954,7 @@ public final class ZerodLink: @unchecked Sendable {
                 if event == "following" { onFeed?(.following); continue }
                 if event == "workspaces" { onFeed?(.workspaces); continue }
                 if event == "signins" { onFeed?(.signins); continue }
+                if event == "mcp" { onFeed?(.mcp); continue }
                 if event == "restarting" { onFeed?(.restarting); continue }
                 if event == "uses" {
                     if let tasks = try? JSONDecoder().decode(UsesFeed.self, from: data).tasks { onFeed?(.uses(tasks)) }
@@ -2088,4 +2157,229 @@ public struct AccountActivity: Sendable, Equatable {
 
     /// Every account's turns that day, together.
     public var totals: [Date: Int] { days.mapValues { $0.values.reduce(0, +) } }
+}
+
+extension ZerodLink {
+    /// A video sent from the phone in parts: as one line it held back every answer behind it, longer than the phone's
+    /// heartbeat waits (10 s), which dropped the link and the message with it. A part is four Noise pieces' worth (base64
+    /// of 47 KB fills one): a heartbeat waits behind the few parts in flight, never the whole video.
+    public enum Upload {
+        public static let part = 4 * 47 * 1024
+        static let flying = 4
+
+        /// The phone's end: `file` up in parts (`uploadPart`), a few in flight, each answered; then `uploadDone` gives
+        /// where the Mac keeps it. After a dropped link, only the parts not answered go again, over the next link.
+        /// `sent`: how many of its bytes are in, as that grows.
+        /// On the caller's actor (`sent` too), the parts' calls beside it.
+        public static func send(
+            _ file: URL, name: String, isolation: isolated (any Actor)? = #isolation, over link: () async -> ZerodLink?,
+            sent: (Int) -> Void
+        ) async throws -> String {
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            let size = Int(try handle.seekToEnd())
+            let id = UUID().uuidString
+            var left = Array(stride(from: 0, to: max(size, 1), by: part))
+            var failures = 0
+            while true {
+                do {
+                    guard let link = await link() else { throw ZerodError(message: "Not connected to your Mac") }
+                    if !left.isEmpty {
+                        try await parts(&left, of: handle, size: size, id: id, isolation: isolation, over: link, sent: sent)
+                    }
+                    guard let path = try await link.call("uploadDone", ["upload": id, "name": name, "size": size]) as? String else {
+                        throw ZerodError(message: "The Mac didn't keep the video")
+                    }
+                    return path
+                } catch {
+                    failures += 1
+                    if failures > 5 || error is CancellationError { throw error }
+                    try await Task.sleep(for: .seconds(1))
+                }
+            }
+        }
+
+        /// The parts `left` sent over one link: those answered come off it; any not, and it throws (after the others
+        /// in flight have landed, so none that arrived goes again).
+        private static func parts(
+            _ left: inout [Int], of handle: FileHandle, size: Int, id: String, isolation: isolated (any Actor)?, over link: ZerodLink,
+            sent: (Int) -> Void
+        ) async throws {
+            let offsets = left
+            var failed: Error?
+            try await withThrowingTaskGroup(of: (Int, Error?).self) { group in
+                var flying = 0
+                func land(_ result: (Int, Error?)?) {
+                    guard let (at, error) = result else { return }
+                    flying -= 1
+                    if let error { failed = failed ?? error; return }
+                    left.removeAll { $0 == at }
+                    sent(size - left.reduce(0) { $0 + min(part, size - $1) })
+                }
+                for at in offsets where failed == nil {
+                    if flying == Self.flying { land(try await group.next()) }
+                    try handle.seek(toOffset: UInt64(at))
+                    let data = (try handle.read(upToCount: part) ?? Data()).base64EncodedString()
+                    group.addTask {
+                        do { _ = try await link.call("uploadPart", ["upload": id, "at": at, "data": data]); return (at, nil) } catch {
+                            return (at, error)
+                        }
+                    }
+                    flying += 1
+                }
+                while let result = try await group.next() { land(result) }
+            }
+            if let failed { throw failed }
+        }
+
+        /// The Mac's end: an `uploadPart` written where it goes in its file (one sent again is the same bytes again; any
+        /// order), or `uploadDone` moving the whole file into `folder`, its path the answer. Nil: refused. ponytail: the
+        /// parts of an upload never finished stay in folder/parts; clear them out if they ever add up.
+        public static func answer(_ request: [String: Any], in folder: URL) -> Any? {
+            guard let id = request["upload"] as? String, UUID(uuidString: id) != nil else { return nil }
+            let partial = folder.appendingPathComponent("parts").appendingPathComponent(id.lowercased())
+            let files = FileManager.default
+            switch request["op"] as? String {
+            case "uploadPart":
+                guard let at = request["at"] as? Int, at >= 0, let data = (request["data"] as? String).flatMap({ Data(base64Encoded: $0) })
+                else { return nil }
+                try? files.createDirectory(at: partial.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if !files.fileExists(atPath: partial.path) { files.createFile(atPath: partial.path, contents: nil) }
+                guard let handle = try? FileHandle(forWritingTo: partial) else { return nil }
+                defer { try? handle.close() }
+                guard (try? handle.seek(toOffset: UInt64(at))) != nil, (try? handle.write(contentsOf: data)) != nil else { return nil }
+                return NSNull()
+            case "uploadDone":
+                guard let size = request["size"] as? Int, (try? files.attributesOfItem(atPath: partial.path)[.size] as? Int) == size
+                else { return nil }
+                let name = URL(fileURLWithPath: request["name"] as? String ?? "video.mov").lastPathComponent
+                let kept = folder.appendingPathComponent(UUID().uuidString.prefix(8) + "-" + name)
+                guard (try? files.moveItem(at: partial, to: kept)) != nil else { return nil }
+                return kept.path
+            default:
+                return nil
+            }
+        }
+    }
+
+    /// A video of a message, from the Mac to the phone in parts (one line each is all the relay takes), to play it.
+    public enum Download {
+        public static let part = Upload.part
+
+        /// The phone's end: the file at `path` on the Mac into `file`, a few parts in flight; `got` says how much is in,
+        /// 0 to 1. After a dropped link, only the parts not in yet are asked for again, over the next link.
+        public static func fetch(
+            _ path: String, into file: URL, isolation: isolated (any Actor)? = #isolation, over link: () async -> ZerodLink?,
+            got: (Double) -> Void
+        ) async throws {
+            let files = FileManager.default
+            let partial = file.appendingPathExtension("part")
+            files.createFile(atPath: partial.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: partial)
+            defer { try? handle.close() }
+            var size: Int?
+            var left: [Int] = []
+            var failures = 0
+            while true {
+                do {
+                    guard let link = await link() else { throw ZerodError(message: "Not connected to your Mac") }
+                    if size == nil {
+                        // The first part says how large it is.
+                        let (total, data) = try await piece(path, at: 0, over: link)
+                        try handle.write(contentsOf: data)
+                        size = total
+                        left = Array(stride(from: part, to: total, by: part))
+                    }
+                    let total = size ?? 0
+                    got(Double(total - left.reduce(0) { $0 + min(part, total - $1) }) / Double(max(total, 1)))
+                    try await pieces(&left, of: path, size: total, into: handle, isolation: isolation, over: link, got: got)
+                    break
+                } catch {
+                    failures += 1
+                    if failures > 5 || error is CancellationError { try? files.removeItem(at: partial); throw error }
+                    try await Task.sleep(for: .seconds(1))
+                }
+            }
+            try? files.removeItem(at: file)
+            try files.moveItem(at: partial, to: file)
+        }
+
+        private static func piece(_ path: String, at: Int, over link: ZerodLink) async throws -> (size: Int, data: Data) {
+            guard let answer = try await link.call("downloadPart", ["path": path, "at": at]) as? [String: Any],
+                let size = answer["size"] as? Int, let data = (answer["data"] as? String).flatMap({ Data(base64Encoded: $0) })
+            else { throw ZerodError(message: "The Mac didn't send the video") }
+            return (size, data)
+        }
+
+        private static func pieces(
+            _ left: inout [Int], of path: String, size: Int, into handle: FileHandle, isolation: isolated (any Actor)?,
+            over link: ZerodLink, got: (Double) -> Void
+        ) async throws {
+            let offsets = left
+            var failed: Error?
+            try await withThrowingTaskGroup(of: (Int, Data?, Error?).self) { group in
+                var flying = 0
+                func land(_ result: (Int, Data?, Error?)?) throws {
+                    guard let (at, data, error) = result else { return }
+                    flying -= 1
+                    guard let data else { failed = failed ?? error; return }
+                    try handle.seek(toOffset: UInt64(at))
+                    try handle.write(contentsOf: data)
+                    left.removeAll { $0 == at }
+                    got(Double(size - left.reduce(0) { $0 + min(part, size - $1) }) / Double(max(size, 1)))
+                }
+                for at in offsets where failed == nil {
+                    if flying == Upload.flying { try land(try await group.next()) }
+                    group.addTask {
+                        do { return (at, try await piece(path, at: at, over: link).data, nil) } catch { return (at, nil, error) }
+                    }
+                    flying += 1
+                }
+                while let result = try await group.next() { try land(result) }
+            }
+            if let failed { throw failed }
+        }
+
+        /// The Mac's end: a `downloadPart` of a video file, its size and the bytes from `at`. Only videos (a message's):
+        /// nothing else on the Mac is read. Nil: refused.
+        public static func answer(_ request: [String: Any]) -> Any? {
+            guard let path = request["path"] as? String, let at = request["at"] as? Int, at >= 0,
+                UTType(filenameExtension: URL(fileURLWithPath: path).pathExtension)?.conforms(to: .movie) == true,
+                let handle = FileHandle(forReadingAtPath: path)
+            else { return nil }
+            defer { try? handle.close() }
+            guard let size = try? handle.seekToEnd(), at <= size, (try? handle.seek(toOffset: UInt64(at))) != nil,
+                let data = try? handle.read(upToCount: part)
+            else { return nil }
+            return ["size": Int(size), "data": data.base64EncodedString()]
+        }
+    }
+}
+
+extension ZerodLink.McpServer {
+    /// On in a workspace: on at all, and every workspace's (none named) or given to it.
+    public func isOn(in workspace: String) -> Bool { enabled && (workspaces.isEmpty || workspaces.contains(workspace)) }
+
+    /// On in every workspace there is: none named, or all of them.
+    public func isShared(among all: [String]) -> Bool { enabled && (workspaces.isEmpty || all.allSatisfy(workspaces.contains)) }
+
+    /// As a workspace has it before it's switched there: every workspace's on (a new one's too), the rest as they are.
+    public func standing(in workspace: String, among all: [String]) -> Bool { isShared(among: all) || isOn(in: workspace) }
+
+    /// Switched on or off in one of `all` the workspaces. Every workspace's, turned off in one, is given to the rest;
+    /// given to all of them, it's every workspace's again (none named, so a workspace made later has it too). Off in
+    /// the last it was in, it's off, kept as that workspace's to come back on there.
+    public mutating func set(_ on: Bool, in workspace: String, all: [String]) {
+        var given = !enabled ? [] : workspaces.isEmpty ? all : workspaces
+        given.removeAll { $0 == workspace }
+        if on { given.append(workspace) }
+        given = all.filter(given.contains)
+        if given.isEmpty {
+            enabled = false
+            workspaces = [workspace]
+        } else {
+            enabled = true
+            workspaces = given.count == all.count ? [] : given
+        }
+    }
 }

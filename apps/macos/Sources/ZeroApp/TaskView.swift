@@ -12,21 +12,29 @@ struct TaskPages: View {
     let workspace: Workspace
     let inbox: InboxController
     @Bindable var navigation: Navigation
-    let current: String
+    /// The page shown; nil while the window shows another (New task, All tasks, Settings): every page kept, hidden.
+    let current: String?
     @State private var recent: [String] = []
+    /// How many workspaces' last tasks are built so far: each workspace's, one at a time after the window opens, so a
+    /// switch (⌥1–⌥9 too, with no hover to build it first) shows a page already built.
+    @State private var warmed = 0
     /// Each in a hosting view of its own (PageHost), so kept pages cost a streamed update nothing: in one view graph,
     /// every update of the window went through all of them (twice the cost at 8 pages). 16, at 3–8 MB each: a switch
     /// back to one is ~30 ms, a page built again ~120.
     private static let kept = 16
 
     var body: some View {
-        let kept = recent.contains(current) ? recent : recent + [current]
+        let kept = recent + (current.map { recent.contains($0) ? [] : [$0] } ?? [])
+        let lasts = workspace.workspaces.compactMap { navigation.lastTask(in: $0.id) }
+            .filter { workspace.conversation($0) != nil && workspace.conversation($0)?.parent == nil }
+        let pinned = lasts.prefix(warmed).filter { !kept.contains($0) }
         // The task the pointer rests on in the sidebar, built hidden before its click (TaskPeek.next), so the click only
         // shows it. A lead's only: a worker shows on its lead's page. Never in `recent` until clicked: unclicked, it goes.
         let ahead = TaskPeek.shared.next.flatMap { id in
-            kept.contains(id) || workspace.conversation(id) == nil || workspace.conversation(id)?.parent != nil ? nil : id
+            let built = kept.contains(id) || pinned.contains(id)
+            return built || workspace.conversation(id) == nil || workspace.conversation(id)?.parent != nil ? nil : id
         }
-        let shown = kept + (ahead.map { [$0] } ?? [])
+        let shown = kept + pinned + (ahead.map { [$0] } ?? [])
         ZStack {
             ForEach(shown, id: \.self) { id in
                 let active = id == current
@@ -41,7 +49,15 @@ struct TaskPages: View {
                 .zIndex(active ? 1 : 0)
             }
         }
+        .task {
+            // After the window's first frames, a page per beat: building them all at once would hitch it.
+            for count in 1...max(1, workspace.workspaces.count) {
+                try? await Task.sleep(for: .milliseconds(300))
+                warmed = count
+            }
+        }
         .onChange(of: current, initial: true) {
+            guard let current else { return }
             var list = recent.filter { $0 != current && workspace.conversation($0) != nil }
             list.append(current)
             if list.count > Self.kept { list.removeFirst(list.count - Self.kept) }

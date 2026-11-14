@@ -4,26 +4,39 @@ import SwiftUI
 /// A round button in one of the bar's hollows, where its curves meet the screen edge: the inbox in the top one, the
 /// settings in the bottom one. In, only a thin arc of it shows, facing the bar; out, the arc thickens inward and wraps
 /// round into the full button. Its outer edge never moves, so the gap to the bar stays even all the way (the hollow's
-/// radius is the button's plus that gap).
+/// radius is the button's plus that gap). With something waiting, the arc is the waiting colour, fading to the
+/// button's own as it comes out.
 struct BarKnob<Label: View>: View {
     /// In the top hollow (the arc faces down towards the bar) rather than the bottom one.
     var top = false
-    /// Out as the full button; the pointer on it brings it out too.
+    /// Out as the full button; the pointer on it brings it out too, unless it's only passing over (`passing`).
     var out: Bool
+    /// The pointer is on its way across into the open panel: being under it doesn't bring the button out.
+    var passing = false
+    /// Something waiting: the arc in the waiting colour.
+    var waiting = false
+    /// Bumped as something new comes in: the arc brightens once.
+    var pulse = 0
     @ViewBuilder var label: (_ hovered: Bool) -> Label
     @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let open: CGFloat = out || hovered ? 1 : 0
+        let open: CGFloat = out || hovered && !passing ? 1 : 0, tint: CGFloat = waiting ? 1 : 0
         ZStack {
             if reduceMotion {
                 // Reduce Motion: the arc and the button cross-fade, and the icon only fades.
-                seed(0).opacity(1 - open)
-                seed(1).opacity(open)
+                seed(0, tint: tint).opacity(1 - open)
+                seed(1, tint: tint).opacity(open)
                 label(hovered).opacity(open)
             } else {
-                seed(open)
+                seed(open, tint: tint)
+                    .keyframeAnimator(initialValue: 0.0, trigger: pulse) {
+                        $0.modifier(Glow(glow: $1))
+                    } keyframes: { _ in
+                        LinearKeyframe(1, duration: 0.1, timingCurve: .easeOut)
+                        LinearKeyframe(0, duration: 0.5, timingCurve: .easeOut)
+                    }
                 label(hovered).modifier(CarriedIcon(open: open, top: top))
             }
         }
@@ -33,13 +46,26 @@ struct BarKnob<Label: View>: View {
             reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.33, 1, 0.68, 1, duration: open == 1 ? 0.22 : 0.15),
             value: open
         )
+        .animation(.easeOut(duration: 0.2), value: waiting)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
     }
 
-    private func seed(_ open: CGFloat) -> some View {
-        BarSeed(open: open, top: top).fill(Theme.pill)
-            .overlay(BarSeed(open: open, top: top).stroke(Theme.stroke, lineWidth: 1))
+    /// The arc (or ring, or button) in the bar's colours, the waiting colour laid over it by `tint`, all of it on the
+    /// arc and none of it on the button.
+    private func seed(_ open: CGFloat, tint: CGFloat) -> some View {
+        let shape = BarSeed(open: open, top: top), blue = AgentStatus.needsYou.color.opacity(tint * (1 - open))
+        return shape.fill(Theme.pill).overlay(shape.fill(blue))
+            .overlay(shape.stroke(Theme.stroke, lineWidth: 1)).overlay(shape.stroke(blue, lineWidth: 1))
+    }
+}
+
+/// The waiting arc's brightening as something new comes in: lighter, with a glow of its colour round it.
+struct Glow: ViewModifier {
+    var glow: CGFloat
+
+    func body(content: Content) -> some View {
+        content.brightness(0.2 * glow).shadow(color: AgentStatus.needsYou.color.opacity(0.7 * glow), radius: 3.5 * glow)
     }
 }
 
@@ -107,8 +133,9 @@ struct BarSeed: Shape {
 struct BarPeak: Shape {
     /// The space between the two buttons: the join's length along the screen edge is this plus a button's width.
     static let gap: CGFloat = 12
-    /// The bump's rounding, a circle touching both hollows on the screen's side of the buttons' axis.
-    var tip: CGFloat = 6
+    /// The bump's rounding, a circle touching both hollows on the screen's side of the buttons' axis. Its height comes
+    /// from this alone (the hollows keep their gap): 2.5 pt stands it about 13.7 pt off the edge, 6 pt only 10.7.
+    var tip: CGFloat = 2.5
 
     func path(in rect: CGRect) -> Path {
         let hollow = barKnob / 2 + 6, edge = rect.maxX, axis = rect.midX

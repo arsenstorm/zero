@@ -163,12 +163,18 @@ struct ConversationView: View {
         var composerFrame: CGRect = .zero
         var stripFrame: CGRect = .zero
         var cardFrame: CGRect = .zero
-        /// The way down's button, while it shows: the page fades round it too, never runs under it.
-        var downFrame: CGRect = .zero
+        /// How much the question card shows, for the page's fade round it: 1 while one's docked, eased to 0 as the last
+        /// one fades out, answered, on its own curve (AskDock); its frame is only let go once it has gone.
+        var docked: CGFloat = 1
+        /// The page's height, for the way down's place above them (DownRoom).
+        var pane: CGFloat = 0
     }
     private var composerHeight: CGFloat { foot.height }
     /// Queued from here, not yet in zerod's queue: shown in the strip until it is.
     @State private var queuing: [Queued] = []
+    /// What sending to a paused task does (Settings › Agents), and its dialog open when that's to ask.
+    @AppStorage(PausedSend.key) private var pausedSend = PausedSend.ask
+    @State private var askingResume = false
     /// Taken from zerod's queue to go to the agent, its message not in the conversation yet: kept in the strip (as
     /// Next) meanwhile. zerod's queue drops it a moment before its message comes; in neither list, the row went and
     /// came back as Next, 64 pt each way.
@@ -394,6 +400,7 @@ struct ConversationView: View {
                     .overlay(alignment: .bottom) { composerOverlay }
                     // The page's space, the composer's overlay in it: where its surfaces are, for the mask above.
                     .coordinateSpace(.named(Self.pane))
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.pane != $0 { foot.pane = $0 } }
                     .overlay(alignment: .trailing) {
                         ThinScrollbar(tracker: tracker) {
                             following = false; lifted = false; ScrollMemory.keepLift(nil, in: conversation.id)
@@ -905,14 +912,14 @@ struct ConversationView: View {
                 // Open in the user's terminal: typed into there, so no composer here; back once its CLI exits.
                 if conversation.terminal != nil { inTerminal } else { composer }
             }
+            .zeroDialog(isPresented: $askingResume) {
+                ResumeDialog { sendWhilePaused(as: $0) }
+            }
             // Just rewound: the way back, above the composer, over the page rather than pushing it.
             .overlay(alignment: .top) {
                 if undoable != nil { RewoundNotice(undo: undoRewind).offset(y: -38) }
             }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.composer != $0 { foot.composer = $0 } }
-            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(Self.pane)) }) { [foot] in
-                if foot.composerFrame != $0 { foot.composerFrame = $0 }
-            }
             .onHover { [foot] inside in if foot.overComposer != inside { foot.overComposer = inside } }
         }
         // Once zerod has it, the one shown at once goes: left until it went, it came back when the queue emptied.
@@ -985,8 +992,7 @@ struct ConversationView: View {
         // Gone to a passage from an ask: the way down is the way back to it, said so. One docked here is at the end,
         // where the way down goes (its card comes up from behind the composer there); another is in the inbox.
         WayDown(
-            tracker: tracker, away: live.later > 0, label: backTo == nil ? nil : "Back to the ask",
-            placed: { [foot] in if foot.downFrame != $0 { foot.downFrame = $0 } }
+            tracker: tracker, away: live.later > 0, label: backTo == nil ? nil : "Back to the ask"
         ) {
             if let id = backTo {
                 backTo = nil
@@ -1013,7 +1019,7 @@ struct ConversationView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         // Just above the question card's strip, as it sits sunk (the arrow shows only scrolled up, where it is), and
         // under the card: brought up, the card covers it.
-        .safeAreaInset(edge: .bottom, spacing: 0) { FootRoom(foot: foot, extra: 6, sunk: true) }
+        .safeAreaInset(edge: .bottom, spacing: 0) { DownRoom(foot: foot) }
     }
 
     /// Every message of yours, loaded or not, from zerod's outline of the conversation.
@@ -1187,6 +1193,7 @@ struct ConversationView: View {
         .padding(.horizontal, 16).frame(height: 56)
         .background(Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Theme.fieldEdge, lineWidth: 1))
+        .modifier(ComposerPlace(foot: foot))
     }
 
     private var composer: some View {
@@ -1207,25 +1214,10 @@ struct ConversationView: View {
                 }), placeholder: placeholder, canSend: conversation.status != .starting, folder: conversation.cwd, workspace: workspace,
             images: $images, active: active,
             stop: shownBusy && conversation.terminal == nil ? { Task { await workspace.interrupt(conversation.id) } } : nil,
-            // Queued only while the agent is at it, or paused (it waits for your Resume): a message sent as the last
-            // words read out goes straight to it.
+            // Queued only while the agent is at it, or paused (asked, resumed or queued, as set): a message sent as
+            // the last words read out goes straight to it.
             queue: (working || paused != nil) && conversation.terminal == nil
-                ? {
-                    // Return while it works: the message waits for after this turn, in the strip above.
-                    let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
-                    draft = ""
-                    images = []
-                    // In the strip at once, in the same frame the composer empties: waiting for zerod's word, the
-                    // composer shrank one frame and the strip came the next, the page dropping and jumping back.
-                    // One id from here on: zerod's queue entry takes it, and its item for the message once sent on.
-                    let pending = Queued(id: "queuing-" + UUID().uuidString, text: text, images: attached)
-                    queuing.append(pending)
-                    Task {
-                        await workspace.queue(conversation.id, text: text, images: attached, id: pending.id)
-                        try? await Task.sleep(for: .seconds(5))
-                        queuing.removeAll { $0.id == pending.id }
-                    }
-                } : nil,
+                ? { if paused != nil { sendWhilePaused() } else { queueDraft() } } : nil,
             // ponytail: the first agent ask waiting, not the dock's page shown; follow the pager if several wait.
             pick: { [inbox, conversation, workspace] digit in
                 guard conversation.questions.isEmpty else { return false }
@@ -1243,6 +1235,7 @@ struct ConversationView: View {
                 return false
             }
         ) {
+            if paused != nil, conversation.terminal == nil { return sendWhilePaused() }
             let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
             draft = ""
             images = []
@@ -1324,6 +1317,8 @@ struct ConversationView: View {
                 busy && next?.permissions != nil
                     ? "From the next turn" : busy ? "Picked now, it applies from the next turn" : "What the agent may do without asking")
         }
+        // Its shell's place, inside the column (which spans the page, margins and all).
+        .modifier(ComposerPlace(foot: foot))
         // A little narrower than the conversation.
         .centredColumn(680)
         .padding(.top, 4).padding(.bottom, 16)
@@ -1331,6 +1326,37 @@ struct ConversationView: View {
 
     /// The providers a task can move to: they read Zero's record natively (Claude Code resumes it, Codex imports it).
     static let takeOver: [Provider] = [.claude, .codex]
+
+    /// The draft into the queue, to wait for after this turn (or for Resume, paused); `then`, once zerod has it.
+    private func queueDraft(then: (@MainActor () async -> Void)? = nil) {
+        let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
+        draft = ""
+        images = []
+        // In the strip at once, in the same frame the composer empties: waiting for zerod's word, the
+        // composer shrank one frame and the strip came the next, the page dropping and jumping back.
+        // One id from here on: zerod's queue entry takes it, and its item for the message once sent on.
+        let pending = Queued(id: "queuing-" + UUID().uuidString, text: text, images: attached)
+        queuing.append(pending)
+        Task {
+            await workspace.queue(conversation.id, text: text, images: attached, id: pending.id)
+            await then?()
+            try? await Task.sleep(for: .seconds(5))
+            queuing.removeAll { $0.id == pending.id }
+        }
+    }
+
+    /// Send on a paused task: asked (Resume and send, or Queue), or what the user chose not to be asked again.
+    private func sendWhilePaused(as chosen: PausedSend? = nil) {
+        switch chosen ?? pausedSend {
+        case .ask:
+            // The dialog takes Return and Escape, not the composer's text.
+            NSApp.keyWindow?.makeFirstResponder(nil)
+            askingResume = true
+        case .queue: queueDraft()
+        // Queued first: zerod's Resume gives the agent what came meanwhile, then the message.
+        case .resume: queueDraft { [workspace, id = conversation.id] in await workspace.unpause([id]) }
+        }
+    }
 
     private func send(_ text: String, images: [String] = [], with chosen: Provider) {
         Task {
@@ -1374,7 +1400,7 @@ struct ConversationView: View {
 
     private var placeholder: String {
         // Its answer still being read out here, though zerod's turn has ended: as the page reads, still at it.
-        if paused != nil { return "Paused · your message waits until you resume" }
+        if paused != nil { return pausedSend.placeholder }
         // As the stop beside it and the strip's Steer: the agent at it as the page shows it.
         guard shownWorking else { return "Reply" }
         return conversation.provider == .opencode ? "OpenCode answers one message at a time" : "Steer it while it works"
@@ -1600,6 +1626,16 @@ private struct LiftStack: Layout {
     }
 }
 
+/// Where the composer's shell is on the page, for the fade round it (FadeMask).
+private struct ComposerPlace: ViewModifier {
+    let foot: ConversationView.Foot
+    func body(content: Content) -> some View {
+        content.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ConversationView.pane)) }) { [foot] in
+            if foot.composerFrame != $0 { foot.composerFrame = $0 }
+        }
+    }
+}
+
 /// The room at the timeline's foot for the composer and the fade above it: its own view, so the composer's height
 /// changing sizes this alone, not the conversation.
 /// A question card rising, the room grows with it (Foot.rise).
@@ -1638,8 +1674,8 @@ private struct SoftFoot: View {
             // Eased as the card is when the pointer brings it up or lets it sink (Sinker), on the same curve; a scroll
             // moves both one point for one.
             Feathered(
-                sunk: foot.sunk, rise: foot.rise, composer: foot.composerFrame, strip: foot.stripFrame, card: foot.cardFrame,
-                down: foot.downFrame
+                sunk: foot.sunk, docked: foot.docked, rise: foot.rise, composer: foot.composerFrame, strip: foot.stripFrame,
+                card: foot.cardFrame
             )
             .animation(Motion.animation(ConversationView.slide), value: foot.hovering)
         }
@@ -1647,21 +1683,21 @@ private struct SoftFoot: View {
 }
 
 /// The page under its top fade, less each docked surface's column (FadeMask): hidden from its text's start to the same
-/// inset on its right, from just above it to the window's foot, eased out above and into the margins beside it. The
+/// inset on its right, from its top to the window's foot, eased out under its edge and into the margins beside it. The
 /// card's sink is animatable, to go with the card.
 private struct Feathered: View, Animatable {
     /// The page's fade under the title bar, above this: the surfaces' frames are the page's, this starts that far down.
     static let top: CGFloat = 28
     var sunk: CGFloat
+    var docked: CGFloat
     let rise: CGFloat
     let composer: CGRect
     let strip: CGRect
     let card: CGRect
-    let down: CGRect
 
-    var animatableData: CGFloat {
-        get { sunk }
-        set { sunk = newValue }
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(sunk, docked) }
+        set { (sunk, docked) = (newValue.first, newValue.second) }
     }
 
     var body: some View {
@@ -1669,22 +1705,33 @@ private struct Feathered: View, Animatable {
         let sinking = card.height > 0 ? sunk + min(rise, card.height) : 0
         let shown = CGRect(x: card.minX, y: card.minY + sinking, width: card.width, height: max(0, card.height - sinking))
         // Each one's text inset: the composer's text 14 in; the strip's, its own 13 pt margin (in its frame) and its
-        // heading's 16; the card's heading and words 16 in from its shell.
+        // heading's 16; the card's heading and words 16 in from its shell. The page fades out under the composer's edge;
+        // above the strip and the card as it does beside them (`beside` out to their text's inset in), so their corners
+        // round off evenly. The strip by its shell, 13 in from its frame's sides.
+        let beside = -FadeMask.beside...16
         let surfaces = [
-            FadeMask.Surface(frame: composer, inset: 14), FadeMask.Surface(frame: strip, inset: 13 + 16),
-            FadeMask.Surface(frame: shown, inset: 16), FadeMask.Surface(frame: down, inset: 0),
-        ].map { FadeMask.Surface(frame: $0.frame.offsetBy(dx: 0, dy: -Self.top), inset: $0.inset) }
+            FadeMask.Surface(frame: composer, inset: 14),
+            FadeMask.Surface(frame: strip.insetBy(dx: strip.width > 26 ? 13 : 0, dy: 0), inset: 16, fade: beside),
+            FadeMask.Surface(frame: shown, inset: 16, fade: beside, strength: docked),
+        ].map {
+            FadeMask.Surface(frame: $0.frame.offsetBy(dx: 0, dy: -Self.top), inset: $0.inset, fade: $0.fade, strength: $0.strength)
+        }
         return Canvas { context, size in FadeMask.draw(&context, size: size, surfaces: surfaces) }
     }
 }
 
-/// Room as tall as the composer (and `extra`), for what sits just above it.
-private struct FootRoom: View {
+/// Room under the way down, so it sits 12 pt above what's docked highest: the composer, the queue's strip, or the
+/// question card as far as it has sunk (a tall card isn't down to its strip yet when the arrow comes, 200 pt from the
+/// end). Not as the pointer brings the card up: it covers the arrow then. From where they are, not added up from the
+/// dock's heights (its spacing and padding left it 18 pt above a bare composer, 10 above a card).
+private struct DownRoom: View {
     let foot: ConversationView.Foot
-    var extra: CGFloat = 0
-    /// Short by what the question card sinks.
-    var sunk = false
-    var body: some View { Color.clear.frame(height: max(0, foot.height - (sunk ? foot.deepest : 0)) + extra).allowsHitTesting(false) }
+    var body: some View {
+        let tops =
+            [foot.composerFrame, foot.stripFrame].filter { $0.height > 0 }.map(\.minY)
+            + (foot.cardFrame.height > 0 ? [foot.cardFrame.minY + min(foot.below, foot.deepest)] : [])
+        Color.clear.frame(height: tops.min().map { max(0, foot.pane - $0 + 12) } ?? 0).allowsHitTesting(false)
+    }
 }
 
 /// What waits on you, on the composer: the agent's asks read here, so one coming or going redraws this, not the
@@ -1721,6 +1768,13 @@ private struct DockSlot: View {
         .frame(maxWidth: 680)
         .padding(.bottom, ids.isEmpty ? 0 : -(AskDock.tuck + 8))
         .onChange(of: ids, initial: true) { old, new in
+            // The last one answered fades out (AskDock, on `slide`): the page's fade round it goes with it, not a
+            // moment after it has gone.
+            if new.isEmpty, !old.isEmpty {
+                withAnimation(ConversationView.slide) { foot.docked = 0 }
+            } else if !new.isEmpty, foot.docked != 1 {
+                foot.docked = 1
+            }
             // One come while it's open (one there as it opened shows in place): it rises as its room comes in
             // (Foot.rise), out of sight until then. Its room not seen to come, it shows in place.
             // Under Reduce Motion it shows in place.
@@ -1762,10 +1816,6 @@ private struct Sinker<Card: View>: View {
     @State private var id = UUID()
     var body: some View {
         content
-            // In its place, before it sinks or rises (SoftFoot works those out).
-            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ConversationView.pane)) }) { [foot] in
-                if foot.cardFrame != $0 { foot.cardFrame = $0 }
-            }
             .environment(\.dockFocus, foot)
             .onHover { inside in if foot.overCard != inside { foot.overCard = inside } }
             .offset(y: foot.sunk)
@@ -1776,6 +1826,12 @@ private struct Sinker<Card: View>: View {
             // What has sunk is gone below its place (behind the composer), not shown under it; the ring above and at
             // its sides kept.
             .mask { Rectangle().padding(.horizontal, -Self.bleed).padding(.top, -Self.bleed) }
+            // In its place, before it sinks or rises (SoftFoot and DownRoom work those out): measured outside the offset
+            // and the rise, which moved it with them (sunk, the page's fade was worked out a second sink lower, off the
+            // window, and the arrow went behind the card).
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ConversationView.pane)) }) { [foot] in
+                if foot.cardFrame != $0 { foot.cardFrame = $0 }
+            }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { [foot] in if foot.card != $0 { foot.card = $0 } }
             .onAppear { [foot] in foot.shownCard = id }
             .onDisappear { [foot] in

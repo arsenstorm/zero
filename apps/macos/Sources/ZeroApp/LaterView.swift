@@ -13,10 +13,16 @@ struct LaterPage: View {
     @AppStorage("later.suggestionsOpen") private var suggestionsOpen = false
 
     private var shown: String? { if case .laterItem(let id) = navigation.place { id } else { nil } }
+    /// This workspace's: an item saved from a task keeps that task's workspace; one with none (or one since deleted) is
+    /// Zero's, as tasks are.
+    private var here: [ZerodLink.LaterItem] {
+        let known = Set(workspace.workspaces.map(\.id))
+        return workspace.later.filter { item in (item.workspace.flatMap { known.contains($0) ? $0 : nil } ?? "zero") == workspace.current }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            SidebarColumn(title: "Later") {
+            SidebarColumn(title: "Later", back: { navigation.place = navigation.homePlace }) {
                 HStack(spacing: 4) {
                     Spacer(minLength: 0)
                     Button {
@@ -29,8 +35,8 @@ struct LaterPage: View {
                 .padding(.bottom, 6)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) {
-                        let suggested = workspace.later.filter { $0.suggested == true && !$0.done }
-                        ForEach(workspace.later.filter { $0.suggested != true || $0.done }) { item in row(item) }
+                        let suggested = here.filter { $0.suggested == true && !$0.done }
+                        ForEach(here.filter { $0.suggested != true || $0.done }) { item in row(item) }
                         if !suggested.isEmpty {
                             Button {
                                 suggestionsOpen.toggle()
@@ -60,7 +66,7 @@ struct LaterPage: View {
                     LaterDetail(workspace: workspace, navigation: navigation, id: shown).id(shown)
                 } else {
                     EmptyState(
-                        title: workspace.later.isEmpty ? "Nothing saved for later" : "Nothing open",
+                        title: here.isEmpty ? "Nothing saved for later" : "Nothing open",
                         detail:
                             "Save a task for later (right-click it in the sidebar): it leaves the sidebar, paused, until you resume it here. Agents save notes here too, each with everything behind it, in full.",
                         icon: "bookmark", action: ("Write one…", { writing = true })

@@ -17,6 +17,7 @@ import SwiftUI
     func allowsTip(at point: CGPoint) -> Bool { content == nil || card.contains(point) }
 
     func show(_ view: AnyView, owner: String, closed: @escaping () -> Void) {
+        Floating.shared.closeAll() // no menu, tip or card left over it
         content = view
         self.owner = owner
         self.closed = closed
