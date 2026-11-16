@@ -807,13 +807,13 @@ public final class Workspace {
 
     public func start(
         provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String?, effort: String?,
-        permissions: Permissions = .auto,
+        advisor: String? = nil, permissions: Permissions = .auto,
         workspace: String? = nil
     ) async -> String? {
         await attempt {
             try await $0.start(
-                provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, permissions: permissions,
-                workspace: workspace)
+                provider: provider, cwd: cwd, prompt: prompt, images: images, model: model, effort: effort, advisor: advisor,
+                permissions: permissions, workspace: workspace)
         }
     }
 
@@ -951,6 +951,10 @@ public final class Workspace {
     public func closeTerminal(_ session: String) async { _ = await attempt { try await $0.closeTerminal(session: session) } }
 
     /// Moves the task to another provider; true once it's there.
+    public func setAdvisor(_ session: String, _ advisor: String?) async {
+        _ = await attempt { try await $0.setAdvisor(session: session, advisor) }
+    }
+
     public func setPermissions(_ session: String, _ permissions: Permissions) async {
         _ = await attempt { try await $0.setPermissions(session: session, permissions) }
     }

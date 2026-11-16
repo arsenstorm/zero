@@ -44,6 +44,7 @@ extension AppDelegate {
         // And room to its right for a row's own menu, when a row has one.
         let room = SelectorView.submenuRoom(selector)
         let size = NSSize(width: strip.width + room + 2 * pad, height: strip.height + 2 * pad)
+        selector.floor = strip.height + pad
         // Projects hang off their chip; the two-pane model selector is centred on the inbox, overhanging it equally.
         // An anchor as wide as a menu is the menu's own place (beside a button, its right edge on the button's): a menu
         // wider than that grows to the left from it. A narrower one (the pointer) hangs the menu off its left.

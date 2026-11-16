@@ -188,8 +188,11 @@ struct ComposerCard: View {
     private func zeroRuns(_ agent: String) -> String? {
         guard agent.hasPrefix("zerod-"), let task = controller.workspace?.entry(String(agent.dropFirst("zerod-".count))).conversation
         else { return nil }
-        return ComposerRows.catalogue(task.provider).first { $0.id == task.model }?.name ?? task.model.map(ModelNames.readable)
+        let name =
+            ComposerRows.catalogue(task.provider).first { $0.id == task.model }?.name ?? task.model.map(ModelNames.readable)
             ?? task.provider.title
+        let advised = task.provider == .claude && ClaudeModels.advisors(for: task.model ?? "").contains { $0.id == task.advisor }
+        return ModelNames.agent(name, effort: nil, advisor: advised ? task.advisor : nil)
     }
     /// Busy: the agent being started, or the message on its way to the agent.
     private var starting: Bool { agentName.map { controller.delivering.contains($0) } ?? controller.spawning }

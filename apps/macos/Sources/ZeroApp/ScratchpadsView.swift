@@ -233,7 +233,17 @@ struct ScratchpadsPage: View {
                     ? [] : [MenuItem("Move to Scratchpads (top)", "folder-download") { Task { await workspace.movePad(pad.id, to: "") } }])
                     + workspace.padFolders.filter { $0 != pad.folder }.map { folder in
                         MenuItem("Move to \(folder)", "folder-download") { Task { await workspace.movePad(pad.id, to: folder) } }
-                    },
+                    }
+                    // Moved, it leaves this workspace's list; the user stays where they were. Folders are every
+                    // workspace's, so only pads move.
+                    + (workspace.workspaces.count > 1
+                        ? [
+                            MenuItem(
+                                "Move to workspace", "layers",
+                                children: workspace.workspaces.filter { $0.id != pad.workspace }.map { w in
+                                    MenuItem(w.name, w.glyph) { Task { await workspace.placePad(pad.id, in: w.id) } }
+                                })
+                        ] : []),
                 [
                     MenuItem("Move to Trash", "trash") {
                         Task {

@@ -312,6 +312,10 @@ public struct Sending: Identifiable, Equatable, Sendable {
     public init(text: String, images: [String], at: Int = Int(Date().timeIntervalSince1970 * 1000)) {
         id = "sending-\(UUID().uuidString)"; self.text = text; self.images = images; self.at = at
     }
+    private init(id: String, text: String, images: [String], at: Int) { self.id = id; self.text = text; self.images = images; self.at = at }
+
+    /// The same message, what it shows filled in (a video's stills, cut after it was shown): the same bubble.
+    public func with(text: String, images: [String]) -> Sending { Sending(id: id, text: text, images: images, at: at) }
 
     /// The conversation's items, then those sent and not in it yet.
     public static func merge(_ items: [ConversationItem], _ sending: [Sending]) -> [ConversationItem] {
@@ -497,10 +501,11 @@ public enum AgentIcons {
 }
 
 public enum ToolNames {
-    /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so;
-    /// anything else as it is.
+    /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so,
+    /// and its advisor (zerod's "advisor" step) is consulted; anything else as it is.
     public static func name(_ raw: String) -> String {
         if raw == "Agent" || raw == "Task" { return "Subagent" }
+        if raw == "advisor" { return "Asked its advisor" }
         guard raw.hasPrefix("mcp__") else { return raw }
         let parts = raw.dropFirst("mcp__".count).components(separatedBy: "__")
         guard parts.count >= 2 else { return raw }

@@ -17,7 +17,7 @@ struct LaterPage: View {
     /// Zero's, as tasks are.
     private var here: [ZerodLink.LaterItem] {
         let known = Set(workspace.workspaces.map(\.id))
-        return workspace.later.filter { item in (item.workspace.flatMap { known.contains($0) ? $0 : nil } ?? "zero") == workspace.current }
+        return workspace.later.filter { $0.workspace(among: known) == workspace.current }
     }
 
     var body: some View {

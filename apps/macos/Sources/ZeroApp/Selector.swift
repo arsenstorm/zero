@@ -32,6 +32,8 @@ struct SelectorRow: Identifiable {
     var entry: ((String) -> Void)? = nil
     /// Its keys, shown at the row's end ("⌘⇧,"): what does the same without the menu.
     var shortcut: String? = nil
+    /// For a Claude model: the advisors it can consult (`--advisor`), chosen in the details pane under its effort.
+    var advisors: [SpawnChoice] = []
 }
 
 /// A provider (Anthropic, OpenAI): one tab of the selector.
@@ -60,6 +62,8 @@ final class SelectorState {
     var submenu: String?
     /// Rows' own menus open on the card's left: no room on its right (a menu under a button at the screen's edge).
     @ObservationIgnored var submenuLeading = false
+    /// The lowest a row's own menu may reach in the menu's window (SwiftUI's space, top down): past it, it's cut off.
+    @ObservationIgnored var floor: CGFloat = .infinity
     /// The row taking words (SelectorRow.entry), shown as a field.
     var entering: String?
     /// What the selector asks of whoever opened it (the inbox, or a workspace composer): to close it, a model's
@@ -67,6 +71,9 @@ final class SelectorState {
     @ObservationIgnored var close: () -> Void = {}
     @ObservationIgnored var level: (String) -> String? = { _ in nil }
     @ObservationIgnored var setLevel: (String, String) -> Void = { _, _ in }
+    /// A model's advisor ("" for none) and a new one for it, as `level` and `setLevel` are.
+    @ObservationIgnored var advisor: (String) -> String? = { _ in nil }
+    @ObservationIgnored var setAdvisor: (String, String) -> Void = { _, _ in }
     @ObservationIgnored var rebuild: () -> [SelectorSection] = { [] }
     init(kind: SelectorKind) { self.kind = kind }
 
@@ -343,8 +350,16 @@ struct SelectorView: View {
                 .onDisappear { state.submenuFrame = nil }
                 .offset(
                     x: state.submenuLeading ? -(Self.menuWidth(parent.children) + Self.submenuGap) : Self.width(state) + Self.submenuGap,
-                    y: at.minY - state.cardFrame.minY - inset - 1)
+                    y: submenuTop(at: at, rows: parent.children.count) - state.cardFrame.minY)
         }
+    }
+
+    /// Level with its row, or as far up as it takes to end above the window's foot (its rows as tall as the row it opens
+    /// from), never above the card's top.
+    private func submenuTop(at row: CGRect, rows: Int) -> CGFloat {
+        let level = row.minY - inset - 1
+        let height = CGFloat(rows) * row.height + 2 * inset
+        return max(state.cardFrame.minY, min(level, state.floor - height))
     }
 
     /// A row; `siblings` given, one of a row's own menu. One taking words, picked, is a field in its place.
@@ -463,6 +478,21 @@ struct SelectorView: View {
                     }
                     .padding(.top, 6)
                 }
+                if !row.advisors.isEmpty {
+                    let advisor = row.modelID.flatMap(state.advisor) ?? ""
+                    HStack {
+                        Text("Advisor").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .frame(height: 14)
+                    .padding(.top, 16)
+                    AdvisorPicker(advisors: row.advisors, picked: advisor) { picked in
+                        if let id = row.modelID { state.setAdvisor(id, picked) }
+                        row.pick()
+                        state.sections = state.rebuild()
+                    }
+                    .padding(.top, 6)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 14).padding(.vertical, 14)
@@ -517,6 +547,30 @@ func effortLabel(_ id: String, short: Bool = false) -> String {
     switch id {
     case "xhigh": short ? "XHigh" : "Extra high"
     default: id.capitalized
+    }
+}
+
+/// A model's advisor as pills, None first: the stronger model Claude Code consults mid-turn.
+struct AdvisorPicker: View {
+    let advisors: [SpawnChoice]
+    let picked: String
+    let onPick: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach([SpawnChoice(id: "", name: "None")] + advisors) { advisor in
+                let on = advisor.id == picked
+                Button {
+                    if !on { onPick(advisor.id) }
+                } label: {
+                    Text(advisor.name).font(.system(size: 11, weight: .medium)).foregroundStyle(on ? .primary : .secondary)
+                        .frame(maxWidth: .infinity).frame(height: 22)
+                        .background(on ? Theme.row : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }
 

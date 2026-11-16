@@ -1010,6 +1010,12 @@ private struct AgentsPage: View {
                     SettingRow(title: "Sending to a paused task", detail: "Ask each time, resume it, or queue the message for Resume.") {
                         PausedSendPicker()
                     }
+                    SettingRow(
+                        title: "Plain answers",
+                        detail: "Short sentences, simple words, steps as lists. A workspace can turn it off. From each task's next start."
+                    ) {
+                        PlainAnswersSwitch()
+                    }
                 }
             }
             SettingsSection(title: "Stuck commands") { StuckCommandsRows() }
@@ -1194,6 +1200,24 @@ private struct SubagentsSwitch: View {
                 })
         )
         .task { if let kept = try? await link?.subagents() { on = kept } }
+    }
+}
+
+/// Whether agents write their answers in plain technical English. zerod's setting, read as each agent starts.
+private struct PlainAnswersSwitch: View {
+    @State private var on = true
+    @State private var link = try? ZerodLink()
+
+    var body: some View {
+        Switch(
+            isOn: Binding(
+                get: { on },
+                set: { chosen in
+                    on = chosen
+                    Task { try? await link?.setPlainAnswers(chosen) }
+                })
+        )
+        .task { if let kept = try? await link?.plainAnswers() { on = kept } }
     }
 }
 

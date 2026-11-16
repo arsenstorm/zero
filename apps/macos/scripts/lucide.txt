@@ -13,10 +13,10 @@ arrow-up                 arrow-up                  outline
 arrow-up-right           arrow-up-right            outline
 badge-check              badge-check               glyph
 ban                      ban                       outline
-bolt-lightning           zap                       glyph
-book-open                book-open
-bookmark                 bookmark                  glyph
-brain                    brain                     outline
+bolt-lightning           zap                       outline glyph
+book-open                book-open                 outline glyph
+bookmark                 bookmark                  outline glyph
+brain                    brain                     outline glyph
 check                    check                     outline
 checkbox-checked         square-check
 chevron-down             chevron-down              outline
@@ -30,80 +30,80 @@ circle-pause             circle-pause              glyph
 circle-question          circle-question-mark      glyph
 circle-user              circle-user
 circle-xmark             circle-x                  glyph
-city-building            building-2
+city-building            building-2                outline glyph
 clock                    clock                     glyph
-code                     code
-code-branch              git-branch
+code                     code                      outline glyph
+code-branch              git-branch                outline glyph
 command                  command
 compose                  square-pen
 copy                     copy                      outline
-crown                    crown
+crown                    crown                     outline glyph
 dots                     ellipsis                  glyph outline
-eye                      eye
+eye                      eye                       outline glyph
 file                     file
 file-content             file-text
 file-link                file-symlink
-fire                     flame
-folder                   folder                    glyph
+fire                     flame                     outline glyph
+folder                   folder                    outline glyph
 folder-download          folder-down
 folder-plus              folder-plus
 gear                     settings                  glyph outline
 github                   git-pull-request
-globe                    globe
-graduation-cap           graduation-cap
+globe                    globe                     outline glyph
+graduation-cap           graduation-cap            outline glyph
 hand-3                   hand                      glyph
 hand-holding-box         hand-platter              glyph
 hashtag                  hash
 heading-1                heading-1
 heading-2                heading-2
 heading-3                heading-3
-heart                    heart
+heart                    heart                     outline glyph
 hourglass                hourglass                 glyph
-house-4                  house
+house-4                  house                     outline glyph
 image                    image                     glyph outline
 inbox                    inbox                     glyph outline
-key                      key-round
+key                      key-round                 outline glyph
 laptop                   laptop                    outline
-layers                   layers
+layers                   layers                    outline glyph
 layout-top               panel-top
 link                     link
 link-slash               link-2-off                outline
 list-checkbox            list-todo                 glyph
-lock                     lock
-magnifier                search
+lock                     lock                      outline glyph
+magnifier                search                    outline glyph
 media-play               play                      glyph
 media-stop               square                    glyph
 message-check            message-square-check      glyph
 microphone               mic                       outline
 minus                    minus
-mobile                   smartphone
-monitor                  monitor
-moon                     moon                      glyph
-note-3                   notepad-text
+mobile                   smartphone                outline glyph
+monitor                  monitor                   outline glyph
+moon                     moon                      outline glyph
+note-3                   notepad-text              outline glyph
 ordered-list             list-ordered
-paper-plane              send
+paper-plane              send                      outline glyph
 pen                      pen                       glyph
 pin-tack                 pin
 plug                     plug
 plus                     plus                      outline
 power-off                power                     glyph
-puzzle-piece             puzzle
+puzzle-piece             puzzle                    outline glyph
 quote                    text-quote
 record                   circle-dot                glyph
-robot                    bot
-rocket                   rocket
-server                   server
+robot                    bot                       outline glyph
+rocket                   rocket                    outline glyph
+server                   server                    outline glyph
 shape-circle             circle                    outline
 share-left               reply
-shield                   shield                    outline
+shield                   shield                    outline glyph
 sidebar-right            panel-right
 slack                    hash
 sliders                  sliders-horizontal
-sparkle                  sparkles
+sparkle                  sparkles                  outline glyph
 square-code              square-code
-suitcase                 briefcase
+suitcase                 briefcase                 outline glyph
 table                    table
-terminal                 terminal                  outline
+terminal                 terminal                  outline glyph
 text                     type
 text-bold                bold
 text-italic              italic
@@ -113,7 +113,7 @@ trash                    trash-2                   glyph outline
 triangle-warning         triangle-alert            glyph
 undo                     undo
 unordered-list           list
-wand-sparkle             wand-sparkles             outline
+wand-sparkle             wand-sparkles             outline glyph
 waveform-lines           audio-lines               outline
 xmark                    x                         outline
 # Nucleo's pixel family: lines an agent is responsible for (ZeroCore AgentIcons).

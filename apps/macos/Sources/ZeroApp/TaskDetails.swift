@@ -108,8 +108,9 @@ struct TaskDetails: View {
                                 RoundedRectangle(cornerRadius: 3))
                         }
                         Text(
-                            [modelName ?? conversation.provider.title, conversation.effort.map { effortLabel($0, short: true) }].compactMap
-                            { $0 }.joined(separator: " · ")
+                            ModelNames.agent(
+                                modelName ?? conversation.provider.title, effort: conversation.effort.map { effortLabel($0, short: true) },
+                                advisor: advisor)
                         )
                         .lineLimit(1).truncationMode(.tail).tip(
                             [conversation.provider.title, conversation.model].compactMap { $0 }.joined(separator: " · "))
@@ -351,11 +352,19 @@ struct TaskDetails: View {
                     TaskDetails.linked(follow.title).truncationMode(.middle)
                 }
                 .buttonStyle(.plain).tip(follow.error.map { "Can't read it: \($0)" } ?? follow.topic)
+                if let error = follow.error {
+                    Text("Can't reach \(Self.service(follow.source)) · retrying").foregroundStyle(.tertiary).lineLimit(1)
+                        .fixedSize().tip(error)
+                }
                 Spacer(minLength: 0)
                 Button(action: unfollow) { NucleoIcon("xmark", size: 11).foregroundStyle(.secondary).frame(width: 18, height: 18) }
                     .buttonStyle(Hovering(radius: 5)).tip("Unfollow").opacity(hovered ? 1 : 0)
             }
             .contentShape(Rectangle()).onHover { hovered = $0 }
+        }
+
+        static func service(_ source: String) -> String {
+            ["github": "GitHub", "linear": "Linear", "slack": "Slack"][source] ?? source
         }
     }
 
@@ -418,6 +427,12 @@ struct TaskDetails: View {
     }
 
     /// The model as its provider's catalogue names it; nil leaves the provider's name (its default model).
+    /// Its advisor, when its model can have it (Claude Code goes on without one it can't).
+    private var advisor: String? {
+        guard conversation.provider == .claude, let advisor = conversation.advisor else { return nil }
+        return ClaudeModels.advisors(for: conversation.model ?? "").contains { $0.id == advisor } ? advisor : nil
+    }
+
     private var modelName: String? {
         guard let model = conversation.model else { return nil }
         return ComposerRows.catalogue(conversation.provider).first { $0.id == model }?.name ?? ModelNames.readable(model)

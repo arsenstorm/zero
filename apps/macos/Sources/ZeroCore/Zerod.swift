@@ -422,6 +422,8 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
         public var provider: Provider?
         public var model: String?
         public var effort: String?
+        /// The advisor to change to; "" for none.
+        public var advisor: String?
         public var permissions: Permissions?
     }
     /// Its last turn was Zero's (an event it follows, a worker's report), not the user's: a reply to it isn't announced.
@@ -620,6 +622,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var title: String?
     public var model: String?
     public var effort: String?
+    /// The model Claude Code consults mid-turn (`--advisor`); none, no advisor.
+    public var advisor: String?
     public var status: SessionStatus
     public var turn: String?
     public var error: String?
@@ -688,6 +692,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .named(label, ticket): self.label = label; self.ticket = ticket
         case let .placed(workspace): self.workspace = workspace
         case let .signedIn(signin): self.signin = signin
+        case let .advised(advisor): self.advisor = advisor
         case let .permitted(permissions):
             // As zerod records it (model.rs): the change, and a line in the conversation saying so.
             self.permissions = permissions
@@ -761,6 +766,8 @@ public enum Change: Decodable, Equatable, Sendable {
     case placed(String?)
     /// Runs as another sign-in from its next start (zerod's signins.rs).
     case signedIn(String?)
+    /// The model Claude Code consults (none: no advisor), from its next start.
+    case advised(String?)
     /// What the agent may do without asking, from its next start.
     case permitted(Permissions)
     case status(SessionStatus, turn: String?, error: String?)
@@ -797,7 +804,7 @@ public enum Change: Decodable, Equatable, Sendable {
 
     private enum Keys: String, CodingKey {
         case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label,
-            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command
+            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command, advisor
     }
 
     public init(from decoder: Decoder) throws {
@@ -813,6 +820,7 @@ public enum Change: Decodable, Equatable, Sendable {
                 label: try c.decodeIfPresent(String.self, forKey: .label), ticket: try c.decodeIfPresent(String.self, forKey: .ticket))
         case "placed": self = .placed(try c.decodeIfPresent(String.self, forKey: .workspace))
         case "signedIn": self = .signedIn(try c.decodeIfPresent(String.self, forKey: .signin))
+        case "advised": self = .advised(try c.decodeIfPresent(String.self, forKey: .advisor))
         case "permitted": self = .permitted(try c.decode(Permissions.self, forKey: .permissions))
         case "status":
             self = .status(
@@ -1060,13 +1068,13 @@ public final class ZerodLink: @unchecked Sendable {
     /// Starts a session and returns its id at once, while the provider starts.
     public func start(
         provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String? = nil, effort: String? = nil,
-        permissions: Permissions = .auto, workspace: String? = nil
+        advisor: String? = nil, permissions: Permissions = .auto, workspace: String? = nil
     ) async throws -> String {
         let result = try await call(
             "start",
             [
                 "provider": provider.rawValue, "cwd": cwd, "prompt": prompt, "images": images, "model": model, "effort": effort,
-                "permissions": permissions.rawValue, "workspace": workspace,
+                "advisor": advisor, "permissions": permissions.rawValue, "workspace": workspace,
             ])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
         return session
@@ -1292,6 +1300,12 @@ public final class ZerodLink: @unchecked Sendable {
         ((try await call("settings")) as? [String: Any])?["subagents"] as? Bool ?? false
     }
     public func setSubagents(_ on: Bool) async throws { _ = try await call("configure", ["subagents": on]) }
+
+    /// Whether agents write their answers in plain technical English (zerod's adapter::ANSWERS); unset, on.
+    public func plainAnswers() async throws -> Bool {
+        ((try await call("settings")) as? [String: Any])?["plainAnswers"] as? Bool ?? true
+    }
+    public func setPlainAnswers(_ on: Bool) async throws { _ = try await call("configure", ["plainAnswers": on]) }
     /// The terminal app tasks open in (its name, or an .app's path) as zerod resolves it, and whether that's its default.
     public func terminal() async throws -> (app: String, isDefault: Bool) {
         let settings = (try await call("settings")) as? [String: Any] ?? [:]
@@ -1426,6 +1440,9 @@ public final class ZerodLink: @unchecked Sendable {
             public let version: Int; public let note: String; public let at: Int; public let by: String?
         }
         public var createdAt: Date { Date(timeIntervalSince1970: TimeInterval(created)) }
+        /// The workspace it's in, among those `known`: an item saved from a task keeps that task's; one with none (or
+        /// one since deleted) is Zero's, as tasks are.
+        public func workspace(among known: Set<String>) -> String { workspace.flatMap { known.contains($0) ? $0 : nil } ?? "zero" }
     }
 
     /// One of Later's tools (list, view, save, edit, delete); from a task, `session` says which.
@@ -1483,6 +1500,11 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// What a task's agent may do without asking, changed between turns: its next message starts it with them.
+    /// The model Claude Code consults from its next start; nil, none.
+    public func setAdvisor(session: String, _ advisor: String?) async throws {
+        _ = try await call("setAdvisor", ["session": session, "advisor": advisor])
+    }
+
     public func setPermissions(session: String, _ permissions: Permissions) async throws {
         _ = try await call("setPermissions", ["session": session, "permissions": permissions.rawValue])
     }
@@ -1551,16 +1573,19 @@ public final class ZerodLink: @unchecked Sendable {
         public var glyph: String
         /// A colour's name ("teal"), or "" for none.
         public var color: String
-        public init(id: String = "", name: String, glyph: String = "", color: String = "") {
-            self.id = id; self.name = name; self.glyph = glyph; self.color = color
+        /// Its tasks' agents write plain answers; nil, as Settings say.
+        public var plainAnswers: Bool?
+        public init(id: String = "", name: String, glyph: String = "", color: String = "", plainAnswers: Bool? = nil) {
+            self.id = id; self.name = name; self.glyph = glyph; self.color = color; self.plainAnswers = plainAnswers
         }
-        private enum Keys: String, CodingKey { case id, name, glyph, color }
+        private enum Keys: String, CodingKey { case id, name, glyph, color, plainAnswers }
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: Keys.self)
             id = try c.decode(String.self, forKey: .id)
             name = try c.decode(String.self, forKey: .name)
             glyph = try c.decodeIfPresent(String.self, forKey: .glyph) ?? ""
             color = try c.decodeIfPresent(String.self, forKey: .color) ?? ""
+            plainAnswers = try c.decodeIfPresent(Bool.self, forKey: .plainAnswers)
         }
     }
 

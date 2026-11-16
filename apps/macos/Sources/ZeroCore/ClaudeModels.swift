@@ -154,6 +154,16 @@ public enum ClaudeModels {
         if cached { known = Set(list) }
     }
 
+    /// The advisors Claude Code can give `model` (`--advisor`, the aliases its `/advisor` takes), most capable first:
+    /// the advisor tool takes one at least as capable as the model it advises (Fable and Mythos alike). None for a
+    /// model of no family Zero knows.
+    public static func advisors(for model: String) -> [SpawnChoice] {
+        let ranks = ["mythos": 0, "fable": 0, "opus": 1, "sonnet": 2, "haiku": 3]
+        let lower = model.lowercased()
+        guard let rank = ranks.first(where: { lower.contains($0.key) })?.value else { return [] }
+        return ["fable", "opus", "sonnet"].filter { ranks[$0]! <= rank }.map { SpawnChoice(id: $0, name: $0.capitalized) }
+    }
+
     /// Claude Code's `--effort` levels; it defaults to high.
     static let levels = ["low", "medium", "high", "xhigh", "max"].map { SpawnChoice(id: $0, name: $0) }
 

@@ -141,6 +141,14 @@ enum Preview {
         selector.tab = selector.sections.first?.id
         selector.highlighted = selector.sections.first?.rows.first?.id
         write(SelectorView(state: selector).padding(12).background(Color(white: 0.5)), "selector.png")
+        // A workspace composer's: Claude's models, Opus 5.5 with Fable as its advisor.
+        let advised = SelectorState(kind: .runtime)
+        advised.sections = ComposerRows.models([.claude, .codex], selected: { $0 == .claude && $1 == "opus" }, pick: { _, _ in })
+        advised.tab = "claude"
+        advised.highlighted = advised.sections.first?.rows.first { $0.id == "claude/opus" }?.id
+        advised.level = { $0 == "claude/opus" ? "high" : nil }
+        advised.advisor = { $0 == "claude/opus" ? "fable" : nil }
+        write(SelectorView(state: advised).padding(12).background(Color(white: 0.5)), "selector-advisor.png")
     }
 }
 

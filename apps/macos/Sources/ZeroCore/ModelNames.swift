@@ -7,6 +7,13 @@ public enum ModelNames {
     /// Short names said in capitals.
     private static let acronyms: Set<String> = ["gpt", "glm", "llm", "ai"]
 
+    /// What an agent runs on, as its chip and details say it: "Opus 5.5 · High", or advised "Opus 5.5 + Fable" (its
+    /// effort then in the selector alone).
+    public static func agent(_ name: String, effort: String?, advisor: String?) -> String {
+        if let advisor, !advisor.isEmpty { return "\(name) + \(advisor.capitalized)" }
+        return [name, effort].compactMap { $0 }.joined(separator: " · ")
+    }
+
     public static func readable(_ id: String) -> String {
         var rest = id
         // OpenCode's "provider/model": the provider is the chip's icon.

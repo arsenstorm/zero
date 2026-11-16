@@ -15,8 +15,6 @@ struct QueueStrip: View {
     /// The agent at it, as the page shows it (ConversationView.shownWorking): a row steers it mid-turn; not, a row
     /// is sent now.
     var working = true
-    /// A question card tucked behind it: a hairline along its top, so the sunk card's tab and this one read as two.
-    var overCard = false
     /// The pointer on it: the question card behind it comes up, as for the composer.
     var hover: (Bool) -> Void = { _ in }
     let steer: (Queued) -> Void
@@ -130,13 +128,6 @@ struct QueueStrip: View {
         // card sits 4 down inside its own column (the composer's top padding), so 16 here puts 12 of the tab under it:
         // the last row's 12 exactly, leaving the same 4 under its pill as over the first row's.
         .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
-        // Over a sunk card (the same grey): its top edge drawn, corners and all, so the two tabs don't merge into one.
-        .overlay(alignment: .top) {
-            if overCard {
-                UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous).strokeBorder(Theme.stroke)
-                    .mask(alignment: .top) { Rectangle().frame(height: 19) }.allowsHitTesting(false)
-            }
-        }
         .onHover(perform: hover)
         .padding(.horizontal, 13).padding(.bottom, -16)
     }
@@ -266,19 +257,23 @@ final class WorkspaceSelector {
     /// `window`: the one the chip is in, when it isn't the key window (the control bar's panel never is).
     func toggle(
         _ chip: String, kind: SelectorKind, anchor: CGRect, in window: NSWindow? = nil, rows: @escaping () -> [SelectorSection],
-        level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in }
+        level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in },
+        advisor: @escaping (String) -> String? = { _ in nil }, setAdvisor: @escaping (String, String) -> Void = { _, _ in }
     ) {
         if open == chip { close(); return }
         // The click that closed it through the click-outside monitor arrives here next: it was that close.
         if let closed, closed.chip == chip, Date().timeIntervalSince(closed.at) < 0.3 { return }
-        show(chip, kind: kind, anchor: anchor, in: window, rows: rows, level: level, setLevel: setLevel)
+        show(
+            chip, kind: kind, anchor: anchor, in: window, rows: rows, level: level, setLevel: setLevel, advisor: advisor,
+            setAdvisor: setAdvisor)
     }
 
     /// Opens it whatever is open, its own included: a right click always brings a menu up where it was made, as Linear
     /// and a Mac do, the open one going in the same frame.
     func show(
         _ chip: String, kind: SelectorKind, anchor: CGRect, in window: NSWindow? = nil, rows: @escaping () -> [SelectorSection],
-        level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in }
+        level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in },
+        advisor: @escaping (String) -> String? = { _ in nil }, setAdvisor: @escaping (String, String) -> Void = { _, _ in }
     ) {
         guard let window = window ?? NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
         let state = SelectorState(kind: kind)
@@ -286,6 +281,8 @@ final class WorkspaceSelector {
         state.rebuild = rows
         state.level = level
         state.setLevel = setLevel
+        state.advisor = advisor
+        state.setAdvisor = setAdvisor
         state.close = { [weak self] in self?.close() }
         open = chip
         app.presentSelector(state, chip: anchor, in: window, returning: window)
@@ -335,13 +332,18 @@ struct ComposerChip: View {
     let rows: () -> [SelectorSection]
     var level: (String) -> String? = { _ in nil }
     var setLevel: (String, String) -> Void = { _, _ in }
+    var advisor: (String) -> String? = { _ in nil }
+    var setAdvisor: (String, String) -> Void = { _, _ in }
     @State private var anchor = CGRect.zero
     @State private var hovered = false
     @Environment(\.roomyComposer) private var roomy
 
     var body: some View {
         let open = WorkspaceSelector.shared.open == id
-        let toggle = { WorkspaceSelector.shared.toggle(id, kind: kind, anchor: anchor, rows: rows, level: level, setLevel: setLevel) }
+        let toggle = {
+            WorkspaceSelector.shared.toggle(
+                id, kind: kind, anchor: anchor, rows: rows, level: level, setLevel: setLevel, advisor: advisor, setAdvisor: setAdvisor)
+        }
         Button(action: unlessClicked(toggle)) {
             HStack(spacing: 5) {
                 if let icon {
@@ -412,8 +414,10 @@ extension EnvironmentValues {
                         id: provider.rawValue + "/" + model.id, title: model.name, provider: model.provider,
                         providerIcon: choiceIcon(model.icon) ?? provider.mark,
                         detail: model.detail, context: model.context, levels: model.levels, defaultLevel: model.defaultLevel,
-                        modelID: provider.rawValue + "/" + model.id, selected: selected(provider, model.id)
-                    ) { pick(provider, model) }
+                        modelID: provider.rawValue + "/" + model.id, selected: selected(provider, model.id),
+                        pick: { pick(provider, model) },
+                        advisors: provider == .claude ? ClaudeModels.advisors(for: model.id) : []
+                    )
                 } + (provider == .claude ? [otherClaudeModel(pick: pick)] : [])
             return SelectorSection(id: provider.rawValue, title: provider.title, icon: provider.mark, rows: rows)
         }

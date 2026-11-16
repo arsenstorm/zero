@@ -224,6 +224,16 @@ struct WorkspaceForm: View {
                 WorkspaceIconPicker(glyph: $workspace.glyph)
             }
             field("Colour") { WorkspaceColourPicker(color: $workspace.color) }
+            // On, as Settings › Plain answers says; off, never for this workspace's tasks.
+            field("Answers") {
+                HStack(spacing: 8) {
+                    Text("Plain answers").font(.system(size: 13))
+                    Spacer(minLength: 8)
+                    Switch(isOn: Binding(get: { workspace.plainAnswers ?? true }, set: { workspace.plainAnswers = $0 ? nil : false }))
+                }
+                .padding(.horizontal, 9).frame(height: 32)
+                .padding(4).background(Theme.row, in: RoundedRectangle(cornerRadius: 10))
+            }
             // Before it's made, a workspace has no id for a server to be given to: the New workspace page gives them.
             if !workspace.id.isEmpty {
                 WorkspaceServersPicker(servers: model.mcpServers, on: $servers, workspace: workspace.id, all: model.workspaces.map(\.id)) {

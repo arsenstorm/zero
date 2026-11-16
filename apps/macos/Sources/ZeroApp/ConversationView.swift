@@ -881,7 +881,7 @@ struct ConversationView: View {
                 left: { [tracker] in room = max(room, tracker.columnHeight) })
             if !queued.isEmpty || held || paused != nil {
                 QueueStrip(
-                    queued: queued, sent: sentOn, held: held, paused: paused, working: shownWorking, overCard: foot.card > 0,
+                    queued: queued, sent: sentOn, held: held, paused: paused, working: shownWorking,
                     hover: { [foot] inside in if foot.overQueue != inside { foot.overQueue = inside } },
                     steer: { item in Task { await workspace.steer(conversation.id, item: item) } },
                     edit: { item in
@@ -1267,10 +1267,14 @@ struct ConversationView: View {
             let row = current == .claude ? chosen.map { ClaudeModels.row(for: $0, in: catalogue) } : chosen
             let name =
                 catalogue.first { $0.id == row }?.name ?? chosen.map(ModelNames.readable) ?? catalogue.first?.name ?? current.title
+            // Its advisor (Claude's alone), the one kept for the next turn while one runs; "" kept is none.
+            let advisor = (busy ? next?.advisor : nil).map { $0.isEmpty ? nil : $0 } ?? conversation.advisor
+            // One the model can't have is kept but not shown: Claude Code goes on without it, and it's back on a model that can.
+            let advising = current == .claude && ClaudeModels.advisors(for: row ?? "").contains { $0.id == advisor } ? advisor : nil
             ComposerChip(
                 id: "task.\(conversation.id).agent",
-                label: [name, level.map { effortLabel($0, short: true) }].compactMap { $0 }.joined(separator: " · "),
-                symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, pending: kept,
+                label: ModelNames.agent(name, effort: level.map { effortLabel($0, short: true) }, advisor: advising),
+                symbol: "terminal", icon: current.mark, kind: .runtime, prominent: true, pending: kept || (busy && next?.advisor != nil),
                 rows: {
                     ComposerRows.taskModels(conversation, chosen: (current, row)) { picked, choice in
                         if busy {
@@ -1289,9 +1293,11 @@ struct ConversationView: View {
                 setLevel: { _, picked in
                     if busy { Task { await workspace.switchProvider(conversation.id, to: current, model: chosen, effort: picked) }; return }
                     effort = picked
-                }
+                },
+                advisor: { id in id == "\(current.rawValue)/\(row ?? "")" ? (advising ?? "") : nil },
+                setAdvisor: { _, picked in Task { await workspace.setAdvisor(conversation.id, picked.isEmpty ? nil : picked) } }
             )
-            .tip(kept ? "From the next turn" : "")
+            .tip(kept || (busy && next?.advisor != nil) ? "From the next turn" : "")
             // Mid-turn, a pick is kept for the next turn (the agent starts again with it then), marked so.
             let permissions = busy ? (next?.permissions ?? conversation.permissions) : conversation.permissions
             ComposerChip(

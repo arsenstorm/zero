@@ -12,6 +12,8 @@ struct NewTaskView: View {
     @AppStorage("workspaceProject") private var project = ""
     @State private var model = ""
     @State private var effort = ""
+    /// The model Claude Code consults ("fable"); "" for none.
+    @State private var advisor = ""
     @State private var permissions = Permissions.auto
     @State private var prompt = ""
     @State private var images: [URL] = []
@@ -82,16 +84,21 @@ struct NewTaskView: View {
                                                 && id == (ComposerRows.catalogue(provider).first?.id ?? "")))
                                 },
                                 pick: { picked, choice in
+                                    // Onto another CLI: the advisor kept for it (Claude's, Fable at first).
+                                    if picked != chosen { advisor = NewTaskChoice.kept(for: picked).advisor }
                                     provider = picked.rawValue
                                     model = choice.id
                                     if !choice.levels.contains(where: { $0.id == effort }) { effort = "" }
-                                    NewTaskChoice.keep(chosen, model: model, effort: effort)
+                                    if !ClaudeModels.advisors(for: shownModel).contains(where: { $0.id == advisor }) { advisor = "" }
+                                    NewTaskChoice.keep(chosen, model: model, effort: effort, advisor: advisor)
                                 })
                         }, level: { id in id == "\(chosen.rawValue)/\(model)" && !effort.isEmpty ? effort : nil },
                         setLevel: { _, level in
                             effort = level
-                            NewTaskChoice.keep(chosen, model: model, effort: effort)
-                        })
+                            NewTaskChoice.keep(chosen, model: model, effort: effort, advisor: advisor)
+                        },
+                        advisor: { id in id == "\(chosen.rawValue)/\(shownModel)" ? advisor : nil },
+                        setAdvisor: { _, picked in advisor = picked })
                     ComposerChip(
                         id: "new.permissions", label: permissions == .auto ? "Permissions: Auto" : "Permissions: Unrestricted",
                         symbol: permissions == .auto ? "wand-sparkle" : "bolt-lightning:glyph", tint: permissions == .auto ? nil : .orange,
@@ -141,7 +148,7 @@ struct NewTaskView: View {
         }
         .onAppear {
             if !folders.contains(project) { project = folders.first ?? "" }
-            (model, effort) = NewTaskChoice.kept(for: chosen)
+            (model, effort, advisor) = NewTaskChoice.kept(for: chosen)
             if let kept = Drafts.load("new") { prompt = kept.text; images = kept.images }
             // Started from something saved for later: its words, over whatever was being written.
             if let waiting = workspace.pendingDrafts.removeValue(forKey: "new") { prompt = waiting }
@@ -150,15 +157,20 @@ struct NewTaskView: View {
         .onChange(of: images) { Drafts.save("new", text: prompt, images: images) }
     }
 
-    /// "Opus 5.5 · High": the model, its provider as the chip's icon. None picked, the provider's first; a provider with
-    /// no catalogue (OpenCode) by its name.
+    /// "Opus 5.5 · High", or "Opus 5.5 + Fable" with an advisor: the model, its provider as the chip's icon. None picked,
+    /// the provider's first; a provider with no catalogue (OpenCode) by its name.
     private var agentLabel: String {
-        [
+        ModelNames.agent(
             models.first { $0.id == model }?.name
                 ?? (model.isEmpty ? (chosen == .opencode ? nil : models.first?.name) ?? chosen.title : ModelNames.readable(model)),
-            effort.isEmpty ? nil : effortLabel(effort, short: true),
-        ]
-        .compactMap { $0 }.joined(separator: " · ")
+            effort: effort.isEmpty ? nil : effortLabel(effort, short: true), advisor: startAdvisor)
+    }
+
+    /// The model the chip shows: none picked, the provider's first.
+    private var shownModel: String { model.isEmpty ? (models.first?.id ?? "") : model }
+    /// The advisor it starts with: Claude's only, and only one the shown model can have.
+    private var startAdvisor: String? {
+        chosen == .claude && ClaudeModels.advisors(for: shownModel).contains { $0.id == advisor } ? advisor : nil
     }
 
     /// The chosen provider's models, from its CLI's own cache.
@@ -171,10 +183,11 @@ struct NewTaskView: View {
         Task {
             // The model the chip shows: none picked, it shows the provider's first, so that's the one asked for. Left
             // to itself the provider would start on its own default, and the task would change model as it began.
-            let shown = model.isEmpty ? (models.first?.id ?? "") : model
+            let shown = shownModel
             if let id = await workspace.start(
                 provider: chosen, cwd: project, prompt: text, images: attached, model: shown.isEmpty ? nil : shown,
-                effort: effort.isEmpty ? nil : effort, permissions: permissions, workspace: into.isEmpty ? workspace.current : into)
+                effort: effort.isEmpty ? nil : effort, advisor: startAdvisor, permissions: permissions,
+                workspace: into.isEmpty ? workspace.current : into)
             {
                 prompt = ""
                 images = []
