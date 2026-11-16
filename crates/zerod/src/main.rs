@@ -271,6 +271,13 @@ fn poll_following(zerod: zerod::server::Zerod) {
     use zerod::following::Heard;
     tokio::spawn(async move {
         let (poller, polled) = (zerod.following.clone(), zerod.daemon.clone());
+        // A follow's trouble starting or ending shows on its row in the app.
+        let (mut changed, notices) = (poller.changed.subscribe(), zerod.notices.clone());
+        tokio::spawn(async move {
+            while let Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) = changed.recv().await {
+                let _ = notices.send("following");
+            }
+        });
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
             let settled = std::sync::Mutex::new(vec![]);
@@ -279,7 +286,7 @@ fn poll_following(zerod: zerod::server::Zerod) {
                     |id| polled.exists(id),
                     |id| polled.summary(id).is_none_or(|c| c.status != zerod::model::Status::Working),
                     |id, words, heard| match heard {
-                        Heard::Own => polled.say_quietly(id, words),
+                        Heard::Own | Heard::Trouble => polled.say_quietly(id, words),
                         Heard::Settled if polled.settle(id, words, || zerod.done(id)) => settled.lock().unwrap().push(id.to_string()),
                         Heard::Settled | Heard::News => {
                             if let Err(error) = polled.notify(id, words) {

@@ -27,7 +27,8 @@ pub mod linear;
 pub mod own;
 pub mod slack;
 
-/// After this many polls failing in a row, followers hear of it (once), and once more when polling works again.
+/// After this many polls failing in a row, trouble only the user can fix (a sign-in, access) is noted to them, once.
+/// Polling trouble is Zero's own, never news for a follower: the follow keeps its error, which the app shows.
 pub const REPORT_FAILS: u32 = 3;
 
 /// Events for a task between turns are held this long from the first, then wake it once with all of them: a burst
@@ -44,12 +45,14 @@ pub const QUIET: i64 = 30 * 60;
 pub const SEQUENCE: u32 = 20;
 
 /// How a follower hears of events: news wakes it; its own changes coming back are only noted in its conversation.
-/// Settled is news that only confirms an end (Event::settled): a finished task notes it and isn't woken.
+/// Settled is news that only confirms an end (Event::settled): a finished task notes it and isn't woken. Trouble is
+/// for the user, noted in the task and never told its agent: what it follows can't be read until they fix something.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Heard {
     News,
     Own,
     Settled,
+    Trouble,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -458,14 +461,22 @@ impl Following {
         // ponytail: one after another; poll several at once if a tick gets slow with many follows.
         let mut events = vec![];
         for key in due {
-            events.extend(self.poll(&key).await)
+            let (polled, trouble) = self.poll(&key).await;
+            events.extend(polled);
+            if let Some(error) = trouble {
+                let sessions: HashSet<String> =
+                    self.kept.lock().unwrap().follows.iter().filter(|f| covers(&f.topic, &key)).map(|f| f.session.clone()).collect();
+                for session in sessions {
+                    tell(&session, &format!("Zero can't read {}: {error}. Fix its connection, or unfollow it.", name(&key)), Heard::Trouble)
+                }
+            }
         }
         self.hold(&events);
         self.flush(&idle, &tell);
     }
 
-    /// Polls `key`, keeps the reading, and gives the events (polling trouble included).
-    async fn poll(&self, key: &str) -> Vec<Event> {
+    /// Polls `key`, keeps the reading, and gives the events, and the error once it's one for the user (needs_user).
+    async fn poll(&self, key: &str) -> (Vec<Event>, Option<String>) {
         let (state, fails) = {
             let kept = self.kept.lock().unwrap();
             let t = kept.targets.get(key).cloned().unwrap_or_default();
@@ -473,26 +484,18 @@ impl Following {
         };
         let source = match Source::of(key) {
             Ok(source) => source,
-            Err(_) => return vec![],
+            Err(_) => return (vec![], None),
         };
         let interval = self.interval(source);
         let result = self.fetch(source, key, state.as_ref()).await;
         let mut kept = self.kept.lock().unwrap();
         let target = kept.targets.entry(key.into()).or_default();
         let before = (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails);
-        let mut events = vec![];
+        let (mut events, mut trouble) = (vec![], None);
         match result {
             Ok(poll) => {
                 if state.is_some() {
                     events = poll.events
-                }
-                if fails >= REPORT_FAILS {
-                    events.push(Event {
-                        topic: key.into(),
-                        kind: "recovered".into(),
-                        summary: "polling works again".into(),
-                        ..Default::default()
-                    })
                 }
                 *target = Target {
                     state: Some(poll.state),
@@ -507,15 +510,10 @@ impl Following {
                 eprintln!("zerod: following {key}: {error}");
                 target.fails = fails + 1;
                 target.next_poll = now() + (interval << fails.min(6)).min(900);
-                target.error = Some(error.clone());
-                if state.is_some() && target.fails == REPORT_FAILS {
-                    events.push(Event {
-                        topic: key.into(),
-                        kind: "error".into(),
-                        summary: format!("polling is failing: {error}"),
-                        ..Default::default()
-                    });
+                if state.is_some() && target.fails == REPORT_FAILS && needs_user(&error) {
+                    trouble = Some(error.clone())
                 }
+                target.error = Some(error);
             }
         }
         // Written only when what it found is new: the times of the polls aren't worth the file (hundreds of kilobytes
@@ -523,7 +521,7 @@ impl Following {
         if (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails) != before {
             self.keep(&kept)
         }
-        events
+        (events, trouble)
     }
 
     async fn fetch(&self, source: Source, key: &str, state: Option<&Value>) -> Result<Poll, String> {
@@ -625,6 +623,33 @@ impl Following {
         }
         self.keep(&kept);
     }
+}
+
+/// An error retrying won't end: signed out, no access, or the thing gone. Not the network, a timeout or a 5xx.
+fn needs_user(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "401",
+        "403",
+        "404",
+        "unauthorized",
+        "forbidden",
+        "bad credentials",
+        "not found",
+        "could not resolve",
+        "isn't connected",
+        "auth login",
+        "invalid_auth",
+        "token_revoked",
+        "token_expired",
+        "not_authed",
+        "account_inactive",
+        "not_in_channel",
+        "missing_scope",
+        "authentication",
+    ]
+    .iter()
+    .any(|w| error.contains(w))
 }
 
 fn is_pr(topic: &str) -> bool {

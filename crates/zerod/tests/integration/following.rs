@@ -203,7 +203,7 @@ async fn a_filtered_follow_hears_only_what_it_asked_for() {
 }
 
 #[tokio::test]
-async fn polling_trouble_is_reported_once_and_so_is_its_end() {
+async fn polling_trouble_is_zeros_own_and_never_wakes_a_follower() {
     let fetcher = canned(vec![
         Ok(pr(vec![], vec![], vec![], "aaa", "OPEN")),
         Err("gh: HTTP 502"),
@@ -215,18 +215,42 @@ async fn polling_trouble_is_reported_once_and_so_is_its_end() {
     let following = open("following-errors", fetcher);
     following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
     let told = Arc::new(Mutex::new(vec![]));
-    let tell = |_: &str, words: &str| told.lock().unwrap().push(words.to_string());
-    for _ in 0..4 {
+    let tick = || {
         following.hurry();
-        following.tick(|_| true, |_| false, |s: &str, w: &str, _| tell(s, w)).await;
+        following.tick(|_| true, |_| false, |_: &str, w: &str, heard| told.lock().unwrap().push((w.to_string(), heard)))
+    };
+    for _ in 0..4 {
+        tick().await;
     }
-    assert_eq!(told.lock().unwrap().len(), 1, "the third failure says so, the fourth doesn't again");
-    assert!(told.lock().unwrap()[0].contains("polling is failing: gh: HTTP 502"));
-    assert_eq!(following.list(None)[0].error.as_deref(), Some("gh: HTTP 502"));
-    following.hurry();
-    following.tick(|_| true, |_| false, |s: &str, w: &str, _| tell(s, w)).await;
-    assert!(told.lock().unwrap()[1].contains("polling works again"));
+    assert_eq!(following.list(None)[0].error.as_deref(), Some("gh: HTTP 502"), "the follow keeps its trouble, for the app");
+    tick().await;
     assert_eq!(following.list(None)[0].error, None);
+    assert!(told.lock().unwrap().is_empty(), "a network failure and its end aren't news: {:?}", told.lock().unwrap());
+}
+
+#[tokio::test]
+async fn trouble_the_user_must_fix_is_noted_to_them_once() {
+    let fetcher = canned(vec![
+        Ok(pr(vec![], vec![], vec![], "aaa", "OPEN")),
+        Err("gh: HTTP 401: Bad credentials"),
+        Err("gh: HTTP 401: Bad credentials"),
+        Err("gh: HTTP 401: Bad credentials"),
+        Err("gh: HTTP 401: Bad credentials"),
+        Ok(pr(vec![], vec![], vec![], "aaa", "OPEN")),
+    ]);
+    let following = open("following-auth", fetcher);
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    let told = Arc::new(Mutex::new(vec![]));
+    for _ in 0..5 {
+        following.hurry();
+        following
+            .tick(|_| true, |_| false, |s: &str, w: &str, heard| told.lock().unwrap().push((s.to_string(), w.to_string(), heard)))
+            .await;
+    }
+    let told = told.lock().unwrap();
+    assert_eq!(told.len(), 1, "once, and nothing on recovery: {told:?}");
+    assert_eq!((told[0].0.as_str(), told[0].2), ("s1", Heard::Trouble), "quiet, for the user, not news for the agent");
+    assert!(told[0].1.contains("r#42") && told[0].1.contains("Bad credentials"), "{}", told[0].1);
 }
 
 #[tokio::test]
