@@ -1,6 +1,7 @@
 import Foundation
 
-/// The line Zero has an agent end its turn with: done (nothing left it can do), waiting (on someone else), working, or
+/// The line Zero has an agent end its turn with: done (nothing left it can do), waiting (on someone else, or "waiting
+/// on <task>"), working, or
 /// asked (with the ask's id); "completed" and "blocked", as agents said them before, are done and waiting. The app
 /// shows it as the answer's state rather than as words in the answer.
 public enum ZeroEnding: Equatable, Sendable {
@@ -8,7 +9,8 @@ public enum ZeroEnding: Equatable, Sendable {
     case asked(String)
 
     /// Compiled once: in place, it was compiled again for every message drawn.
-    nonisolated(unsafe) private static let line = #/\[zero: (done|completed|waiting|blocked|working|asked ([^\]\s]+)|asked)\]/#
+    nonisolated(unsafe) private static let line =
+        #/\[zero: (done|completed|waiting(?: on [^\]]+)?|blocked|working|asked ([^\]\s]+)|asked)\]/#
 
     /// The answer without its ending, and the ending, when its last line is one.
     public static func split(_ text: String) -> (String, ZeroEnding?) {
@@ -25,8 +27,10 @@ public enum ZeroEnding: Equatable, Sendable {
         let ending: ZeroEnding =
             switch match.output.1 {
             case "done", "completed": .done
-            case "waiting", "blocked": .waiting
+            case "blocked": .waiting
             case "working": .working
+            // "waiting on <task>": that task's turn ending wakes it.
+            case let kind where kind.hasPrefix("waiting"): .waiting
             default: .asked(String(match.output.2 ?? ""))
             }
         return (answer, ending)

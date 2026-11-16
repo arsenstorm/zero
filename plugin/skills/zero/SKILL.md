@@ -216,6 +216,7 @@ When Zero runs your session, every turn Zero started (an event, a worker's repor
 ```
 [zero: done]            the work is finished end to end, with good reason to say so (merged and deployed, verified, its ticket closed, or the user said it's done); Zero puts it away, and what you follow changing brings it back
 [zero: waiting]         the next move is someone else's, not theirs (a review, CI, a deploy, QA); what you follow wakes you
+[zero: waiting on <task>]  another task's next move (its id or name): its next turn ending wakes you with what it said
 [zero: asked k3x9qa]    you asked with --async and wait for that answer (the id it printed); once it's answered, end with what's true now
 [zero: working]         you are pausing between steps and posted a note on where you are
 ```

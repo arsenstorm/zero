@@ -248,7 +248,14 @@ impl Daemon {
         };
         let reported_answer = switched && answered.is_some();
         let now = if reported_answer { Attention::Done } else { now };
+        // A turn that only says it waits (on CI, on a verifier) is no news for its lead; a blocked one is.
+        let quiet_wait = now == Attention::Blocked
+            && conversation.answer().is_some_and(|a| !crate::board::says_blocked(a) && crate::board::without_ending(a).trim().is_empty());
+        if came_to_an_end && !restarting && !sent_back {
+            self.wake_waiting_on(&conversation);
+        }
         if let Some(lead) = &conversation.parent
+            && !quiet_wait
             && (!switched || reported_answer)
             && (came_to_an_end || got_stuck)
             && !restarting
@@ -431,6 +438,9 @@ impl Daemon {
         };
         if !following.list(Some(id)).is_empty()
             || self.says_who.get().is_some_and(|says| says(conversation))
+            || conversation.answer().and_then(crate::board::waits_on).is_some_and(|on| {
+                self.list().iter().any(|c| c.id != id && (c.id == on || crate::bridge::label(c).eq_ignore_ascii_case(on)))
+            })
             || self.background(id).is_some()
             || self.workers(id).iter().any(working)
             || !self.watches(Some(id)).is_empty()
@@ -443,6 +453,27 @@ impl Daemon {
             return;
         }
         self.tell(id, crate::model::from_line("zero", NOTHING_WAKES));
+    }
+
+    /// `ended` has come to the end of a turn: every session between turns whose answer ends `[zero: waiting on <it>]`
+    /// (its id or name) is told what it said, a parked one resumed for it. Its lead hears it as a report already.
+    fn wake_waiting_on(&self, ended: &Conversation) {
+        let name = crate::bridge::label(ended);
+        let said = ended.answer().map(clipped).filter(|s| !s.is_empty()).unwrap_or_else(|| "nothing".into());
+        for session in self.sessions() {
+            let waiter = session.summary();
+            if waiter.id == ended.id
+                || ended.parent.as_deref() == Some(waiter.id.as_str())
+                || !matches!(waiter.status, Status::Idle | Status::Offline)
+            {
+                continue;
+            }
+            let Some(on) = waiter.answer().and_then(crate::board::waits_on) else { continue };
+            if on == ended.id || on.eq_ignore_ascii_case(&name) {
+                let words = format!("{name}, which you wait on, ended its turn: {said}\n\n{}", reply_to(ended));
+                self.tell(&waiter.id, crate::model::from_line(&ended.id, &words));
+            }
+        }
     }
 
     /// A step of `id`'s opened the pull request at `url`: followed, said so in its conversation, and its PR unless it
@@ -582,7 +613,11 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
             Some(at) => format!("hit a usage limit (it resets at {})", crate::ask::Time(at).iso()),
             None => "hit a usage limit".into(),
         },
-        Attention::Blocked => format!("is blocked: {}", worker.answer().map(crate::board::without_ending).unwrap_or("no reason given")),
+        Attention::Blocked => {
+            let answer = worker.answer().unwrap_or("");
+            let said = Some(crate::board::without_ending(answer)).filter(|s| !s.trim().is_empty()).unwrap_or("no reason given");
+            if crate::board::says_blocked(answer) { format!("is blocked: {said}") } else { format!("is waiting: {said}") }
+        }
         Attention::Offline => "stopped: its process ended".into(),
         _ => "stopped without an answer".into(),
     };

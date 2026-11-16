@@ -176,6 +176,20 @@ async fn waiting_with_nothing_to_wake_it_is_told_once() {
     assert_eq!(warned(&sent), 1, "it follows r#7");
 }
 
+#[tokio::test]
+async fn waiting_on_another_task_is_something_that_wakes_it() {
+    let (daemon, _, id, sent) = task("auto-follow-waits-on").await;
+    let cwd = daemon.get(&id).unwrap().cwd;
+    let options = zerod::daemon::Options { cwd: Some(cwd), ..Default::default() };
+    let other = daemon.start(Provider::Claude, "review it", options).unwrap();
+    daemon.label(&other, Some("Reviewer"), None).unwrap();
+    let session = daemon.session(&id).unwrap();
+    turn(&session, 1, "ship it", "Sent it for review.\n\n[zero: waiting on reviewer]").await;
+    assert_eq!(warned(&sent), 0, "that task's turn ending wakes it: {}", sent.lock().unwrap());
+    turn(&session, 2, "ship it", "Sent it on.\n\n[zero: waiting on nobody here]").await;
+    assert_eq!(warned(&sent), 1, "no such task: nothing wakes it");
+}
+
 /// A note of the task's own, as `zero note` posts it.
 fn note(id: &str, status: Option<&str>, needs: Option<&str>) -> zerod::ask::Ask {
     let agent = zerod::ask::AgentIdentity { name: format!("zerod-{id}"), reference: Some(id.into()), ..Default::default() };

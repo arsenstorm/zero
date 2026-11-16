@@ -319,3 +319,54 @@ async fn a_worker_waiting_on_the_users_answer_is_reported_once() {
     turn(&session, 3, &zeros("The user answered"), "Checked on the phone: all good.\n\n[zero: done]").await;
     assert_eq!(reports(), 2, "its next news is");
 }
+
+#[tokio::test]
+async fn a_worker_that_only_says_it_waits_doesnt_wake_its_lead() {
+    // A turn with nothing but [zero: waiting] (on CI, on a verifier) is no news: its lead isn't woken for it. One that
+    // says something is reported as waiting, not blocked; [zero: blocked] still is.
+    let home = temp_dir("endings-worker-quiet");
+    let (daemon, lead, sent) = task(&home, Provider::Claude).await;
+    let worker = daemon.spawn(&lead, Provider::Claude, "fix it", Default::default()).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let session = daemon.session(&worker).unwrap();
+    let told = || {
+        let waiting = std::fs::read_to_string(home.join("zerod/sessions").join(&lead).join("pending.json")).unwrap_or_default();
+        waiting + &sent.lock().unwrap()
+    };
+    let reports = || told().matches(&format!("from: {worker} -->")).count();
+    turn(&session, 1, &zeros("CI success"), "[zero: waiting]").await;
+    assert_eq!(reports(), 0, "{}", told());
+    turn(&session, 2, &zeros("go on"), "Draft PR pushed.\n\n[zero: waiting]").await;
+    assert_eq!(reports(), 1, "{}", told());
+    assert!(told().contains("is waiting: Draft PR pushed."), "{}", told());
+    assert!(!told().contains("is blocked"), "{}", told());
+    turn(&session, 3, &zeros("CI success"), "[zero: waiting on its verifier]").await;
+    assert_eq!(reports(), 1, "{}", told());
+}
+
+#[tokio::test]
+async fn a_session_waiting_on_another_is_woken_when_that_one_ends_its_turn() {
+    // A verifier sends its fix list to the ticket worker, a sibling, and ends its turn [zero: waiting on <that worker>]:
+    // the worker's "fix pushed" goes to its lead, and the verifier is woken with it too, by the worker's id or name.
+    let home = temp_dir("endings-waiting-on");
+    let (daemon, lead, sent) = task(&home, Provider::Claude).await;
+    let fixer = daemon.spawn(&lead, Provider::Claude, "fix it", Default::default()).unwrap();
+    let verifier = daemon.spawn(&lead, Provider::Claude, "verify it", Default::default()).unwrap();
+    daemon.label(&fixer, Some("STA-1 logo"), None).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let told = || {
+        let waiting = std::fs::read_to_string(home.join("zerod/sessions").join(&verifier).join("pending.json")).unwrap_or_default();
+        waiting + &sent.lock().unwrap()
+    };
+    let woken = || told().matches("which you wait on").count();
+    let (fixing, verifying) = (daemon.session(&fixer).unwrap(), daemon.session(&verifier).unwrap());
+    turn(&verifying, 1, "verify it", "Sent the fix list.\n\n[zero: waiting on sta-1 logo]").await;
+    turn(&fixing, 1, "fix it", "Draft PR up.\n\n[zero: waiting]").await;
+    assert_eq!(woken(), 1, "{}", told());
+    assert!(told().contains(&format!("from: {fixer} -->")), "{}", told());
+    assert!(told().contains("Draft PR up."), "{}", told());
+    // Woken, it ends on something else: the fixer's next turn doesn't wake it.
+    turn(&verifying, 2, "(woken)", "Round 2 started.\n\n[zero: working]").await;
+    turn(&fixing, 2, &zeros("go on"), "More.\n\n[zero: waiting]").await;
+    assert_eq!(woken(), 1, "{}", told());
+}

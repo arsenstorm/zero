@@ -261,7 +261,9 @@ pub fn board_in(
                     })
                     .unwrap_or(false),
                 issues: {
-                    let mut issues = lead.issues.clone();
+                    // Their steps stay in the conversation: the board is sent whole on every change.
+                    let mut issues: Vec<_> =
+                        lead.issues.iter().map(|i| crate::model::Issue { history: vec![], ..i.clone() }).collect();
                     issues.sort_by_key(|i| (i.state, i.since));
                     issues
                 },
@@ -505,6 +507,18 @@ pub fn ending(answer: &str) -> Option<&'static str> {
         "asked" if inner.split_whitespace().nth(1).is_some() => Some("asked"),
         _ => None,
     }
+}
+
+/// The task an answer's `[zero: waiting on <id or name>]` waits on.
+pub fn waits_on(answer: &str) -> Option<&str> {
+    let last = answer.trim_end().lines().last()?.trim();
+    let on = last.strip_prefix("[zero: waiting on ")?.strip_suffix(']')?.trim();
+    (!on.is_empty()).then_some(on)
+}
+
+/// An answer that ends `[zero: blocked]`, not only waiting: both read as waiting on someone, but this one is news.
+pub fn says_blocked(answer: &str) -> bool {
+    answer.trim_end().lines().last().is_some_and(|l| l.trim().starts_with("[zero: blocked"))
 }
 
 /// Where a ticket's task runs, by the places command: its name, and its folder when the command gives one.

@@ -7,6 +7,7 @@ import Testing
     #expect(ZeroEnding.split("PR #13336 is open.\n\n[zero: done]") == ("PR #13336 is open.", .done))
     #expect(ZeroEnding.split("Which one?\n[zero: asked 3f2a9c]  ") == ("Which one?", .asked("3f2a9c")))
     #expect(ZeroEnding.split("Deploying; QA after.\n\n[zero: waiting]") == ("Deploying; QA after.", .waiting))
+    #expect(ZeroEnding.split("Fix list sent.\n\n[zero: waiting on STA-3138 verify]") == ("Fix list sent.", .waiting))
     #expect(
         ZeroEnding.split("Can't reach staging.\n\n[zero: blocked]") == ("Can't reach staging.", .waiting),
         "blocked, as agents said it before")

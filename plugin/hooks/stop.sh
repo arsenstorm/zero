@@ -9,7 +9,7 @@ case "$input" in *'"stop_hook_active":true'*) exit 0 ;; esac # already sent back
 session=$(printf '%s' "$input" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
 presence=$(cut -d' ' -f1 "$HOME/.zero/presence/$session" 2>/dev/null)
 case "$presence" in human|worker) exit 0 ;; esac
-ending='\[zero: (done|completed|asked [A-Za-z0-9]+|waiting|blocked|working)\]'
+ending='\[zero: (done|completed|asked [A-Za-z0-9]+|waiting( on [^]]+)?|blocked|working)\]'
 # The input carries the turn's last message; the transcript may not have it written yet when this runs.
 last_message=$(printf '%s' "$input" | sed -n 's/.*"last_assistant_message":"\(.*\)".*/\1/p')
 # A question put to the user in prose, at the turn's end, without asking it: asked properly instead (once), so it
