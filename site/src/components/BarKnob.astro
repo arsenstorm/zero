@@ -1,0 +1,132 @@
+---
+// A round button in one of the control bar's hollows (BarKnob.swift): the inbox in the top one, settings in the
+// bottom. In, only a thin arc of it shows, facing the bar and the screen's edge, blue while an ask waits; out
+// (`data-out` on it), the arc wraps round and thickens into the full button, carrying its icon in. 32 px, its middle
+// where the bar's fillet is centred, so the gap to the bar is even all round.
+import Icon from "./Icon.astro";
+import { carried, knob } from "../lib/knob";
+interface Props {
+  top?: boolean;
+  waiting?: boolean;
+  icon?: string;
+}
+const { top = false, waiting = false, icon } = Astro.props;
+const shape = knob(0, top);
+const held = carried(0, top);
+const ring = (extra: number) =>
+  `r: ${shape.r}px; stroke-width: ${shape.width + extra}px; stroke-dasharray: ${shape.dash}; rotate: ${shape.rotate}deg`;
+---
+
+<span
+  data-knob
+  data-top={top ? "" : undefined}
+  data-waiting={waiting ? "" : undefined}
+  class="knob relative block size-8"
+  aria-hidden="true"
+>
+  <svg viewBox="0 0 32 32" class="absolute inset-0 size-8 overflow-visible">
+    {/* The outline, the bar's colour inside it, and the waiting colour over both, fading as it comes out. */}
+    <circle
+      data-ring="1"
+      cx="16"
+      cy="16"
+      style={ring(1)}
+      class="stroke-stroke"
+    />
+    <circle
+      data-ring="-1"
+      cx="16"
+      cy="16"
+      style={ring(-1)}
+      class="stroke-pill"
+    />
+    <circle
+      data-ring="1"
+      data-tint
+      cx="16"
+      cy="16"
+      style={ring(1)}
+      class="stroke-blue"
+      opacity={waiting ? 1 : 0}
+    />
+  </svg>
+  {icon && (
+    <span
+      data-carried
+      class="knob-icon absolute inset-0 grid place-items-center text-muted [&_svg]:block"
+      style={`opacity: ${held.opacity}; transform: ${held.transform}`}
+    >
+      <span class:list={["block size-4", top && "-translate-y-[0.5px]"]}>
+        <Icon name={icon} size={16} />
+      </span>
+    </span>
+  )}
+</span>
+
+<style>
+  .knob circle {
+    fill: none;
+    stroke-linecap: round;
+    transform-origin: 16px 16px;
+  }
+</style>
+
+<script>
+  import { carried, knob } from "../lib/knob";
+
+  // Out and back on one eased progress, as the app's: ease-out cubic, 220 ms out, 150 ms back in, from wherever it is.
+  // Under Reduce Motion the arc and the button cross-fade instead.
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+  const ease = (t: number) => 1 - (1 - t) ** 3;
+
+  for (const el of document.querySelectorAll<HTMLElement>("[data-knob]")) {
+    const top = el.hasAttribute("data-top");
+    const waiting = el.hasAttribute("data-waiting");
+    const rings = [...el.querySelectorAll<SVGCircleElement>("[data-ring]")];
+    const tint = el.querySelector<SVGCircleElement>("[data-tint]");
+    const icon = el.querySelector<HTMLElement>("[data-carried]");
+    let open = 0;
+    let frame = 0;
+
+    function draw(p: number) {
+      const shape = knob(p, top);
+      for (const ring of rings) {
+        ring.style.r = `${shape.r}px`;
+        ring.style.strokeWidth = `${shape.width + Number(ring.dataset.ring)}px`;
+        ring.style.strokeDasharray = shape.dash;
+        ring.style.rotate = `${shape.rotate}deg`;
+      }
+      if (tint) tint.setAttribute("opacity", String(waiting ? 1 - p : 0));
+      if (icon) Object.assign(icon.style, carried(p, top));
+    }
+
+    function go(out: boolean) {
+      const to = out ? 1 : 0;
+      cancelAnimationFrame(frame);
+      if (reduce.matches) {
+        open = to;
+        draw(to);
+        el.animate([{ opacity: 0.4 }, { opacity: 1 }], {
+          duration: 150,
+          easing: "ease-out",
+        });
+        return;
+      }
+      const from = open;
+      const ms = out ? 220 : 150;
+      const start = performance.now();
+      const step = (now: number) => {
+        const t = Math.min(1, (now - start) / ms);
+        open = from + (to - from) * ease(t);
+        draw(open);
+        if (t < 1) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+    }
+
+    new MutationObserver(() => go(el.hasAttribute("data-out"))).observe(el, {
+      attributes: true,
+      attributeFilter: ["data-out"],
+    });
+  }
+</script>

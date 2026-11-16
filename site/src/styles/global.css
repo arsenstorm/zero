@@ -56,8 +56,6 @@
   --green-cap: #28cd41;
   --orange-row: #fcedd9;
   --orange-cap: #ff9500;
-  --blueprint: #e5e5e5;
-  --on-blueprint: #0a0a0a;
   /* The one curve for what arrives or moves up a place: a steep start and a soft landing (iOS sheets'). */
   --settle: cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -100,8 +98,6 @@
     --green-cap: #298c45;
     --orange-row: #4d381f;
     --orange-cap: #c77314;
-    --blueprint: #262626;
-    --on-blueprint: #fafafa;
   }
 }
 
@@ -147,8 +143,6 @@
   --color-green-cap: var(--green-cap);
   --color-orange-row: var(--orange-row);
   --color-orange-cap: var(--orange-cap);
-  --color-blueprint: var(--blueprint);
-  --color-on-blueprint: var(--on-blueprint);
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", Roboto,
     sans-serif;
@@ -444,17 +438,6 @@
 .ask-option [data-text] {
   color: inherit;
 }
-/* The sidebar's blueprint heading fades into the sidebar over its lower third, eased (smootherstep). */
-.blueprint {
-  mask-image: linear-gradient(
-    to bottom,
-    #000 64%,
-    rgb(0 0 0 / 0.84) 72%,
-    rgb(0 0 0 / 0.5) 82%,
-    rgb(0 0 0 / 0.16) 92%,
-    transparent
-  );
-}
 /* Under the sticky header, the rail's grey outside the panel's rounded top corners: a quarter circle cut out of each,
    centred where the panel's own corner is. */
 .panel-corner-left {
@@ -500,19 +483,19 @@
 .bar-fillet-top {
   background: radial-gradient(
     circle at 0 0,
-    transparent 9.5px,
-    var(--stroke) 10px,
-    var(--stroke) 10.5px,
-    var(--pill) 11px
+    transparent 21.5px,
+    var(--stroke) 22px,
+    var(--stroke) 22.5px,
+    var(--pill) 23px
   );
 }
 .bar-fillet-bottom {
   background: radial-gradient(
     circle at 0 100%,
-    transparent 9.5px,
-    var(--stroke) 10px,
-    var(--stroke) 10.5px,
-    var(--pill) 11px
+    transparent 21.5px,
+    var(--stroke) 22px,
+    var(--stroke) 22.5px,
+    var(--pill) 23px
   );
 }
 /* The control bar's marks grow by transform only, so their centre never moves: 1.18 while pinned, as the app's. */

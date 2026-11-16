@@ -2,7 +2,7 @@
 // The control bar on the right edge of a Mac's screen, with a task's ask open beside it in the inbox. The stage shows
 // the whole screen first, then a pointer goes to the bar and answers an ask, the view closing in on the bar as it
 // goes; then it's yours to use. The screen is drawn at a 14-inch MacBook Pro's size and scaled to fit the stage.
-import Icon from "./Icon.astro";
+import BarKnob from "./BarKnob.astro";
 import AskCard from "./AskCard.astro";
 import TaskState from "./TaskState.astro";
 import { heroAsk } from "../lib/demo";
@@ -104,25 +104,33 @@ const peeks = [
     >
       <span
         aria-hidden="true"
-        class="bar-fillet-top absolute -right-px -top-[11px] size-[11px]"
+        class="bar-fillet-top absolute -right-px -top-[23px] size-[23px]"
       ></span>
       <span
         aria-hidden="true"
-        class="bar-fillet-bottom absolute -right-px -bottom-[11px] size-[11px]"
+        class="bar-fillet-bottom absolute -right-px -bottom-[23px] size-[23px]"
       ></span>
+      {/* The inbox in the hollow above the bar: an arc, blue while asks wait, out as its button while its list is open
+          or with the pointer on the bar and nearer it than settings. */}
       <button
         type="button"
         data-peek-open="inbox"
         aria-label="Open asks"
         aria-pressed="false"
-        class="bar-mark size-8 grid place-items-center relative"
+        class="bar-mark absolute left-[6px] -top-[40px] size-8"
       >
-        <Icon name="inbox" size={15} />
-        <span
-          class="absolute top-[6px] right-[6px] size-[7px] rounded-full bg-blue"
-        ></span>
+        <BarKnob top waiting icon="inbox" />
       </button>
-      <span class="w-[18px] h-px bg-hairline my-1" aria-hidden="true"></span>
+      {/* Settings in the hollow below: out with the pointer on the bar's lower part; it opens the bar's settings, here
+          the docs' page for them. */}
+      <a
+        href="/docs/settings#control-bar"
+        data-bar-settings
+        aria-label="Settings for the control bar"
+        class="absolute left-[6px] -bottom-[40px] size-8 rounded-full"
+      >
+        <BarKnob icon="gear" />
+      </a>
       {peeks.map((peek) => (
         <button
           type="button"
@@ -366,6 +374,91 @@ const peeks = [
 </style>
 
 <script>
+  // Which of the bar's two buttons comes out (PillView.swift, ZeroCore's BarReach): only the one the pointer is within
+  // 12 pt of, holding on 3 pt past each line so a resting pointer doesn't flicker them; over the marks in the middle,
+  // neither. Reaching the inbox opens its list beside the bar; reaching settings closes whatever the panel showed.
+  // The inbox stays out while its list is open, and settings goes in.
+  for (const bar of document.querySelectorAll<HTMLElement>(
+    "[data-bar-marks]"
+  )) {
+    const inboxButton = bar.querySelector<HTMLElement>(
+      '[data-peek-open="inbox"]'
+    );
+    const settingsButton = bar.querySelector<HTMLElement>(
+      "[data-bar-settings]"
+    );
+    const inbox = inboxButton?.querySelector<HTMLElement>("[data-knob]");
+    const settings = settingsButton?.querySelector<HTMLElement>("[data-knob]");
+    if (!inboxButton || !settingsButton || !inbox || !settings) continue;
+    const desk = bar.closest<HTMLElement>("[data-bar]");
+    let reach: "inbox" | "settings" | "both" = "both";
+    let over = false;
+    function at(y: number, height: number) {
+      const top = 16,
+        foot = height - 16,
+        near = 16 + 12,
+        slack = 3;
+      const split =
+        (top + foot) / 2 +
+        (reach === "inbox" ? slack : reach === "settings" ? -slack : 0);
+      const nearInbox = y - top <= near + (reach === "inbox" ? slack : 0);
+      const nearSettings =
+        foot - y <= near + (reach === "settings" ? slack : 0);
+      if (nearInbox && (!nearSettings || y < split)) return "inbox";
+      return nearSettings ? "settings" : "both";
+    }
+    function update() {
+      // Its list open: pinned, and the inbox panel open (closed as the page arrives, until the demo opens it).
+      const listOpen =
+        inboxButton!.getAttribute("aria-pressed") === "true" &&
+        !bar.closest("[data-bar]")?.hasAttribute("data-closed");
+      inbox!.toggleAttribute(
+        "data-out",
+        listOpen || (over && reach === "inbox")
+      );
+      settings!.toggleAttribute(
+        "data-out",
+        over && reach === "settings" && !listOpen
+      );
+    }
+    bar.addEventListener("pointermove", (event) => {
+      // From the top of the inbox to the foot of settings, in the bar's own pixels whatever the stage's zoom.
+      const a = inboxButton.getBoundingClientRect(),
+        b = settingsButton.getBoundingClientRect();
+      const k = a.height / inboxButton.offsetHeight;
+      over = true;
+      const was = reach;
+      reach = at((event.clientY - a.top) / k, (b.bottom - a.top) / k);
+      if (reach !== was && reach === "inbox") {
+        inboxButton.dispatchEvent(new PointerEvent("pointerenter"));
+        desk?.removeAttribute("data-closed");
+      }
+      if (reach !== was && reach === "settings")
+        desk?.setAttribute("data-closed", "");
+      update();
+    });
+    // A task's mark opens the panel again, closed by settings.
+    for (const mark of bar.querySelectorAll("[data-task-mark]"))
+      mark.addEventListener("pointerenter", () =>
+        desk?.removeAttribute("data-closed")
+      );
+    bar.addEventListener("pointerleave", () => {
+      over = false;
+      reach = "both";
+      update();
+    });
+    new MutationObserver(update).observe(inboxButton, {
+      attributes: true,
+      attributeFilter: ["aria-pressed"],
+    });
+    if (desk)
+      new MutationObserver(update).observe(desk, {
+        attributes: true,
+        attributeFilter: ["data-closed"],
+      });
+    update();
+  }
+
   // The inbox list, as the app's: the selected ask sits on the bar's centre line; pointing at a waiting ask selects
   // it; answered, the next waiting ask is selected and scrolls to the centre (InboxController.scheduleAdvance).
   for (const desk of document.querySelectorAll<HTMLElement>("[data-bar]")) {

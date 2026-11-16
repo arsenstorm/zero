@@ -8,7 +8,7 @@
 //   states: the seven states a task can be in.
 //   workers: a task in the sidebar with its workers under it.
 import AskCard from "./AskCard.astro";
-import Icon from "./Icon.astro";
+import BarKnob from "./BarKnob.astro";
 import TaskState from "./TaskState.astro";
 
 interface Props {
@@ -61,7 +61,7 @@ const yesNo = ["Yes", "No", "Suggest something else…"];
     class="rounded-[18px] bg-rail p-5 sm:p-8 overflow-hidden"
   >
     {name === "bar" && (
-      <div class="flex items-center justify-end gap-3 -mr-5 sm:-mr-8">
+      <div class="flex items-center justify-end gap-3 -mr-5 sm:-mr-8 py-10">
         <div class="w-full max-w-[300px] rounded-[28px] bg-hover p-2.5">
           <AskCard
             headline="Ship the release notes as they are?"
@@ -70,13 +70,14 @@ const yesNo = ["Yes", "No", "Suggest something else…"];
           />
         </div>
         <div class="relative flex flex-col items-center gap-0.5 py-2 px-1.5 rounded-l-[22px] bg-pill border border-r-0 border-stroke">
-          <span class="bar-fillet-top absolute -right-px -top-[11px] size-[11px]"></span>
-          <span class="bar-fillet-bottom absolute -right-px -bottom-[11px] size-[11px]"></span>
-          <span class="size-8 grid place-items-center relative">
-            <Icon name="inbox" size={15} />
-            <span class="absolute top-[6px] right-[6px] size-[7px] rounded-full bg-blue"></span>
+          <span class="bar-fillet-top absolute -right-px -top-[23px] size-[23px]"></span>
+          <span class="bar-fillet-bottom absolute -right-px -bottom-[23px] size-[23px]"></span>
+          <span class="absolute left-[6px] -top-[40px]">
+            <BarKnob top waiting />
           </span>
-          <span class="w-[18px] h-px bg-hairline my-1"></span>
+          <span class="absolute left-[6px] -bottom-[40px]">
+            <BarKnob />
+          </span>
           {marks.map((state) => (
             <span class="w-8 h-7 grid place-items-center">
               <TaskState state={state} />
