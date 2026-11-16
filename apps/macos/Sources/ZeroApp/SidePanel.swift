@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 import ZeroCore
 
 // A task's right side as a panel with tabs, as Codex's: the conversation narrows to a column on the left, the panel
@@ -37,6 +38,7 @@ struct PanelTabStrip: View {
             Spacer(minLength: 0)
         }
         .frame(height: 28)
+        .background(PanelAnchor(task: task))
     }
 }
 
@@ -141,9 +143,9 @@ struct SidePanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.card)
-        // ⌘T and ⌘L while the panel shows: a new tab; the address bar (a new tab's is focused already).
+        .background(PanelAnchor(task: task))
+        // ⌘L while the panel shows: the address bar (a new tab's is focused already). ⌘T is the menu's (BrowserKeys).
         .background {
-            Button("") { Panels.shared.change(task) { $0.newTab() } }.keyboardShortcut("t", modifiers: .command).hidden()
             Button("") { BrowserBar.focus.value += 1 }.keyboardShortcut("l", modifiers: .command).hidden()
             Button("") { Panels.shared.change(task) { $0.step(1) } }.keyboardShortcut(.tab, modifiers: .control).hidden()
             Button("") { Panels.shared.change(task) { $0.step(-1) } }.keyboardShortcut(.tab, modifiers: [.control, .shift]).hidden()
@@ -174,6 +176,140 @@ struct SidePanel: View {
     static func shown(_ url: String) -> String {
         url.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
     }
+}
+
+/// The side panel's keys and mouse buttons (AppDelegate): the menu's ⌘W, ⌘Z, ⌘⇧T and ⌘T, ⌘1 to ⌘9, and the mouse's
+/// back and forward. Each is given the workspace window when it's key, else nil and the key keeps its meaning. ⌘W, ⌘Z
+/// and ⌘1 to ⌘9 act on the panel only while it has the keyboard; anywhere else they keep Zero's meaning. Whether the
+/// keyboard or the pointer is in the browser is decided here alone (`task(in:)`, `page(under:)`, `inPanel`), for any
+/// engine that takes the panel's place.
+@MainActor
+enum BrowserKeys {
+    /// The task whose panel the window shows (its lead's, the page in front, the panel open): set by AppDelegate from
+    /// its navigation. Every page kept behind it has a panel of its own, hidden, so no panel can say it's the one shown.
+    static var visible: () -> String? = { nil }
+    /// The address bar being edited.
+    static var address = false
+    /// The panel's task, when the last click was in the panel (on Details, its tabs) or a key here just closed or
+    /// picked a tab, so the keyboard is the panel's though no view in it holds it; a click elsewhere clears it.
+    private static var kept: String?
+    /// Where each task's panel and its tabs are in the window (PanelAnchor), so a click there is known to be in it.
+    static let anchors = NSHashTable<PanelAnchorView>.weakObjects()
+
+    /// The task whose panel has the keyboard: its page, its address bar, or nothing since a click or key of its.
+    private static func task(in window: NSWindow) -> String? {
+        guard let task = visible() else { return nil }
+        let responder = window.firstResponder
+        let field = (responder as? NSTextView)?.isFieldEditor == true
+        return (address && field) || page(holding: responder as? NSView) != nil || (kept == task && responder === window) ? task : nil
+    }
+
+    /// The panel's page under the pointer: the visible task's tab shown, if the pointer is on it. (Not a hit test: a
+    /// SwiftUI window answers one with its hosting view, never the views inside.)
+    private static func page(under event: NSEvent) -> WebPage? {
+        guard let task = visible(), let tab = Panels.shared.tabs(task).selected, let page = WebPages.existing(tab) else { return nil }
+        return shows(page.view, event) ? page : nil
+    }
+
+    /// The point is on this view, shown in the event's window.
+    private static func shows(_ view: NSView, _ event: NSEvent) -> Bool {
+        view.window === event.window && !view.isHiddenOrHasHiddenAncestor
+            && view.bounds.contains(view.convert(event.locationInWindow, from: nil))
+    }
+
+    /// The page this view is, or is inside.
+    private static func page(holding view: NSView?) -> WKWebView? {
+        var view = view
+        while let next = view {
+            if let web = next as? WKWebView { return web }
+            view = next.superview
+        }
+        return nil
+    }
+
+    /// A click in the workspace window: in the panel (outside its page and address bar, which take the keyboard
+    /// themselves), the keyboard leaves the composer for the panel; anywhere else, the panel lets it go.
+    static func clicked(_ event: NSEvent) {
+        guard let window = event.window, let task = visible(),
+            anchors.allObjects.contains(where: { $0.task == task && shows($0, event) })
+        else { kept = nil; return }
+        if self.task(in: window) == nil { window.makeFirstResponder(nil) }
+        kept = task
+    }
+
+    /// The mouse's back (-1) or forward (1), or a swipe: in the panel's page under the pointer; false leaves it to Zero.
+    static func go(_ step: Int, under event: NSEvent) -> Bool {
+        guard let page = page(under: event) else { return false }
+        if step < 0 { page.back() } else { page.forward() }
+        return true
+    }
+
+    /// ⌘1 to ⌘9 while the panel has the keyboard: its tab at that place (ahead of Zero's tasks); false leaves the key
+    /// to Zero.
+    static func select(_ position: Int, in window: NSWindow?) -> Bool {
+        guard let window, let task = task(in: window) else { return false }
+        let before = Panels.shared.tabs(task).selected
+        Panels.shared.change(task) { $0.select(position: position) }
+        // The page that had the keyboard leaves with its tab: the next key is still the panel's.
+        if Panels.shared.tabs(task).selected != before { window.makeFirstResponder(nil); kept = task }
+        return true
+    }
+
+    /// ⌘W: the tab shown closes; on Details, nothing (a repeated ⌘W never closes Zero while the panel has the
+    /// keyboard). False leaves the key to the window.
+    static func close(in window: NSWindow?) -> Bool {
+        guard let window, let task = task(in: window) else { return false }
+        guard let tab = Panels.shared.tabs(task).selected else { return true }
+        SidePanel.close(tab, in: task)
+        window.makeFirstResponder(nil)
+        kept = task
+        return true
+    }
+
+    /// ⌘Z: the tab last closed comes back, unless the keyboard is in text (the address, a field in the page), which
+    /// undoes its typing as anywhere else.
+    static func undo(in window: NSWindow?) -> Bool {
+        guard let window, task(in: window) != nil, !(window.firstResponder is NSTextView),
+            page(holding: window.firstResponder as? NSView)?.inputContext == nil
+        else { return false }
+        return reopen(in: window)
+    }
+
+    /// ⌘⇧T: the tab last closed comes back, wherever the keyboard is in the window, while the panel shows.
+    static func reopen(in window: NSWindow?) -> Bool {
+        guard window != nil, let task = visible() else { return false }
+        var reopened = false
+        Panels.shared.change(task) { reopened = $0.reopen() }
+        if reopened { kept = task }
+        return reopened
+    }
+
+    /// ⌘T: a new tab, its address bar ready to type in.
+    static func newTab(in window: NSWindow?) -> Bool {
+        guard window != nil, let task = visible() else { return false }
+        Panels.shared.change(task) { $0.newTab() }
+        BrowserBar.focus.value += 1
+        return true
+    }
+}
+
+/// Where a task's panel (or its tabs' strip) is in the window, for BrowserKeys: drawn behind it, never clicked.
+struct PanelAnchor: NSViewRepresentable {
+    let task: String
+
+    func makeNSView(context: Context) -> PanelAnchorView {
+        let view = PanelAnchorView()
+        view.task = task
+        BrowserKeys.anchors.add(view)
+        return view
+    }
+
+    func updateNSView(_ view: PanelAnchorView, context: Context) { view.task = task }
+}
+
+final class PanelAnchorView: NSView {
+    var task = ""
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// Back, forward, reload, the address, and the tab's menu: one row, its controls the title bar's size.
@@ -232,7 +368,11 @@ private struct BrowserBar: View {
         .padding(.horizontal, 10).frame(height: 28).frame(maxWidth: .infinity)
         .background(Theme.field, in: RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(focused ? Theme.selectedStroke : Theme.fieldEdge))
-        .onChange(of: focused) { typed = focused ? url : SidePanel.shown(url) }
+        .onChange(of: focused) {
+            typed = focused ? url : SidePanel.shown(url)
+            BrowserKeys.address = focused
+        }
+        .onDisappear { BrowserKeys.address = false }
         .onChange(of: url, initial: true) { if !focused { typed = SidePanel.shown(url) } }
     }
 

@@ -9,6 +9,8 @@ public struct PanelTab: Codable, Equatable, Identifiable, Sendable {
     public var title: String
     /// Who opened it: nil for the user. Kept for when agents open tabs of their own (their session).
     public var openedBy: String?
+    /// Where it stood when it was closed, to reopen it there.
+    public var place: Int?
 
     public init(id: String = UUID().uuidString, url: String = "", title: String = "", openedBy: String? = nil) {
         self.id = id; self.url = url; self.title = title; self.openedBy = openedBy
@@ -51,7 +53,8 @@ public struct PanelTabs: Codable, Equatable, Sendable {
     /// Closed, the tab to its right is shown (else the one to its left, else Details); a page is kept to reopen.
     public mutating func close(_ id: String) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        let tab = tabs.remove(at: index)
+        var tab = tabs.remove(at: index)
+        tab.place = index
         if !tab.isNew {
             closed.removeAll { $0.url == tab.url }
             closed.insert(tab, at: 0)
@@ -59,6 +62,27 @@ public struct PanelTabs: Codable, Equatable, Sendable {
         }
         guard selected == id else { return }
         selected = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id
+    }
+
+    /// The tab last closed, back in its place and shown (⌘⇧T); false when none is kept.
+    public mutating func reopen() -> Bool {
+        guard !closed.isEmpty else { return false }
+        var tab = closed.removeFirst()
+        let place = min(tab.place ?? tabs.count, tabs.count)
+        tab.place = nil
+        tabs.insert(tab, at: place)
+        selected = tab.id
+        return true
+    }
+
+    /// ⌘1 to ⌘8: the strip's tab at that place, Details first; ⌘9: the last. None at that place: no change.
+    public mutating func select(position: Int) {
+        let order: [String?] = [nil] + tabs.map(\.id)
+        if position == 9 {
+            selected = order[order.count - 1]
+        } else if order.indices.contains(position - 1) {
+            selected = order[position - 1]
+        }
     }
 
     /// The next tab (or one back), Details among them, round from the last to the first: ⌃Tab, ⌃⇧Tab.

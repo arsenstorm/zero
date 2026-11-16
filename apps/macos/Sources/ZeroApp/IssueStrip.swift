@@ -4,7 +4,8 @@ import ZeroCore
 
 /// A lead's issues (`zero issue`) as one live board at the top of its conversation, so its messages carry only what
 /// changed and what it decided. Closed, a 36 pt strip: how many, a pill per state, and the first that's on the user.
-/// Opened, the board drops over the page (never pushing it): a fixed 40 pt row per issue, in zerod's order as it
+/// Opened, the board drops over the page (never pushing it): a row per issue, as tall as its words, with its PR,
+/// what it needs from the user and the lead's own columns (`zero issue --pr --needs --field`), in zerod's order as it
 /// opens and kept so while open (a changed row stays put, its cell lit a moment); a row opened shows a worker's ask,
 /// answerable there, and the states it went through. One issue, and the strip is its row.
 struct IssueStrip: View {
@@ -126,13 +127,21 @@ struct IssueStrip: View {
         .frame(height: min(boardHeight, max(most, 120)))
     }
 
+    /// The lead's own columns (`--field`), in the order any row first gave them.
+    private var fieldNames: [String] {
+        var names: [String] = []
+        for field in issues.flatMap({ $0.fields ?? [] }) where !names.contains(field.name) { names.append(field.name) }
+        return names
+    }
+
     private var head: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Column.gap) {
             Text("State").frame(width: Column.state, alignment: .leading)
             Text("Issue").frame(width: Column.issue, alignment: .leading)
+            Text("PR").frame(width: Column.pr, alignment: .leading)
             Text("Where it stands").frame(maxWidth: .infinity, alignment: .leading)
             Text("Needs you").frame(width: Column.needs, alignment: .leading)
-            Text("Links").frame(width: Column.links, alignment: .leading)
+            ForEach(fieldNames, id: \.self) { Text($0).lineLimit(1).frame(width: Column.field, alignment: .leading) }
             Color.clear.frame(width: Column.age, height: 1)
         }
         .font(.system(size: 12, weight: .medium)).tracking(-0.2)
@@ -141,31 +150,36 @@ struct IssueStrip: View {
     }
 
     private enum Column {
-        static let state: CGFloat = 104, issue: CGFloat = 72, needs: CGFloat = 170, links: CGFloat = 76, age: CGFloat = 30
+        static let gap: CGFloat = 12
+        static let state: CGFloat = 96, issue: CGFloat = 70, pr: CGFloat = 126, needs: CGFloat = 140, field: CGFloat = 80
+        static let age: CGFloat = 28
     }
 
-    /// One issue: its fixed 40 pt line, and opened, its worker's ask and its steps. `headed`: under the board's
-    /// headings; alone (one issue), the strip itself.
+    /// One issue: its line, as tall as its words (up to three lines each) and never under 40 pt; opened, its worker's
+    /// ask and its steps. `headed`: under the board's headings; alone (one issue), the strip itself.
     private func row(_ issue: BoardRow.Issue, now: Date, headed: Bool) -> some View {
         let open = expanded == issue.ticket
         let cells = lit[issue.ticket] ?? []
+        // Alone, the strip is its row: one line, in the strip's room.
+        let lines = headed ? 3 : 1
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: Column.gap) {
                 StateLabel(state: issue.boardState)
                     .background(Wash(on: cells.contains(.state)))
                     .frame(width: Column.state, alignment: .leading)
                 ticket(issue.ticket).frame(width: Column.issue, alignment: .leading)
-                Text(issue.text.isEmpty ? "–" : issue.text).lineLimit(1).truncationMode(.tail)
-                    .foregroundStyle(issue.text.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary.opacity(0.85)))
-                    .background(Wash(on: cells.contains(.text)))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                needsCell(issue).frame(width: Column.needs, alignment: .leading)
-                linksCell(issue).frame(width: Column.links, alignment: .leading)
+                prCell(issue).frame(width: Column.pr, alignment: .leading)
+                words(issue.text, lit: cells.contains(.text), lines: lines).frame(maxWidth: .infinity, alignment: .leading)
+                needsCell(issue, lines: lines).frame(width: Column.needs, alignment: .leading)
+                ForEach(fieldNames, id: \.self) { name in
+                    fieldCell(issue.fields?.first { $0.name == name }?.value, lines: lines).frame(width: Column.field, alignment: .leading)
+                }
                 Text(IssueBoard.age(since: issue.since, now: now)).monospacedDigit().foregroundStyle(.tertiary)
                     .frame(width: Column.age, alignment: .trailing)
             }
             .font(.system(size: 13))
-            .padding(.horizontal, 16).frame(height: headed ? 40 : Self.height)
+            .padding(.horizontal, 16).padding(.vertical, headed ? 11 : 0)
+            .frame(minHeight: headed ? 40 : Self.height)
             .opacity(["done", "parked"].contains(issue.state) && !open ? 0.6 : 1)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -180,33 +194,50 @@ struct IssueStrip: View {
         }
     }
 
+    /// Words that wrap, up to `lines`.
+    private func words(_ text: String, lit: Bool = false, lines: Int) -> some View {
+        Text(text.isEmpty ? "–" : text).lineLimit(lines).truncationMode(.tail).fixedSize(horizontal: false, vertical: true)
+            .foregroundStyle(text.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary.opacity(0.85)))
+            .background(Wash(on: lit))
+    }
+
     // MARK: Cells
 
-    /// What the issue waits on the user for: the open ask about it, else what an issue on them says it needs.
+    /// What the issue waits on the user for: the lead's words (`--needs`), else the open ask about it.
     private func needs(_ issue: BoardRow.Issue) -> String? {
+        if let needs = issue.needs, !needs.isEmpty { return needs }
         if let ask = ask(issue) { return Self.firstLine(ask.body.isEmpty ? ask.title : ask.body) }
         return nil
     }
 
-    @ViewBuilder private func needsCell(_ issue: BoardRow.Issue) -> some View {
+    @ViewBuilder private func needsCell(_ issue: BoardRow.Issue, lines: Int) -> some View {
         if let words = needs(issue) {
-            HStack(spacing: 5) {
-                PixelIcon("px-circle-question", height: 12).foregroundStyle(.blue)
-                Text(words).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-            }
+            Text(words).fontWeight(.medium).lineLimit(lines).fixedSize(horizontal: false, vertical: true)
         } else {
             Text("–").foregroundStyle(.tertiary)
         }
     }
 
-    @ViewBuilder private func linksCell(_ issue: BoardRow.Issue) -> some View {
+    /// Its pull request as repo#number, a link.
+    @ViewBuilder private func prCell(_ issue: BoardRow.Issue) -> some View {
         if let pr = pullRequest(issue) {
             Button {
                 open(pr)
             } label: {
-                TaskDetails.linked(TaskDetails.shown(pr).split(separator: "#").last.map { "#\($0)" } ?? pr)
+                TaskDetails.linked(TaskDetails.shown(pr))
             }
             .buttonStyle(.plain).tip(pr)
+        } else {
+            Text("–").foregroundStyle(.tertiary)
+        }
+    }
+
+    /// A column of the lead's: Low, Medium or High as the risk pill, anything else as words.
+    @ViewBuilder private func fieldCell(_ value: String?, lines: Int) -> some View {
+        if let value, ["low", "medium", "high"].contains(value.lowercased()) {
+            RiskLabel(level: value.lowercased())
+        } else if let value, !value.isEmpty {
+            words(value, lines: lines)
         } else {
             Text("–").foregroundStyle(.tertiary)
         }
@@ -271,8 +302,9 @@ struct IssueStrip: View {
         }
     }
 
-    /// Its pull request: its worker's (`zero attr PR`), as the details pane finds a task's.
+    /// Its pull request: the lead's (`--pr`), else its worker's (`zero attr PR`), as the details pane finds a task's.
     private func pullRequest(_ issue: BoardRow.Issue) -> String? {
+        if let pr = issue.pr, !pr.isEmpty { return pr }
         guard let worker = worker(issue), let conversation = workspace.conversation(worker) else { return nil }
         return TaskLinksList.of(conversation, row: row?.member(worker), in: workspace).first { $0.url.contains("/pull/") }?.url
     }

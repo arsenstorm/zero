@@ -100,6 +100,10 @@ import ZeroCore
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.editMenu()
+        BrowserKeys.visible = { [navigation] in
+            guard navigation.pane, case let .task(lead) = navigation.place else { return nil }
+            return lead
+        }
         FieldEditorStyle.start()
         if let app = MoveToApplications.needed() {
             moveWindow = MoveToApplications(source: app).window()
@@ -272,17 +276,33 @@ import ZeroCore
             guard let self, event.window === inboxPanel else { return event }
             return inbox.handle(event) ? nil : event
         }
+        // ⌘1 to ⌘9 pick the side panel's tabs while it has the keyboard, ahead of the sidebar's tasks (BrowserKeys).
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === workspaceWindow,
+                event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                let digit = event.charactersIgnoringModifiers.flatMap(Int.init), (1...9).contains(digit)
+            else { return event }
+            return BrowserKeys.select(digit, in: keyWorkspace) ? nil : event
+        }
+        // A click in the side panel gives it the keyboard; one elsewhere takes it away (BrowserKeys).
+        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            if event.window === self?.workspaceWindow { BrowserKeys.clicked(event) }
+            return event
+        }
         // The mouse's side buttons go back and forward through the workspace window, as in a browser: as buttons 4 and
         // 5, or as the swipe Logitech's driver sends for them (and a trackpad's swipe between pages), as Safari takes it.
+        // Over the side panel's page, they go back and forward in the page instead (BrowserKeys).
         NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .swipe]) { [weak self] event in
             guard let self, event.window === workspaceWindow else { return event }
+            let step: Int
             switch event.type {
-            case .otherMouseDown where event.buttonNumber == 3: navigation.goBack()
-            case .otherMouseDown where event.buttonNumber == 4: navigation.goForward()
-            case .swipe where event.deltaX > 0: navigation.goBack()
-            case .swipe where event.deltaX < 0: navigation.goForward()
+            case .otherMouseDown where event.buttonNumber == 3: step = -1
+            case .otherMouseDown where event.buttonNumber == 4: step = 1
+            case .swipe where event.deltaX > 0: step = -1
+            case .swipe where event.deltaX < 0: step = 1
             default: return event
             }
+            if !BrowserKeys.go(step, under: event) { if step < 0 { navigation.goBack() } else { navigation.goForward() } }
             return nil
         }
     }
@@ -374,6 +394,23 @@ import ZeroCore
     /// The task's side panel, opened or closed (⌥⌘B), as the title bar's right button does.
     @objc func togglePanel() { navigation.pane.toggle() }
 
+    /// ⌘W: the side panel's tab when the panel has the keyboard (BrowserKeys), else the window, as before.
+    @objc func closeTabOrWindow(_ sender: Any?) {
+        if !BrowserKeys.close(in: keyWorkspace) { NSApp.sendAction(#selector(NSWindow.performClose(_:)), to: nil, from: sender) }
+    }
+
+    /// ⌘Z: the side panel's tab last closed when the panel has the keyboard outside text, else the text's undo.
+    @objc func undoOrReopenTab(_ sender: Any?) {
+        if !BrowserKeys.undo(in: keyWorkspace) { NSApp.sendAction(Selector(("undo:")), to: nil, from: sender) }
+    }
+
+    @objc func reopenTab() { _ = BrowserKeys.reopen(in: keyWorkspace) }
+
+    @objc func newTab() { _ = BrowserKeys.newTab(in: keyWorkspace) }
+
+    /// The workspace window when it's key: the side panel's keys are its alone, never the bar's or another window's.
+    private var keyWorkspace: NSWindow? { NSApp.keyWindow.flatMap { $0 === workspaceWindow ? $0 : nil } }
+
     /// Settings live in the workspace window.
     @objc func openSettings() {
         navigation.place = .settings
@@ -389,13 +426,17 @@ import ZeroCore
         app.submenu?.addItem(withTitle: "Quit Zero", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         main.addItem(app)
         // ⌘W closes the window and leaves Zero in the menu bar; ⌘Q quits Zero, and zerod keeps the agents running.
+        // With the side panel's keyboard, ⌘W closes its tab and ⌘Z reopens it (BrowserKeys).
         let file = NSMenuItem()
         file.submenu = NSMenu(title: "File")
-        file.submenu?.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        file.submenu?.addItem(withTitle: "New Tab", action: #selector(AppDelegate.newTab), keyEquivalent: "t")
+        file.submenu?.addItem(withTitle: "Reopen Closed Tab", action: #selector(AppDelegate.reopenTab), keyEquivalent: "t")
+            .keyEquivalentModifierMask = [.command, .shift]
+        file.submenu?.addItem(withTitle: "Close Window", action: #selector(AppDelegate.closeTabOrWindow), keyEquivalent: "w")
         main.addItem(file)
         let edit = NSMenuItem()
         let menu = NSMenu(title: "Edit")
-        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        menu.addItem(withTitle: "Undo", action: #selector(AppDelegate.undoOrReopenTab), keyEquivalent: "z")
         let redo = menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(.separator())

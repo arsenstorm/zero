@@ -115,3 +115,33 @@ import Testing
     #expect(app("https://github.com/acme/shop/pull/412") == nil)
     #expect(app("https://example.com") == nil)
 }
+
+@Test func reopeningPutsTheLastClosedTabBackInItsPlaceShown() {
+    var tabs = PanelTabs()
+    tabs.open("https://a.example"); tabs.open("https://b.example"); tabs.open("https://c.example")
+    tabs.close(tabs.tabs[1].id)
+    tabs.close(tabs.tabs[0].id)
+    var reopened = tabs.reopen()
+    #expect(reopened)
+    #expect(tabs.tabs.map(\.url) == ["https://a.example", "https://c.example"])
+    #expect(tabs.shown?.url == "https://a.example")
+    reopened = tabs.reopen()
+    #expect(reopened)
+    #expect(tabs.tabs.map(\.url) == ["https://a.example", "https://b.example", "https://c.example"])
+    #expect(tabs.shown?.url == "https://b.example")
+    reopened = tabs.reopen()
+    #expect(!reopened)
+}
+
+@Test func commandNumberPicksTheStripsTabsDetailsFirstAndNineTheLast() {
+    var tabs = PanelTabs()
+    tabs.open("https://a.example"); tabs.open("https://b.example"); tabs.open("https://c.example")
+    tabs.select(position: 1)
+    #expect(tabs.selected == nil)
+    tabs.select(position: 3)
+    #expect(tabs.shown?.url == "https://b.example")
+    tabs.select(position: 9)
+    #expect(tabs.shown?.url == "https://c.example")
+    tabs.select(position: 6)
+    #expect(tabs.shown?.url == "https://c.example")
+}

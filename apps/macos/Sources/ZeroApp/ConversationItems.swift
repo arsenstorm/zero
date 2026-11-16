@@ -242,7 +242,7 @@ private struct TableCard: View {
 }
 
 /// A risk level as a pill: green low, amber medium, red high, on a wash of its colour, as a state's pill is.
-private struct RiskLabel: View {
+struct RiskLabel: View {
     let level: String
     var body: some View {
         let color: Color = level == "low" ? .green : level == "medium" ? .orange : .red
