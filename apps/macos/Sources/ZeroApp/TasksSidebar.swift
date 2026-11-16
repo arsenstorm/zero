@@ -72,7 +72,7 @@ struct TasksSidebar: View {
                     if let from = ids.firstIndex(of: lead), let target, target != from {
                         ids.remove(at: from)
                         ids.insert(lead, at: target)
-                        order = ids.joined(separator: "\n")
+                        order = BoardRow.arranged(ids, in: order)
                         sort = .manual
                     }
                     drag = nil
@@ -402,7 +402,12 @@ struct PairSheet: View {
         var pairing: Named?
         /// Mid-turn: Restart agent asks first.
         var restarting: Named?
+        /// Move to project with files in its folder: asked first.
+        var moving: Moving?
     }
+
+    /// A task to move into a project, and how many files go with it.
+    struct Moving: Identifiable { let id: String; let folder: String; let files: Int }
 
     /// What the agent is asked when the user wants to know where it is: sent as Zero's, so the conversation shows its
     /// first line as a quiet event ("The user asked for a status update."), the rest under it.
@@ -462,6 +467,21 @@ struct PairSheet: View {
                             MenuItem(Workspace.label(of: other)) { Task { await workspace.setParent(id, other.id) } }
                         })
                 ]
+        // Out of its own new folder in ~/Zero: into a project (its files with it, asked first), or the folder made one.
+        let move =
+            worker || !(conversation.map { Projects.isTaskFolder($0.cwd) } ?? false)
+            ? []
+            : [
+                MenuItem(
+                    "Move to project", "folder",
+                    children: Projects.folders.map { folder in
+                        MenuItem(Projects.name(of: folder), "folder") { move(id, from: conversation?.cwd ?? "", to: folder, in: workspace) }
+                    } + [
+                        MenuItem("New project from this folder", "folder-plus") {
+                            if let cwd = conversation?.cwd { Projects.add(cwd) }
+                        }
+                    ])
+            ]
         let later =
             worker
             ? []
@@ -474,7 +494,7 @@ struct PairSheet: View {
         // As Linear's: the task itself first, then what its agent does, then copying and opening it elsewhere, then
         // putting it away.
         return [
-            [MenuItem("Rename task", "pen") { Asked.shared.renaming = task }] + statusItems(id, in: workspace) + moves + lead + [
+            [MenuItem("Rename task", "pen") { Asked.shared.renaming = task }] + statusItems(id, in: workspace) + moves + lead + move + [
                 MenuItem("Work with…", "link") { Asked.shared.pairing = task }
             ],
             [MenuItem("Ask for a status update", "message-check") { Task { await workspace.notify(id, text: statusCheck) } }] + session,
@@ -485,6 +505,16 @@ struct PairSheet: View {
                     ?? []),
             later + [MenuItem("Archive…", "archive") { workspace.archiving = id }],
         ]
+    }
+
+    /// Its files (none: nothing to ask) go with it; with some, the user says so first.
+    private static func move(_ id: String, from cwd: String, to folder: String, in workspace: Workspace) {
+        let files = ((try? FileManager.default.contentsOfDirectory(atPath: cwd)) ?? []).filter { $0 != ".git" }.count
+        if files == 0 {
+            Task { await workspace.move(id, to: folder) }
+        } else {
+            Asked.shared.moving = Moving(id: id, folder: folder, files: files)
+        }
     }
 
     /// Where a task stands, by the user's word when its agent can't know (the last of it was the user's own work): a

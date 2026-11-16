@@ -391,12 +391,13 @@ func status() -> Never {
 
 func issue() -> Never {
     guard positional.count >= 2, let session = flag("session") ?? env("ZERO_SESSION") else { delegate() }
-    zerod(
-        "issue",
-        [
-            ("session", quote(session)), ("ticket", quote(positional[0])), ("state", quote(positional[1])),
-            ("text", quote(positional.dropFirst(2).joined(separator: " "))),
-        ])
+    // --needs and --pr left out keep what they were; --field once per column, "Name=value".
+    var fields: [(String, String?)] = [
+        ("session", quote(session)), ("ticket", quote(positional[0])), ("state", quote(positional[1])),
+        ("text", quote(positional.dropFirst(2).joined(separator: " "))), ("needs", flag("needs").map(quote)), ("pr", flag("pr").map(quote)),
+    ]
+    if let columns = flags["field"] { fields.append(("fields", "[" + columns.map(quote).joined(separator: ",") + "]")) }
+    zerod("issue", fields)
     exit(0)
 }
 

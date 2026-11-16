@@ -109,6 +109,12 @@ private let recordings = [
     #expect(conversation.terminal == nil)
 }
 
+@Test func aTaskMovedToAProjectWorksThere() throws {
+    var conversation = Conversation(id: "s", provider: .claude, cwd: "/Users/me/Zero/test")
+    conversation.apply(try JSONDecoder().decode(Change.self, from: Data(#"{"type":"moved","cwd":"/Users/me/code/site"}"#.utf8)))
+    #expect(conversation.cwd == "/Users/me/code/site")
+}
+
 /// Workspaces' colours and where pads and loops are: what an older zerod leaves out reads as none and Zero's.
 @Test func workspaceColourAndPadsAndLoopsPlacesDecodeWithDefaults() throws {
     let decode = { (json: String) in json.data(using: .utf8)! }

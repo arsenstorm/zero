@@ -52,6 +52,59 @@ pub struct Issue {
     /// Kept in the conversation for its board there; the board's rows leave them out (board.rs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<IssueStep>,
+    /// What it needs from the user, in the lead's words (`zero issue --needs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs: Option<String>,
+    /// Its pull request, a link (`--pr`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<String>,
+    /// The lead's own columns, in the order first given (`--field "Merge risk=Medium"`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<IssueField>,
+}
+
+/// One of the lead's own columns on an issue's row.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct IssueField {
+    pub name: String,
+    pub value: String,
+}
+
+/// What `zero issue` says beyond the state and words: each left out keeps what it was, an empty one takes it back.
+#[derive(Default, Clone, Debug)]
+pub struct IssueMore {
+    pub needs: Option<String>,
+    pub pr: Option<String>,
+    /// "Name=value"; "Name=" takes the column back.
+    pub fields: Vec<String>,
+}
+
+impl IssueMore {
+    /// Applied to the row: a field changed keeps its place, a new one goes last.
+    pub fn apply(&self, issue: &mut Issue) -> Result<(), String> {
+        let given = |value: &Option<String>, old: &mut Option<String>| {
+            if let Some(value) = value {
+                *old = Some(value.trim().to_string()).filter(|v| !v.is_empty())
+            }
+        };
+        given(&self.needs, &mut issue.needs);
+        given(&self.pr, &mut issue.pr);
+        for field in &self.fields {
+            let (name, value) =
+                field.split_once('=').ok_or_else(|| format!("A field is Name=value, as \"Merge risk=Medium\": {field:?}"))?;
+            let (name, value) = (name.trim(), value.trim());
+            if name.is_empty() {
+                return Err(format!("A field is Name=value, as \"Merge risk=Medium\": {field:?}"));
+            }
+            match issue.fields.iter().position(|f| f.name == name) {
+                Some(i) if value.is_empty() => _ = issue.fields.remove(i),
+                Some(i) => issue.fields[i].value = value.into(),
+                None if value.is_empty() => {}
+                None => issue.fields.push(IssueField { name: name.into(), value: value.into() }),
+            }
+        }
+        Ok(())
+    }
 }
 
 /// How many of an issue's steps are kept.
@@ -83,6 +136,9 @@ impl Issue {
             on_you_ms: previous.map_or(0, |p| p.on_you_ms) + left_you,
             updated: now,
             history,
+            needs: previous.and_then(|p| p.needs.clone()),
+            pr: previous.and_then(|p| p.pr.clone()),
+            fields: previous.map_or_else(Vec::new, |p| p.fields.clone()),
         }
     }
 }
@@ -563,6 +619,11 @@ pub enum Change {
         label: Option<String>,
         ticket: Option<String>,
     },
+    /// Works in another folder from its next start (a task moved out of its own new folder into a project); the old
+    /// folder's rewind points go with it.
+    Moved {
+        cwd: String,
+    },
     /// Put in a workspace (none: back to Zero).
     Placed {
         workspace: Option<String>,
@@ -841,6 +902,11 @@ impl Conversation {
             Change::Title { title } => self.title = title,
             Change::Named { label, ticket } => (self.label, self.ticket) = (label, ticket),
             Change::Placed { workspace } => self.workspace = workspace,
+            Change::Moved { cwd } => {
+                self.cwd = cwd;
+                self.snapshots.clear();
+                self.rewound = Taken::default();
+            }
             Change::SignedIn { signin } => self.signin = signin,
             Change::Advised { advisor } => self.advisor = advisor,
             Change::Permitted { permissions } => self.permit(permissions),

@@ -635,6 +635,10 @@ public final class Workspace {
     }
 
     /// The user's move: a task put under `lead` as its worker, or (nil) detached from its lead. zerod tells both sides.
+    public func move(_ session: String, to folder: String) async {
+        _ = await attempt { try await $0.setCwd(session: session, cwd: folder) }
+    }
+
     public func setParent(_ session: String, _ lead: String?) async {
         _ = await attempt { try await $0.setParent(session: session, parent: lead) }
         await refreshBoard()
@@ -833,7 +837,7 @@ public final class Workspace {
     }
 
     public func start(
-        provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String?, effort: String?,
+        provider: Provider, cwd: String?, prompt: String, images: [String] = [], model: String?, effort: String?,
         advisor: String? = nil, permissions: Permissions = .auto,
         workspace: String? = nil
     ) async -> String? {

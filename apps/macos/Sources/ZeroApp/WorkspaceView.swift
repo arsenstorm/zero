@@ -184,6 +184,9 @@ struct WorkspaceView: View {
         .zeroDialog(item: Bindable(TaskMenu.Asked.shared).restarting) { task in
             RestartDialog { Task { await workspace.restartAgent(task.id) } }
         }
+        .zeroDialog(item: Bindable(TaskMenu.Asked.shared).moving) { moving in
+            MoveDialog(moving: moving) { Task { await workspace.move(moving.id, to: moving.folder) } }
+        }
         .zeroDialog(item: Bindable(TaskMenu.Asked.shared).pairing) { task in
             PairSheet(task: task, others: workspace.board.filter { $0.session != task.id }) { other in
                 Task { await workspace.introduce(task.id, to: other) }
@@ -273,6 +276,34 @@ private struct RestartDialog: View {
                 DialogButton(title: "Restart", kind: .primary) {
                     close()
                     restart()
+                }
+            }
+            .padding(.top, 12)
+        }
+        .frame(width: 320, alignment: .leading)
+    }
+}
+
+/// Move to project, with files to take: they go into the project, none over one already there.
+private struct MoveDialog: View {
+    let moving: TaskMenu.Moving
+    let move: () -> Void
+    @Environment(\.closeDialog) private var close
+
+    var body: some View {
+        let name = Projects.name(of: moving.folder)
+        VStack(alignment: .leading, spacing: 14) {
+            DialogTitle(
+                text: "Move to \(name)?",
+                detail:
+                    "Its \(moving.files == 1 ? "file goes" : "\(moving.files) files go") into \(name) with it. If \(name) has a file with the same name, nothing moves."
+            )
+            HStack(spacing: 8) {
+                Spacer()
+                DialogButton(title: "Cancel") { close() }
+                DialogButton(title: "Move", kind: .primary) {
+                    close()
+                    move()
                 }
             }
             .padding(.top, 12)

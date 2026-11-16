@@ -229,12 +229,17 @@ struct TaskDetails: View {
         section("Folder") {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 9) {
                 property("Where") {
-                    // The place's own folder when the places command says (a bench's), else the task's.
+                    // The place's own folder when the places command says (a bench's), else the task's: a project by its
+                    // name, any other folder (a new one of its own in ~/Zero) by its path.
                     let folder = row?.path ?? conversation.cwd
+                    let shown =
+                        row?.place
+                        ?? (Projects.folders.contains(conversation.cwd)
+                            ? Projects.name(of: conversation.cwd) : (conversation.cwd as NSString).abbreviatingWithTildeInPath)
                     Button {
                         NSWorkspace.shared.open(URL(fileURLWithPath: folder))
                     } label: {
-                        Self.linked(row?.place ?? Projects.name(of: conversation.cwd)).truncationMode(.middle)
+                        Self.linked(shown).truncationMode(.middle)
                     }
                     .buttonStyle(.plain).tip("Show \((folder as NSString).abbreviatingWithTildeInPath) in Finder")
                 }

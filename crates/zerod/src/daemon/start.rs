@@ -25,8 +25,17 @@ impl Daemon {
         self.create(provider, prompt, options)
     }
 
-    fn create(&self, provider: Provider, prompt: &str, options: Options) -> Result<String, String> {
-        self.check_start(provider, prompt, &options)?;
+    fn create(&self, provider: Provider, prompt: &str, mut options: Options) -> Result<String, String> {
+        // No folder given: a new one of its own, made only once nothing else refuses it.
+        let made = options.cwd.is_none();
+        if made {
+            options.cwd = Some(self.user_home().join("Zero").to_string_lossy().into_owned());
+        }
+        self.check_start(provider, prompt, &options, made)?;
+        if made {
+            let folder = new_folder(&self.user_home().join("Zero"), prompt).map_err(|e| format!("No folder for it in ~/Zero: {e}"))?;
+            options.cwd = Some(folder.to_string_lossy().into_owned());
+        }
         let (model, effort) = (options.model.as_deref(), options.effort.as_deref());
         let id = new_id();
         let dir = self.home.join("sessions").join(&id);
@@ -50,6 +59,10 @@ impl Daemon {
             Ok(transport) => transport,
             Err(error) => {
                 let _ = std::fs::remove_dir_all(&dir);
+                // Its own new folder held nothing but an empty repo.
+                if made {
+                    let _ = std::fs::remove_dir_all(&conversation.cwd);
+                }
                 return Err(format!("{} didn't start: {error}", provider.title()));
             }
         };
@@ -93,10 +106,10 @@ impl Daemon {
 
     /// Why a task can't start as asked: not in a folder, its provider at its usage limit (unless forced), nothing to
     /// do, or a workspace or sign-in that isn't there.
-    fn check_start(&self, provider: Provider, prompt: &str, options: &Options) -> Result<(), String> {
+    fn check_start(&self, provider: Provider, prompt: &str, options: &Options, new_folder: bool) -> Result<(), String> {
         let cwd = options.cwd.as_deref().unwrap_or("");
         let folder = Path::new(cwd);
-        if !folder.is_absolute() || !folder.is_dir() {
+        if !new_folder && (!folder.is_absolute() || !folder.is_dir()) {
             return Err(format!("{cwd} isn't a folder"));
         }
         // The limit a task last reported is its own account's: with another account free (or one asked for), the
@@ -241,4 +254,79 @@ fn span(seconds: i64) -> String {
         (h, 0) => format!("{h} h"),
         (h, m) => format!("{h} h {m} min"),
     }
+}
+
+impl Daemon {
+    /// The task's work into `folder` (a project), out of the new folder zerod made it: between turns only, its files
+    /// moved there (none over one already there), its Claude Code thread copied for the folder, the emptied folder
+    /// removed, and its agent told. Its agent starts in `folder` from its next message.
+    pub async fn move_to(&self, id: &str, folder: &str) -> Result<(), String> {
+        let session = self.session(id)?;
+        let conversation = session.snapshot();
+        let (old, new) = (Path::new(&conversation.cwd), Path::new(folder));
+        if old.parent() != Some(&self.user_home().join("Zero")) {
+            return Err("Only a task in a folder of its own in ~/Zero moves to a project".into());
+        }
+        if !new.is_absolute() || !new.is_dir() || new == old {
+            return Err(format!("{folder} isn't a folder to move it to"));
+        }
+        if matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting) {
+            return Err("It's in a turn: move it once the turn ends".into());
+        }
+        let entries: Vec<std::ffi::OsString> = std::fs::read_dir(old)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .filter(|name| name != ".git")
+            .collect();
+        if let Some(taken) = entries.iter().find(|name| new.join(name).symlink_metadata().is_ok()) {
+            return Err(format!("{} is in {folder} already: nothing moved", taken.to_string_lossy()));
+        }
+        // Before the old folder goes: its Claude Code folder is named from its real path.
+        let thread = conversation.thread.as_ref().filter(|_| conversation.provider == Provider::Claude).map(|thread| {
+            let file = format!("{thread}.jsonl");
+            (crate::handoff::claude_folder(&self.user_home(), &conversation.cwd).join(&file), file)
+        });
+        self.take_offline(&session).await;
+        for name in &entries {
+            std::fs::rename(old.join(name), new.join(name)).map_err(|e| format!("{} didn't move: {e}", name.to_string_lossy()))?;
+        }
+        if let Some((from, file)) = thread.filter(|(from, _)| from.exists()) {
+            let to = crate::handoff::claude_folder(&self.user_home(), folder);
+            std::fs::create_dir_all(&to).and_then(|_| std::fs::copy(&from, to.join(file))).map_err(|e| e.to_string())?;
+        }
+        // All that's left is the empty repo zerod made, and the rewind points kept in it.
+        let _ = std::fs::remove_dir_all(old);
+        session.change(Change::Moved { cwd: folder.into() });
+        let moved =
+            if entries.is_empty() { String::new() } else { format!(", with the {} files from {}", entries.len(), conversation.cwd) };
+        self.notify(id, &format!("Your folder is now {folder}{moved}. Work there from now on."))
+    }
+}
+
+/// A task's own new folder in `base`: named from the first line's first five words (lower case, hyphens between),
+/// "task" when they give nothing to name it by, "-2" and on when taken; a git repo, so rewind works.
+fn new_folder(base: &Path, prompt: &str) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(base)?;
+    let line = prompt.lines().next().unwrap_or("").to_lowercase();
+    let words: Vec<&str> = line.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).take(5).collect();
+    let name: String = words.join("-").chars().take(40).collect();
+    let name = if name.is_empty() { "task".to_string() } else { name.trim_end_matches('-').to_string() };
+    for n in 1.. {
+        let folder = base.join(if n == 1 { name.clone() } else { format!("{name}-{n}") });
+        // Not create_dir_all: an existing folder must fail here, so two tasks never share one.
+        match std::fs::create_dir(&folder) {
+            Ok(()) => {
+                let _ = std::process::Command::new("git")
+                    .args(["init", "-q"])
+                    .current_dir(&folder)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+                return Ok(folder);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
 }

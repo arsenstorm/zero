@@ -32,11 +32,15 @@ import ZeroCore
 @MainActor func issueCommand() async {
     guard positional.count >= 2, let session = targetSession() else {
         fail(
-            "zero: which issue, and who has it? (zero issue TICKET you|over|working|waiting|parked|done [\"what it needs, where it stands, or why\"] [--session ID])"
+            "zero: which issue, and who has it? (zero issue TICKET you|over|working|waiting|parked|done [\"where it stands\"] [--needs \"…\"] [--pr URL] [--field \"Name=value\"]... [--session ID])"
         )
     }
     let text = positional.dropFirst(2).joined(separator: " ")
-    await zerod { try await $0.issue(session: session, ticket: positional[0], state: positional[1], text: text) }
+    await zerod {
+        try await $0.issue(
+            session: session, ticket: positional[0], state: positional[1], text: text, needs: flag("needs"), pr: flag("pr"),
+            fields: flags["field"] ?? [])
+    }
 }
 
 @MainActor func attrCommand() async {

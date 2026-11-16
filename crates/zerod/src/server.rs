@@ -88,8 +88,12 @@ struct Request {
     /// `attr`: an attribute's name and value (none takes it back).
     name: Option<String>,
     value: Option<String>,
-    /// issue: who has it now (you, working, waiting, parked, done).
+    /// issue: who has it now (you, working, waiting, parked, done); what it needs from the user, its PR, and the lead's
+    /// own columns ("Name=value").
     state: Option<String>,
+    needs: Option<String>,
+    pr: Option<String>,
+    fields: Option<Vec<String>>,
     conversation: Option<bool>,
     code: Option<bool>,
     /// unrewind: the folder as it was before the rewind (its `undo`).
@@ -300,6 +304,7 @@ pub type Peers = Arc<dyn Fn(Option<[u32; 8]>) -> bool + Send + Sync>;
 pub(crate) const APP_ONLY: &[&str] = &[
     "choose",
     "setParent",
+    "setCwd",
     "answerAsk",
     "reply",
     "takeBack",
@@ -502,8 +507,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "pad" | "later" | "loops" | "loop" | "saveLoop" | "deleteLoop" => notes::handle(zerod, request),
         "watch" | "watchFile" | "watches" | "unwatch" | "remind" | "schedule" | "schedules" | "unschedule" | "follow" | "unfollow"
         | "following" => watches::handle(zerod, request).await,
-        "start" | "spawn" | "adopt" | "detach" | "setParent" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater"
-        | "resumeLater" | "restartStatus" | "restart" | "stopLeft" => sessions::lifecycle(zerod, request).await,
+        "start" | "spawn" | "adopt" | "detach" | "setParent" | "setCwd" | "migrate" | "archive" | "unarchive" | "archived"
+        | "saveForLater" | "resumeLater" | "restartStatus" | "restart" | "stopLeft" => sessions::lifecycle(zerod, request).await,
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "unrewind" | "branch" | "switch"
         | "interrupt" | "stop" | "restartAgent" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,

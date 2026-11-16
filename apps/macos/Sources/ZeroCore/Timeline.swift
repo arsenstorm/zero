@@ -278,9 +278,24 @@ extension BoardRow {
         case .manual:
             let rank = Dictionary(
                 order.split(separator: "\n").enumerated().map { (String($1), $0) }, uniquingKeysWith: { first, _ in first })
-            return rows.enumerated().sorted { (rank[$0.element.session] ?? -1, $0.offset) < (rank[$1.element.session] ?? -1, $1.offset) }
-                .map(\.element)
+            // Never dragged: on top, newest first (ids grow with time), never by state, so a row doesn't move when
+            // it comes to need the user.
+            return rows.sorted { a, b in
+                switch (rank[a.session], rank[b.session]) {
+                case let (x?, y?): x < y
+                case (nil, _?): true
+                case (_?, nil): false
+                case (nil, nil): a.session > b.session
+                }
+            }
         }
+    }
+
+    /// The kept order after a drag: `ids` (one workspace's rows, as now arranged) in place of theirs, every other
+    /// workspace's kept as it was, so arranging one doesn't undo the others.
+    public static func arranged(_ ids: [String], in order: String) -> String {
+        let moved = Set(ids)
+        return (ids + order.split(separator: "\n").map(String.init).filter { !moved.contains($0) }).joined(separator: "\n")
     }
 }
 

@@ -572,13 +572,21 @@ impl Daemon {
     /// One of the issues the task drives, its row set (`zero issue`): its time in a state carries on while the state
     /// doesn't change, and its time on the user is kept as it moves on.
     pub fn set_issue(&self, id: &str, ticket: &str, state: crate::model::IssueState, text: &str) -> Result<(), String> {
+        self.set_issue_with(id, ticket, state, text, &crate::model::IssueMore::default())
+    }
+
+    /// The row set with what it needs, its PR and the lead's own columns (`zero issue --needs --pr --field`).
+    pub fn set_issue_with(
+        &self, id: &str, ticket: &str, state: crate::model::IssueState, text: &str, more: &crate::model::IssueMore,
+    ) -> Result<(), String> {
         let ticket = ticket.trim();
         if ticket.is_empty() {
             return Err("An issue needs its ticket".into());
         }
         let session = self.session(id)?;
         let previous = session.summary().issues.into_iter().find(|i| i.ticket == ticket);
-        let issue = crate::model::Issue::set(previous.as_ref(), ticket, state, text.trim(), crate::now_ms());
+        let mut issue = crate::model::Issue::set(previous.as_ref(), ticket, state, text.trim(), crate::now_ms());
+        more.apply(&mut issue)?;
         session.change(Change::Issue { issue });
         let _ = self.queues.send(()); // the board, at once
         Ok(())

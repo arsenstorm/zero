@@ -376,11 +376,12 @@ public struct ZerodSpawner: AgentAdapter {
 
     public func spawnTargets() async throws -> [SpawnChoice] {
         let home = NSHomeDirectory()
+        // Last, a new folder of the task's own: zerod makes it for a start with no folder ("").
         return Projects.folders.map { path in
             SpawnChoice(
                 id: path, name: Projects.name(of: path), detail: path.replacingOccurrences(of: home, with: "~"), icon: "folder",
                 provider: name)
-        }
+        } + [SpawnChoice(id: "", name: "New folder in ~/Zero", detail: nil, icon: "folder-plus", provider: name)]
     }
 
     public func spawnRuntimes() async throws -> [SpawnChoice] {

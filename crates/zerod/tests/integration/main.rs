@@ -42,6 +42,7 @@ mod mcp_lazy;
 mod mcp_servers;
 mod mirror;
 mod naming;
+mod new_folder;
 mod one_at_a_time;
 mod opencode;
 mod pads;

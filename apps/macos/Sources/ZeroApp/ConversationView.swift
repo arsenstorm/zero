@@ -895,7 +895,9 @@ struct ConversationView: View {
                         unqueued.insert(item.id)
                         Task {
                             if await workspace.unqueue(conversation.id, item: item.id) {
-                                draft = item.text; images = (item.images ?? []).map { URL(fileURLWithPath: $0) }
+                                // Back in the box before what's being written there, as a rewind puts one back.
+                                draft = draft.isEmpty ? item.text : item.text + "\n\n" + draft
+                                images = (item.images ?? []).map { URL(fileURLWithPath: $0) } + images
                             }
                         }
                     },

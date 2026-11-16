@@ -260,10 +260,11 @@ struct NewTaskPage: View {
             if let started {
                 Text(started).foregroundStyle(.secondary)
             } else if let folders {
-                ForEach(folders, id: \.self) { folder in
+                // Last, "": a new folder of the task's own in ~/Zero, made by zerod.
+                ForEach(folders + [""], id: \.self) { folder in
                     TextFieldLink(prompt: Text("What should it do?")) {
                         Label {
-                            Text((folder as NSString).lastPathComponent).lineLimit(1)
+                            Text(folder.isEmpty ? "New folder" : (folder as NSString).lastPathComponent).lineLimit(1)
                         } icon: {
                             Glyph(name: "folder-glyph")
                         }
@@ -285,7 +286,7 @@ struct NewTaskPage: View {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         Task {
             if await model.ask(["op": "start", "text": text, "folder": folder]) != nil {
-                started = "Started in \((folder as NSString).lastPathComponent)"
+                started = folder.isEmpty ? "Started in a new folder" : "Started in \((folder as NSString).lastPathComponent)"
                 try? await Task.sleep(for: .seconds(1.5))
                 dismiss()
             }

@@ -16,6 +16,16 @@ private func row(_ id: String, _ task: String) -> BoardRow {
     #expect(BoardRow.sorted(rows, by: .manual, order: "c\na\nb").map(\.session) == ["d", "c", "a", "b"])
 }
 
+@Test func manualOrderNeverFollowsState() {
+    // Never dragged (none in the order): newest on top, the same whatever order the board's states put them in.
+    let byState = [row("01b", "Needs you"), row("01a", "Idle"), row("01c", "Working")]
+    let byOtherState = [row("01c", "Working"), row("01a", "Idle"), row("01b", "Needs you")]
+    #expect(BoardRow.sorted(byState, by: .manual, order: "x\ny").map(\.session) == ["01c", "01b", "01a"])
+    #expect(BoardRow.sorted(byOtherState, by: .manual, order: "x\ny").map(\.session) == ["01c", "01b", "01a"])
+    // A drag in one workspace keeps the others' order.
+    #expect(BoardRow.arranged(["b", "a"], in: "a\nx\nb\ny") == "b\na\nx\ny")
+}
+
 @Test func howLongSomethingTookNeverSaysZero() {
     #expect(Took.text("Thought", 0.4) == "Thought for a moment")
     #expect(Took.text("Thought", 8) == "Thought for 8s")

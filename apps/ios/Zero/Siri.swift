@@ -504,7 +504,8 @@ struct ZeroProject: AppEntity {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Project"
     static let defaultQuery = ZeroProjectQuery()
     var id: String
-    var name: String { (id as NSString).lastPathComponent }
+    /// "": a new folder of the task's own in ~/Zero, made by zerod.
+    var name: String { id.isEmpty ? "a new folder" : (id as NSString).lastPathComponent }
     var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)", subtitle: "\(id)") }
 }
 
@@ -516,7 +517,7 @@ struct ZeroProjectQuery: EntityStringQuery {
     }
     @MainActor func suggestedEntities() async throws -> [ZeroProject] {
         _ = await PhoneModel.shared.ready()
-        return await PhoneModel.shared.projects().map(ZeroProject.init)
+        return (await PhoneModel.shared.projects() + [""]).map(ZeroProject.init)
     }
 }
 

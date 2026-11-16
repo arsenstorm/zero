@@ -66,12 +66,21 @@ extension AppDelegate {
 
     /// Panels stay on one screen (the one under the pointer when first shown, or chosen via "Move Zero to this
     /// screen") unless "Follow active screen" is on, in which case they go to the screen under the pointer.
-    func layout() {
+    /// `instant`: a screen change carried on after the bar let go of the window (`letGoDelay`).
+    func layout(instant: Bool = false) {
         let mouse = NSEvent.mouseLocation
         let pinned = NSScreen.screens.first { $0.displayID == pinnedDisplay }
         let underMouse = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         guard let screen = settings.followActiveScreen ? underMouse : (pinned ?? underMouse) else { return }
+        // Another screen: there at once, no easing in to a join there either.
+        let moved = instant || pinnedDisplay != screen.displayID
         pinnedDisplay = screen.displayID
+        // The join holds only on the window's screen: going to another, the bar lets go of it first, and goes there a
+        // moment later (`letGoDelay`).
+        if pill.parent?.screen != screen, letGoOfWindow() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.letGoDelay) { [weak self] in self?.layout(instant: true) }
+            return
+        }
         let frame = screen.frame
         let visible = screen.visibleFrame
         // The screen's height, so the bar (its top held, `barTop`) grows down as far as it needs.
@@ -80,8 +89,8 @@ extension AppDelegate {
             x: pill.parent == nil ? frame.maxX - InboxController.pillWidth : pill.frame.minX, y: frame.minY,
             width: InboxController.pillWidth, height: frame.height)
         pill.setFrame(pillFrame, display: true)
-        if inbox.barPanel != frame.height { inbox.barPanel = frame.height }
-        trackBarJoin()
+        if inbox.barPanel != frame.height { withTransaction(.still(moved)) { inbox.barPanel = frame.height } }
+        trackBarJoin(eased: !moved)
         // The inbox is centred on the pill: symmetric above and below it, within the visible screen.
         let half = min(pillFrame.midY - visible.minY, visible.maxY - pillFrame.midY) - 8
         // Its 12 pt from the bar kept when the bar's joined to Zero's window (moved in by its join).

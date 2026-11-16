@@ -128,3 +128,45 @@ async fn a_new_compact_window_restarts_running_agents_between_turns() {
     assert!(sent.lock().unwrap().contains("and then this"), "what was queued went to the new process");
     zerod::adapter::set_compact_window(None);
 }
+
+/// Between turns with the user's messages held (they stopped the turn): left running, so releasing them delivers them,
+/// and started again with the new window once that turn ends.
+#[tokio::test(start_paused = true)]
+async fn a_held_queue_keeps_its_agent_until_its_next_turn_ends() {
+    let _one = crate::common::COMPACT.lock().await;
+    zerod::adapter::set_compact_window(None);
+    let home = temp_dir("compact-window-held");
+    let starts: Starts = Default::default();
+    let sent = Arc::new(Mutex::new(String::new()));
+    let daemon = Daemon::open(&home.join("zerod"), recording(starts.clone(), sent.clone())).unwrap();
+    let options = zerod::daemon::Options { cwd: Some(home.to_str().unwrap().into()), ..Default::default() };
+    let id = daemon.start(Provider::Claude, "hi", options).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let session = daemon.session(&id).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    daemon.queue(&id, "held for later", &[]).unwrap();
+    let _ = daemon.interrupt(&id).await;
+    session.change(idle());
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(daemon.queued(&id).1, "held");
+
+    zerod::adapter::set_compact_window(Some(400_000));
+    daemon.compact_window_changed().await;
+    assert!(session.is_attached(), "left running: a release only delivers to a running agent");
+    assert!(daemon.next(&id).is_some_and(|n| n.restart));
+
+    daemon.release(&id).unwrap();
+    until(&session, |_| sent.lock().unwrap().contains("held for later")).await;
+    session.change(Change::Status { status: Status::Working, turn: Some("t2".into()), error: None });
+    session.change(idle());
+    for _ in 0..100 {
+        if last_start(&starts, &id) == Some(Some("400000".into())) || !session.is_attached() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!session.is_attached() || last_start(&starts, &id) == Some(Some("400000".into())), "stopped for the new window");
+    daemon.resume(&id).await.ok();
+    assert_eq!(last_start(&starts, &id), Some(Some("400000".into())));
+    zerod::adapter::set_compact_window(None);
+}

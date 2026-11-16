@@ -53,17 +53,19 @@ struct WatchProject: AppEntity {
     static let typeDisplayRepresentation: TypeDisplayRepresentation = "Project"
     static let defaultQuery = WatchProjectQuery()
     var id: String
-    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\((id as NSString).lastPathComponent)") }
+    /// "": a new folder of the task's own in ~/Zero, made by zerod.
+    var name: String { id.isEmpty ? "a new folder" : (id as NSString).lastPathComponent }
+    var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
 }
 
 struct WatchProjectQuery: EntityStringQuery {
     @MainActor func entities(for identifiers: [String]) async throws -> [WatchProject] { identifiers.map(WatchProject.init) }
     @MainActor func entities(matching string: String) async throws -> [WatchProject] {
         let said = string.lowercased()
-        return try await suggestedEntities().filter { ($0.id as NSString).lastPathComponent.lowercased().contains(said) }
+        return try await suggestedEntities().filter { $0.name.lowercased().contains(said) }
     }
     @MainActor func suggestedEntities() async throws -> [WatchProject] {
-        ((await model().ask(["op": "projects"]))?["projects"] as? [String] ?? []).map(WatchProject.init)
+        (((await model().ask(["op": "projects"]))?["projects"] as? [String] ?? []) + [""]).map(WatchProject.init)
     }
 }
 
@@ -140,7 +142,7 @@ struct WatchStartTaskIntent: AppIntent {
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         _ = try await done(["op": "start", "text": prompt, "folder": project.id])
-        return .result(dialog: IntentDialog(full: "Started it in \((project.id as NSString).lastPathComponent).", supporting: "Started"))
+        return .result(dialog: IntentDialog(full: "Started it in \(project.name).", supporting: "Started"))
     }
 }
 

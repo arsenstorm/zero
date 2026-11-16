@@ -875,6 +875,48 @@ async fn a_lead_sets_its_issues_rows_and_the_board_shows_them() {
     assert!(std::fs::read_to_string(h.home.join("sessions").join(&session).join("transcript.jsonl")).unwrap().contains("merge decision"));
 }
 
+#[tokio::test]
+async fn an_issue_carries_what_it_needs_its_pr_and_the_leads_own_columns() {
+    // The board in the conversation shows what the lead's own tables did: what the issue needs from the user in the
+    // lead's words, its pull request, and columns of the lead's (a merge risk, say). Left out, each keeps what it was;
+    // given empty, it's taken back.
+    let h = harness("server-issue-fields").await;
+    let mut control = Client::connect(&h.socket).await;
+    let started = control.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "lead these"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    async fn issue(control: &mut Client, session: &str, extra: Value) -> Value {
+        let mut request = json!({"op": "issue", "session": session, "ticket": "ENG-1", "state": "over"});
+        request.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        control.call(request).await
+    }
+    let row = |board: Value| {
+        let rows = board["result"]["rows"].as_array().or(board["result"].as_array()).unwrap().clone();
+        rows.into_iter().find(|r| r["session"] == session.as_str()).unwrap()["issues"][0].clone()
+    };
+    let set = json!({"text": "verified; CI green", "needs": "check the bench tabs", "pr": "https://github.com/acme/app/pull/12",
+                     "fields": ["Merge risk=Medium", "Owner=app-12"]});
+    assert_eq!(issue(&mut control, &session, set).await["ok"], true);
+    assert_eq!(issue(&mut control, &session, json!({"text": "verified; CI green, 2 approvals"})).await["ok"], true);
+    let kept = row(control.call(json!({"op": "board"})).await);
+    assert_eq!(kept["text"], "verified; CI green, 2 approvals");
+    assert_eq!((kept["needs"].as_str(), kept["pr"].as_str()), (Some("check the bench tabs"), Some("https://github.com/acme/app/pull/12")));
+    assert_eq!(
+        kept["fields"],
+        json!([{"name": "Merge risk", "value": "Medium"}, {"name": "Owner", "value": "app-12"}]),
+        "in the order given"
+    );
+
+    let cleared = json!({"state": "done", "text": "merged", "needs": "", "fields": ["Merge risk=Low", "Owner="]});
+    assert_eq!(issue(&mut control, &session, cleared).await["ok"], true);
+    let now = row(control.call(json!({"op": "board"})).await);
+    assert!(now.get("needs").is_none(), "taken back: {now}");
+    assert_eq!(now["pr"], "https://github.com/acme/app/pull/12", "left out, kept");
+    assert_eq!(now["fields"], json!([{"name": "Merge risk", "value": "Low"}]), "changed in place, an empty one gone");
+
+    let refused = issue(&mut control, &session, json!({"fields": ["Merge risk"]})).await;
+    assert!(refused["error"].as_str().unwrap().contains("Name=value"), "{refused}");
+}
+
 /// Models the user adds to Zero for a CLI (one its own list doesn't have yet): kept Zero-wide, each with the id the CLI
 /// is started with and the name the picker shows; a later list replaces the earlier one.
 #[tokio::test]

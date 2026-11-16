@@ -71,7 +71,11 @@ fn agent_ask(zerod: &Zerod, request: &Request) -> Result<Value, String> {
             .as_str()
             .and_then(crate::model::IssueState::named)
             .ok_or("An issue's state is one of you, over, working, waiting, parked or done")?;
-        daemon.set_issue(&id, args["ticket"].as_str().ok_or("Which issue? Its ticket")?, state, args["text"].as_str().unwrap_or(""))?;
+        let text = |key: &str| args[key].as_str().map(String::from);
+        let fields = args["fields"].as_array().map(|f| f.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+        let more = crate::model::IssueMore { needs: text("needs"), pr: text("pr"), fields };
+        let ticket = args["ticket"].as_str().ok_or("Which issue? Its ticket")?;
+        daemon.set_issue_with(&id, ticket, state, args["text"].as_str().unwrap_or(""), &more)?;
         return Ok(json!({}));
     }
     let agent = crate::bridge::identity(&conversation, &crate::bridge::hostname());

@@ -184,8 +184,12 @@ extension AppDelegate {
     /// a gap opening between them as the window moved). Only its height, the screen's, is put back on a vertical move,
     /// and its place on a live resize from the window's right edge (which moves that edge, not the child). Dragged 12
     /// pt away it lets go, back to the screen's edge on the bar's curve.
-    func trackBarJoin() {
-        guard let screen = pill.screen ?? NSScreen.main else { return }
+    ///
+    /// The bar's screen is the one `layout` chose (`pinnedDisplay`), never the panel's own: joined, the panel goes
+    /// wherever the window takes it, and would hold the bar to the window's screen.
+    func trackBarJoin(eased: Bool = true) {
+        let chosen = NSScreen.screens.first { $0.displayID == pinnedDisplay }
+        guard let screen = chosen ?? pill.screen ?? NSScreen.main else { return }
         let join: CGFloat = {
             guard settings.showBar, pill.isVisible, let window = workspaceWindow, window.isVisible, !window.isMiniaturized,
                 window.occlusionState.contains(.visible), window.screen == screen
@@ -200,19 +204,36 @@ extension AppDelegate {
             // Arriving on its own (a snap, the window opened there), it eases in; dragged there, it's already there.
             placeBarPanel(
                 x: window.frame.maxX - BarEdge.strip - InboxController.pillWidth, on: screen,
-                eased: joining && NSEvent.pressedMouseButtons == 0)
+                eased: eased && joining && NSEvent.pressedMouseButtons == 0)
         } else {
-            letGoOfWindow()
-            placeBarPanel(x: screen.frame.maxX - InboxController.pillWidth, on: screen, eased: true)
+            // Let go on another screen than the bar's (taken there by the window): back a moment later
+            // (`letGoDelay`), at once rather than across the screens.
+            if letGoOfWindow(), pill.screen != screen {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.letGoDelay) { [weak self] in self?.trackBarJoin(eased: false) }
+            } else {
+                placeBarPanel(x: screen.frame.maxX - InboxController.pillWidth, on: screen, eased: eased && pill.screen == screen)
+            }
         }
-        if inbox.barJoin != join { inbox.barJoin = join }
+        // Not eased (a screen change), the bar's own animation on its join doesn't slide it to its new place either.
+        if inbox.barJoin != join { withTransaction(.still(!eased)) { inbox.barJoin = join } }
     }
 
     /// The bar's panel no longer the window's child: before the window closes or goes to the Dock, which would take
     /// its children with it.
-    func letGoOfWindow() {
-        if let parent = pill.parent { parent.removeChildWindow(pill) }
+    /// Whether it was the window's child.
+    @discardableResult func letGoOfWindow() -> Bool {
+        guard let parent = pill.parent else { return false }
+        parent.removeChildWindow(pill)
+        // A child takes its parent's level and keeps it once let go: without this the bar sinks behind other windows.
+        pill.level = .floating
+        return true
     }
+
+    /// How long the bar's panel waits after letting go of the window before it moves to another display: moved there
+    /// at once, the window server never draws it there (in Zero, even after a CATransaction.flush()). 20 and 30 ms
+    /// were enough in tests; the next turn of the main loop wasn't, always.
+    /// ponytail: a fixed wait, not an event; if the bar ever goes missing on another screen again, look here first.
+    static let letGoDelay = 0.03
 
     /// The bar's panel at `x`, as tall as its screen: on the bar's curve (220 ms in, 150 ms out), or at once.
     private func placeBarPanel(x: CGFloat, on screen: NSScreen, eased: Bool) {
@@ -244,5 +265,14 @@ extension AppDelegate {
         } else {
             inWindow(.task(session))
         }
+    }
+}
+
+extension Transaction {
+    /// A change drawn at once when `still`, past any `.animation` on the views it reaches; otherwise as they say.
+    static func still(_ still: Bool) -> Transaction {
+        var transaction = Transaction()
+        transaction.disablesAnimations = still
+        return transaction
     }
 }

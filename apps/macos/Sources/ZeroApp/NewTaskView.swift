@@ -34,28 +34,31 @@ struct NewTaskView: View {
             Spacer()
             VStack(alignment: .leading, spacing: 0) {
                 Composer(
-                    draft: $prompt, placeholder: "Do anything", canSend: !starting && folders.contains(project),
+                    draft: $prompt, placeholder: "Do anything", canSend: !starting,
                     folder: folders.contains(project) ? project : nil,
                     workspace: workspace, images: $images, send: { start() }, translucent: true
                 ) {
-                    // Where it starts, as chips in the row: the folder tab that sat above the card is gone.
-                    if folders.isEmpty {
-                        NucleoLabel("Add a project in Settings › Workspaces", icon: "folder", size: 13).font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ComposerChip(
-                            id: "new.project", label: folders.contains(project) ? Projects.name(of: project) : "Choose project",
-                            symbol: "folder"
-                        ) {
-                            ComposerRows.list(
-                                "Projects", icon: choiceIcon("zero"),
+                    // Where it starts: a project picked here, else a new folder of its own in ~/Zero (zerod makes it).
+                    ComposerChip(
+                        id: "new.project", label: folders.contains(project) ? Projects.name(of: project) : "Select folder",
+                        symbol: "folder", kind: .menu
+                    ) {
+                        ZeroContextMenu.sections(
+                            [
                                 folders.map { folder in
-                                    (
-                                        folder, Projects.name(of: folder), (folder as NSString).abbreviatingWithTildeInPath,
-                                        folder == project, { project = folder }
-                                    )
-                                })
-                        }
+                                    var item = MenuItem(Projects.name(of: folder), "folder") { project = folder }
+                                    item.selected = folder == project
+                                    return item
+                                },
+                                [
+                                    {
+                                        var item = MenuItem("New folder in ~/Zero", "folder-plus") { project = "" }
+                                        item.selected = !folders.contains(project)
+                                        return item
+                                    }(),
+                                    MenuItem("Add folder…", "plus") { addFolder() },
+                                ],
+                            ].filter { !$0.isEmpty })
                     }
                     // What runs it on the right, beside Send, as Devin's mode; where it runs on the left.
                     Spacer(minLength: 8)
@@ -138,7 +141,7 @@ struct NewTaskView: View {
                 .ignoresSafeArea()
         }
         .onAppear {
-            if !folders.contains(project) { project = folders.first ?? "" }
+            if !folders.contains(project) { project = "" }
             (model, effort, advisor) = NewTaskChoice.kept(for: chosen)
             permissions = NewTaskChoice.permissions(for: chosen)
             if let kept = Drafts.load("new") { prompt = kept.text; images = kept.images }
@@ -168,6 +171,15 @@ struct NewTaskView: View {
     /// The chosen provider's models, from its CLI's own cache.
     private var models: [SpawnChoice] { ComposerRows.catalogue(chosen) }
 
+    /// A folder from Finder's panel: a project from now on (as Settings › Workspaces adds one), and this task's.
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Projects.add(url.path)
+        project = url.path
+    }
+
     private func pick(_ picked: Permissions) {
         permissions = picked
         NewTaskChoice.keep(chosen, permissions: picked)
@@ -182,7 +194,8 @@ struct NewTaskView: View {
             // to itself the provider would start on its own default, and the task would change model as it began.
             let shown = shownModel
             if let id = await workspace.start(
-                provider: chosen, cwd: project, prompt: text, images: attached, model: shown.isEmpty ? nil : shown,
+                provider: chosen, cwd: folders.contains(project) ? project : nil, prompt: text, images: attached,
+                model: shown.isEmpty ? nil : shown,
                 effort: effort.isEmpty ? nil : effort, advisor: startAdvisor, permissions: permissions,
                 workspace: workspace.current)
             {

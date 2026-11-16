@@ -188,6 +188,17 @@ public enum Projects {
         (UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String])?[path] ?? (path as NSString).lastPathComponent
     }
 
+    /// A folder zerod made for a task started without a project: in ~/Zero, the task's own.
+    public static func isTaskFolder(_ path: String) -> Bool {
+        (path as NSString).deletingLastPathComponent == NSHomeDirectory() + "/Zero"
+    }
+
+    /// A folder New task offers from now on, at the end of the list.
+    public static func add(_ path: String) {
+        guard !folders.contains(path) else { return }
+        UserDefaults.standard.set(folders + [path], forKey: key)
+    }
+
     /// The user's name for a folder; its own name (or none) takes the given one away.
     public static func setName(_ name: String, for path: String) {
         var names = UserDefaults.standard.dictionary(forKey: namesKey) as? [String: String] ?? [:]

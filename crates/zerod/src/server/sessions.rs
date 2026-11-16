@@ -42,6 +42,8 @@ pub(super) async fn lifecycle(zerod: &Zerod, request: Request) -> Result<Value, 
             let parent = request.args.as_ref().and_then(|a| a["parent"].as_str());
             daemon.set_parent(&request.session()?, parent, None).map(|_| Value::Null)
         }
+        // The user's move from the task menu: out of its own new folder, into a project (args: cwd).
+        "setCwd" => daemon.move_to(&request.session()?, request.cwd.as_deref().ok_or("Which folder?")?).await.map(|_| Value::Null),
         // A worker let go of its lead: a task of its own.
         // By the task running `zero detach`, when it says (its session).
         "detach" => {
@@ -201,12 +203,18 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
                 .as_deref()
                 .and_then(crate::model::IssueState::named)
                 .ok_or("An issue's state is one of you, over, working, waiting, parked or done")?;
+            let more = crate::model::IssueMore {
+                needs: request.needs.clone(),
+                pr: request.pr.clone(),
+                fields: request.fields.clone().unwrap_or_default(),
+            };
             daemon
-                .set_issue(
+                .set_issue_with(
                     &request.session()?,
                     request.ticket.as_deref().ok_or("Which issue? Its ticket")?,
                     state,
                     request.text.as_deref().unwrap_or(""),
+                    &more,
                 )
                 .map(|_| Value::Null)
         }
@@ -296,8 +304,8 @@ pub(super) async fn reads(zerod: &Zerod, request: Request) -> Result<Value, Stri
 /// A new task; a loop named in the prompt (@name) is given as its words, and its use recorded once the session exists.
 fn start(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let provider = request.provider.ok_or("Start needs a provider: codex, claude or opencode")?;
-    let cwd = request.cwd.as_deref().ok_or("Start needs a folder")?;
-    let options = options(request, Some(cwd.into()), Some(request.permissions.unwrap_or_default()));
+    // No folder: zerod makes the task one of its own in ~/Zero.
+    let options = options(request, request.cwd.clone().filter(|c| !c.is_empty()), Some(request.permissions.unwrap_or_default()));
     let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
     let id = zerod.daemon.start(provider, &prompt, options)?;
     for name in &loops {

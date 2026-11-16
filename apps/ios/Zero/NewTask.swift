@@ -24,7 +24,7 @@ struct NewTaskSheet: View {
     @State private var catalogue: [Provider: [PhoneModel.ModelChoice]] = [:]
     /// The chosen agent's models.
     private var models: [PhoneModel.ModelChoice] { catalogue[agent] ?? [] }
-    private var canStart: Bool { !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !folder.isEmpty && !starting }
+    private var canStart: Bool { !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !starting }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -59,7 +59,8 @@ struct NewTaskSheet: View {
             writing = true
             chosen = Self.kept(agent)
             folders = await model.projects()
-            if !folders.contains(folder) { folder = folders.first ?? "" }
+            // None picked: a new folder of its own in ~/Zero, made by zerod.
+            if !folders.contains(folder) { folder = "" }
         }
         // Every agent's models, for the one picker: each as it comes.
         .task {
@@ -91,13 +92,15 @@ struct NewTaskSheet: View {
             } label: {
                 HStack(spacing: 8) {
                     Image("folder-glyph").resizable().frame(width: 18, height: 18).foregroundStyle(.blue)
-                    Text(folder.isEmpty ? "Folder" : (folder as NSString).lastPathComponent).font(.body.weight(.medium)).lineLimit(1)
+                    Text(folder.isEmpty ? "Select folder" : (folder as NSString).lastPathComponent).font(.body.weight(.medium)).lineLimit(1)
                 }
                 .padding(.horizontal, 16).frame(height: 44).contentShape(Capsule())
             }
             .buttonStyle(.plain).glassEffect(.regular.interactive(), in: Capsule())
             .popover(isPresented: Binding(get: { choosing == .folder }, set: { if !$0 { choosing = nil } })) {
-                list(folders.map { ($0, ($0 as NSString).lastPathComponent) }, selected: folder) { folder = $0 }
+                list(folders.map { ($0, ($0 as NSString).lastPathComponent) } + [("", "New folder in ~/Zero")], selected: folder) {
+                    folder = $0
+                }
             }
             Spacer(minLength: 12)
             SendCircle(ready: canStart, sending: starting, label: "Start") { Task { await start() } }

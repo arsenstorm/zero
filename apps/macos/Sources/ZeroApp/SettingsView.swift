@@ -1701,7 +1701,8 @@ private struct FoldersPage: View {
                     }
                 }
                 .id(named)
-                Text("The folders New task offers.").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("The folders New task offers. Without one, a task gets a new folder in ~/Zero.").font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
         }
         .zeroDialog(item: $renaming) { folder in

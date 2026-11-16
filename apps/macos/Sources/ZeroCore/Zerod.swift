@@ -442,7 +442,16 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
         public var since: Int
         /// The states it went through, oldest first: in the conversation's copy only, not the board's.
         public var history: [Step]? = nil
+        /// What it needs from the user, in the lead's words; its pull request; the lead's own columns, in order.
+        public var needs: String? = nil
+        public var pr: String? = nil
+        public var fields: [Field]? = nil
         public var id: String { ticket }
+
+        public struct Field: Decodable, Equatable, Sendable {
+            public var name: String
+            public var value: String
+        }
 
         public struct Step: Decodable, Equatable, Sendable {
             public var state: String
@@ -702,6 +711,7 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
         case let .title(title): self.title = title
         case let .named(label, ticket): self.label = label; self.ticket = ticket
         case let .placed(workspace): self.workspace = workspace
+        case let .moved(cwd): self.cwd = cwd
         case let .signedIn(signin): self.signin = signin
         case let .advised(advisor): self.advisor = advisor
         case let .permitted(permissions):
@@ -779,6 +789,8 @@ public enum Change: Decodable, Equatable, Sendable {
     case title(String?)
     case named(label: String?, ticket: String?)
     case placed(String?)
+    /// Works in another folder from its next start: moved out of its own new folder into a project.
+    case moved(String)
     /// Runs as another sign-in from its next start (zerod's signins.rs).
     case signedIn(String?)
     /// The model Claude Code consults (none: no advisor), from its next start.
@@ -821,7 +833,7 @@ public enum Change: Decodable, Equatable, Sendable {
 
     private enum Keys: String, CodingKey {
         case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label,
-            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command, advisor, issue
+            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command, advisor, issue, cwd
     }
 
     public init(from decoder: Decoder) throws {
@@ -836,6 +848,7 @@ public enum Change: Decodable, Equatable, Sendable {
             self = .named(
                 label: try c.decodeIfPresent(String.self, forKey: .label), ticket: try c.decodeIfPresent(String.self, forKey: .ticket))
         case "placed": self = .placed(try c.decodeIfPresent(String.self, forKey: .workspace))
+        case "moved": self = .moved(try c.decode(String.self, forKey: .cwd))
         case "signedIn": self = .signedIn(try c.decodeIfPresent(String.self, forKey: .signin))
         case "advised": self = .advised(try c.decodeIfPresent(String.self, forKey: .advisor))
         case "permitted": self = .permitted(try c.decode(Permissions.self, forKey: .permissions))
@@ -1083,9 +1096,9 @@ public final class ZerodLink: @unchecked Sendable {
         try decode(Conversation.self, from: await call("get", ["session": session]))
     }
 
-    /// Starts a session and returns its id at once, while the provider starts.
+    /// Starts a session and returns its id at once, while the provider starts. No folder: zerod makes it a new one.
     public func start(
-        provider: Provider, cwd: String, prompt: String, images: [String] = [], model: String? = nil, effort: String? = nil,
+        provider: Provider, cwd: String?, prompt: String, images: [String] = [], model: String? = nil, effort: String? = nil,
         advisor: String? = nil, permissions: Permissions = .auto, workspace: String? = nil
     ) async throws -> String {
         let result = try await call(
@@ -1237,6 +1250,11 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// The user's move: a task put under another as its worker, or (nil) made a task of its own. Zero.app's alone.
+    /// The task out of its own new folder into `cwd` (a project), its files with it: between turns only.
+    public func setCwd(session: String, cwd: String) async throws {
+        _ = try await call("setCwd", ["session": session, "cwd": cwd])
+    }
+
     public func setParent(session: String, parent: String?) async throws {
         _ = try await call("setParent", ["session": session, "args": ["parent": parent as Any? ?? NSNull()]])
     }
@@ -1261,8 +1279,16 @@ public final class ZerodLink: @unchecked Sendable {
     /// Something an agent says about its task (`zero attr`); nil takes it back.
     /// One of the issues a task drives, its row set: who has it (you, working, waiting, parked, done) and in words
     /// what it needs from the user, where it stands, or why it's parked.
-    public func issue(session: String, ticket: String, state: String, text: String) async throws {
-        _ = try await call("issue", ["session": session, "ticket": ticket, "state": state, "text": text])
+    /// `needs` and `pr` left nil keep what they were, "" takes them back; `fields` are "Name=value".
+    public func issue(
+        session: String, ticket: String, state: String, text: String, needs: String? = nil, pr: String? = nil, fields: [String] = []
+    ) async throws {
+        _ = try await call(
+            "issue",
+            [
+                "session": session, "ticket": ticket, "state": state, "text": text, "needs": needs, "pr": pr,
+                "fields": fields.isEmpty ? nil : fields,
+            ])
     }
 
     public func attribute(session: String, name: String, value: String?) async throws {

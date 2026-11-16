@@ -41,7 +41,10 @@ fn zero_tools() -> Vec<Value> {
         json!({"name": "zero_issue", "description": "Sets the row of one of the issues you lead, which the user reads coming back: who has it now, and what it needs. Set it whenever the issue's state changes. Zero shows the rows as one live board at the top of your conversation, with each issue's states over time: don't repost them as a table; say only what changed and what you decided.",
                "inputSchema": {"type": "object", "required": ["ticket", "state"], "properties": {
                    "ticket": string("The issue's ticket."), "state": string("you (on the user: a decision, access), over (done on your side, the user's step to take: a review, a merge), working, waiting (on someone else), parked or done."),
-                   "text": string("On the user: what you need from them. Waiting: on whom. Parked: why. Else where it stands.")}}}),
+                   "text": string("On the user: what you need from them. Waiting: on whom. Parked: why. Else where it stands."),
+                   "needs": string("What it needs from the user, in your words (\"check the bench tabs\"). Left out, it keeps what it was; empty takes it back."),
+                   "pr": string("Its pull request, a link. Left out, kept; empty takes it back."),
+                   "fields": {"type": "array", "items": {"type": "string"}, "description": "Columns of your own, each \"Name=value\" (\"Merge risk=Medium\"); \"Name=\" takes one back."}}}}),
         json!({"name": "zero_done", "description": "Marks the task done, in two steps: called with what's done, it's refused with what done means and a token; if it is so (the user said it's done, or it's finished end to end: merged, deployed and checked), call again with confirm: the token, within 5 minutes. Unsure: ask: true asks the user.",
                "inputSchema": {"type": "object", "required": ["text"], "properties": {
                    "text": string("What's done, one line."), "confirm": string("The token the first call gave."),
