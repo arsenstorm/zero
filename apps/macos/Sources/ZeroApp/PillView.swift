@@ -60,13 +60,14 @@ struct PillView: View {
     /// pass-through down the bar opens nothing), closed after a short grace (an overshoot doesn't collapse it).
     @State private var openGroup: String?
     @State private var hoverGroup: Task<Void, Never>?
-    /// Dots moving between groups (a task moved to another workspace, the window switching) travel to their new place.
-    @Namespace private var dotSpace
-    /// The groups as drawn: they follow the board's in an animation of their own (`follow`), as the board's changes come
-    /// in with none, and a dot can only travel between groups in one. A dot gone from the board keeps its last look
-    /// here while it fades out. Nil until the first draw, which takes the board's as they are.
+    /// The groups as drawn (`follow`): they follow the board's, cutting when the window switched. A dot gone from the
+    /// board keeps its last look here. Nil until the first draw, which takes the board's as they are.
     @State private var drawn: [BarGroup]?
     @State private var drawnDots: [String: Dot] = [:]
+    /// The window's workspace as last drawn, so a switch is told from the bar changing on its own.
+    @State private var drawnWindow: String?
+    /// Set for the draw that follows the window switching: nothing comes or goes with a transition then.
+    @State private var cutting = false
     /// The settings button in the bar's foot (Settings › Control bar), and the pointer on the bar that brings it out.
     @AppStorage("barFoot") private var barFoot = false
     @State private var overBar = false
@@ -257,11 +258,13 @@ struct PillView: View {
     }
 
     /// A workspace's agents under its mark (the window's too, when more than one group shows): another workspace's
-    /// folded to just the mark while nothing there waits on the user, and opened while the
-    /// pointer rests on it. Open, its dots have its colour beside them, a segment at the screen's edge. A click on the
-    /// mark opens the workspace in Zero's window.
+    /// folded to just the mark while nothing there waits on the user, and opened while the pointer rests on it. Open,
+    /// its dots have a segment beside them at the screen's edge, neutral (the window's a little stronger): on the bar
+    /// colour means state alone, the workspaces' own colours are the rail's and the window's. A click on the mark
+    /// opens the workspace in Zero's window.
     private func groupView(_ group: BarGroup, dots: [String: Dot], marked: Bool) -> some View {
         let open = !group.folds || openGroup == group.workspace
+        let byPointer = group.folds && openGroup == group.workspace
         let space =
             workspace?.workspaces.first { $0.id == group.workspace } ?? ZerodLink.Workspace(id: group.workspace, name: group.workspace)
         let summary = BarGroups.summary(name: space.name, group)
@@ -276,26 +279,28 @@ struct PillView: View {
                     .accessibilityLabel(summary)
                     .accessibilityHint("Opens the workspace in Zero's window")
                     .accessibilityAddTraits(.isButton)
-                    .transition(arrival)
+                    .transition(arrival(byPointer: false))
             }
             if open {
                 VStack(spacing: 2) {
                     ForEach(group.dots, id: \.self) { name in
-                        if let dot = dots[name] { agentDot(name, dot.mark, among: group.dots).accessibilityLabel(dot.label) }
+                        if let dot = dots[name] {
+                            agentDot(name, dot.mark, among: group.dots, byPointer: byPointer).accessibilityLabel(dot.label)
+                        }
                     }
                 }
                 .overlay(alignment: .trailing) {
                     if marked {
-                        Capsule().fill(WorkspaceColors.color(space.color) ?? Color.secondary.opacity(0.6))
+                        Capsule().fill(Color.secondary.opacity(group.window ? 0.7 : 0.35))
                             .frame(width: 3).padding(.vertical, 6).offset(x: 3)
-                            .transition(.opacity)
+                            .transition(arrival(byPointer: byPointer))
                     }
                 }
             }
         }
         // The whole group, mark and dots, keeps it open, so the pointer can go down to its dots.
         .onHover { on in hover(group, on) }
-        .transition(arrival)
+        .transition(arrival(byPointer: false))
     }
 
     /// The pointer on a folded group or off it: open after 120 ms at rest on it (a pass-through down the bar opens
@@ -322,28 +327,42 @@ struct PillView: View {
         }
     }
 
-    /// The board's groups drawn: at once the first time, then on the bar's curve (220 ms, 150 ms when the bar only loses
-    /// dots), so arrivals, departures, moves between groups and the window's switches all move one way.
+    /// The board's groups drawn, by what changed them. The window switched (⌥N, the rail, a mark clicked): the bar
+    /// cuts in one frame, as the window does, with nothing easing open or shut. The bar changed on its own (an agent
+    /// came, went, moved workspace or changed state): its layout snaps and what came fades in (`arrival`); nothing
+    /// travels or scales. Only the pointer opening a group eases (`openGroup`'s animation).
     private func follow(_ now: [BarGroup], dots: [String: Dot]) {
-        guard let was = drawn else { drawn = now; drawnDots = dots; return }
+        let window = workspace?.current
+        guard let was = drawn else { drawn = now; drawnDots = dots; drawnWindow = window; return }
         guard now != was else { return }
         drawnDots = dots
-        let grows = now.flatMap(\.dots).count >= was.flatMap(\.dots).count
-        withAnimation(reduceMotion ? nil : barMotion(entering: grows)) { drawn = now }
+        guard window == drawnWindow else {
+            drawnWindow = window
+            // Transitions read `cutting` as the views come and go, so it's set a draw ahead of the groups, then put back.
+            cutting = true
+            DispatchQueue.main.async {
+                drawn = now
+                DispatchQueue.main.async { cutting = false }
+            }
+            return
+        }
+        drawn = now
     }
 
     /// The bar's one curve, the knobs' ease-out cubic: 220 ms in, 150 ms out.
     private func barMotion(entering: Bool) -> Animation { .timingCurve(0.33, 1, 0.68, 1, duration: entering ? 0.22 : 0.15) }
 
-    /// How a dot or a mark comes and goes: in from 0.9 with a fade (nothing from nothing), out by fading,
-    /// faster. Reduce Motion: the fades alone.
-    private var arrival: AnyTransition {
-        let fadeIn = AnyTransition.opacity.animation(.easeOut(duration: reduceMotion ? 0.15 : 0.22))
-        let fadeOut = AnyTransition.opacity.animation(.easeOut(duration: 0.15))
+    /// How a dot, a mark or a segment comes and goes. Opened by the pointer: in from 0.9 with a fade, out by fading.
+    /// The bar changing on its own: a fade in, gone at once (fading out, it would sit over the neighbour that snapped
+    /// into its place). The window switching: nothing, a cut. Reduce Motion: the fades alone.
+    private func arrival(byPointer: Bool) -> AnyTransition {
+        if cutting { return .identity }
+        let fadeIn = AnyTransition.opacity.animation(.easeOut(duration: reduceMotion ? 0.15 : 0.2))
+        guard byPointer else { return .asymmetric(insertion: fadeIn, removal: .identity) }
         return .asymmetric(
             insertion: reduceMotion
                 ? fadeIn : AnyTransition.opacity.combined(with: .scale(scale: 0.9)).animation(barMotion(entering: true)),
-            removal: fadeOut)
+            removal: AnyTransition.opacity.animation(.easeOut(duration: 0.15)))
     }
 
     /// The inbox, in the top hollow: out while its pane is open or with the pointer in its zone at the bar's top;
@@ -405,11 +424,13 @@ struct PillView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func agentDot(_ name: String, _ mark: Mark, among names: [String]) -> some View {
-        Group {
+    private func agentDot(_ name: String, _ mark: Mark, among names: [String], byPointer: Bool) -> some View {
+        ZStack {
             switch mark {
-            // The sidebar's own icon for the task's state, at its size.
-            case .task(let state, _): TaskStateIcon(state: state).font(.system(size: 12))
+            // The sidebar's own icon for the task's state, at its size; a new state crossfades in place.
+            case .task(let state, _):
+                TaskStateIcon(state: state).font(.system(size: 12)).id(state)
+                    .transition(.opacity.animation(.easeOut(duration: cutting ? 0 : 0.2)))
             case .agent(let status):
                 Group { if status == .working { Spinner() } else { Circle().fill(status.color) } }.frame(width: 11, height: 11)
             }
@@ -425,9 +446,6 @@ struct PillView: View {
         // The whole slot, not just the dot, answers the pointer: full bar width, and the gap halves
         // above and below it, so the slots meet and there is no dead space between dots.
         .frame(width: 32, height: slot)
-        // Moving to another group, the dot travels there rather than fading out here and in there (not under Reduce
-        // Motion, where nothing moves).
-        .modifier(Travels(id: name, space: dotSpace, on: !reduceMotion))
         .contentShape(Rectangle())
         // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
         .modifier(BarSlot(controller: controller, key: name))
@@ -448,7 +466,7 @@ struct PillView: View {
                     drop(name, among: names)
                 }
         )
-        .transition(arrival)
+        .transition(arrival(byPointer: byPointer))
     }
 
     /// A dot's menu, in Zero's selector by the dot: a task's own actions (open it, pause or resume it, move it to Later,
@@ -571,27 +589,15 @@ private struct BarSlot: ViewModifier {
     }
 }
 
-/// A workspace's mark at the bar's size: its glyph in white on a tile of its colour, as the rail's, on 18 pt; without a
-/// colour, on a faint tile of its own (bare, it read as one more dot).
+/// A workspace's mark at the bar's size: its glyph on a faint tile of its own, 18 pt, monochrome whatever the
+/// workspace's colour (on the bar colour means state alone; bare, the glyph read as one more dot).
 private struct BarMark: View {
     let workspace: ZerodLink.Workspace
 
     var body: some View {
-        let tint = WorkspaceColors.color(workspace.color)
         WorkspaceGlyph(glyph: workspace.glyph, size: 11)
-            .foregroundStyle(tint != nil ? Color.white : Color.secondary)
+            .foregroundStyle(.secondary)
             .frame(width: 18, height: 18)
-            .background(RoundedRectangle(cornerRadius: 5).fill(tint ?? Color.primary.opacity(0.1)))
-    }
-}
-
-/// A dot's matched geometry across the bar's groups, so one moving between them travels; off, nothing.
-private struct Travels: ViewModifier {
-    let id: String
-    let space: Namespace.ID
-    let on: Bool
-
-    func body(content: Content) -> some View {
-        if on { content.matchedGeometryEffect(id: id, in: space) } else { content }
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.1)))
     }
 }
