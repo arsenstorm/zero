@@ -468,6 +468,30 @@ import UserNotifications
     private(set) var terminalName = "Terminal"
 
     #if DEBUG
+        /// The UI tests' `-homeTest`: paired and connected to no Mac, with three workspaces, tasks in two of them and a
+        /// note saved for later in each, as if zerod had sent them.
+        func seedForTests() {
+            pairing = try? JSONDecoder().decode(Pairing.self, from: Data(#"{"relay":"","mac":"test","macKey":"","key":""}"#.utf8))
+            status = .connected
+            workspace = "zero"
+            workspaces = [
+                ZerodLink.Workspace(id: "zero", name: "Zero"),
+                ZerodLink.Workspace(id: "work", name: "Client work", glyph: "suitcase", color: "teal"),
+                ZerodLink.Workspace(id: "home", name: "Home", glyph: "🏡"),
+            ]
+            rows = [("z1", "Zero's first task", "zero"), ("z2", "Zero's second task", "zero"), ("w1", "A client's task", "work")]
+                .compactMap { BoardRow.starting(session: $0.0, task: $0.1, workspace: $0.2) }
+            later = [("l1", "A note of Zero's", "zero"), ("l2", "A client's note", "work")].compactMap { id, note, space in
+                let fields: [String: Any] = [
+                    "id": id, "note": note, "workspace": space, "links": [], "files": [], "created": 0, "updated": 0, "done": false,
+                    "version": 1, "versions": [], "link": "zero://later/" + id,
+                ]
+                return (try? JSONSerialization.data(withJSONObject: fields)).flatMap {
+                    try? JSONDecoder().decode(ZerodLink.LaterItem.self, from: $0)
+                }
+            }
+        }
+
         /// A conversation of the UI tests' own, as if zerod had sent it (TaskTestPage).
         func showForTests(_ conversation: Conversation, earlier: Int = 0) {
             _ = mirror.receive(.session(conversation))
@@ -675,17 +699,24 @@ import UserNotifications
     func send(_ text: String, images: [Data], videos: [URL] = [], to session: String, model: String? = nil, effort: String? = nil)
         async throws
     {
-        let cut = await Self.cut(videos)
-        // Shown at once, while its videos upload and its agent starts: the conversation's own takes its place, known
-        // by this one's id (zerod keeps it as `sent`). Without it, zerod's copy was a new message to Playback, and the
-        // bubble was gone for a beat (measured: 117 ms) between the two. Its photos and videos are the phone's own
-        // files until then, its videos' tiles showing how far they're up.
-        let local = (images + cut.flatMap { $0.stills.map(\.data) }).compactMap(Self.kept)
-        let echo = Sending(text: Self.withVideos(text, cut, paths: videos.map(\.path), after: images.count), images: local)
+        // Shown at once, in the frame the box empties, while its videos upload and its agent starts: the
+        // conversation's own takes its place, known by this one's id (zerod keeps it as `sent`). Without it, zerod's
+        // copy was a new message to Playback, and the bubble was gone for a beat (measured: 117 ms) between the two.
+        // Its photos and videos are the phone's own files until then; a video's tile keeps its place until its still
+        // is cut (0.19 s for a 9 s one), then fills in, and shows how far it's up.
+        var local = images.compactMap(kept)
+        let bare = videos.map { CutVideo(url: $0, info: nil, stills: []) }
+        var echo = Sending(text: Self.withVideos(text, bare, paths: videos.map(\.path), after: images.count), images: local)
         sending[session, default: []].append(echo)
         defer {
             sending[session]?.removeAll { $0.id == echo.id }
             for file in local { try? FileManager.default.removeItem(atPath: file) }
+        }
+        let cut = await Self.cut(videos)
+        if !videos.isEmpty {
+            local += cut.flatMap { $0.stills.map(\.data) }.compactMap(kept)
+            echo = echo.with(text: Self.withVideos(text, cut, paths: videos.map(\.path), after: images.count), images: local)
+            if let index = sending[session]?.firstIndex(where: { $0.id == echo.id }) { sending[session]?[index] = echo }
         }
         if await sentForTests(echo, to: session, uploading: !videos.isEmpty) { return }
         let paths = try await upload(cut, to: session)
@@ -741,10 +772,13 @@ import UserNotifications
         return out
     }
 
-    /// An image of a message being sent, as a file of the phone's own for its bubble.
-    private static func kept(_ data: Data) -> String? {
+    /// An image of a message being sent, as a file of the phone's own for its bubble, its tile's image ready for it
+    /// (drawn in its first frame).
+    private func kept(_ data: Data) -> String? {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("sending-\(UUID().uuidString).jpg")
-        return (try? data.write(to: file)).map { file.path }
+        guard (try? data.write(to: file)) != nil else { return nil }
+        if let image = UIImage(data: data) { keepImage(image, for: file.path, side: MessageImages.side * 3) }
+        return file.path
     }
 
     /// Each video kept on the Mac, its path there; `uploaded` says how far they are, for their tiles.
@@ -908,6 +942,8 @@ import UserNotifications
         let key = "\(side)|\(path)" as NSString
         if let kept = images.object(forKey: key) { return kept }
         // The phone's own file (a message being sent; in the Simulator, the Mac's too).
+        // Not an image (a video being sent, before its still is cut): nothing to ask the Mac, which hasn't got it.
+        if path.hasPrefix(FileManager.default.temporaryDirectory.path), UIImage(contentsOfFile: path) == nil { return nil }
         if FileManager.default.fileExists(atPath: path), let image = UIImage(contentsOfFile: path) {
             #if DEBUG
                 // The UI tests' `-slowImages`: each comes as late as the Mac's do over the relay, after the page opened.

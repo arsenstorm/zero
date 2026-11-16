@@ -14,7 +14,9 @@ struct LaterView: View {
     static let pillPadding: CGFloat = 10
 
     var body: some View {
-        let newest = model.later.sorted { $0.created > $1.created }
+        // This workspace's (the same rule as the Mac's Later: an item keeps its task's workspace, else Zero's).
+        let known = Set(model.workspaces.map(\.id))
+        let newest = model.later.filter { $0.workspace(among: known) == model.workspace }.sorted { $0.created > $1.created }
         let open = newest.filter { !$0.done }, done = newest.filter(\.done)
         let suggested = open.filter { $0.suggested == true }, kept = open.filter { $0.suggested != true }
         List {

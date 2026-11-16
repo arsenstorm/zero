@@ -32,6 +32,7 @@
                             let copy = FileManager.default.temporaryDirectory.appendingPathComponent("test-video.mp4")
                             try? FileManager.default.removeItem(at: copy)
                             try? FileManager.default.copyItem(atPath: CommandLine.arguments[at + 1], toPath: copy.path)
+                            FrameLog.marks.append("sent")
                             try? await model.send("Here's the video", images: [], videos: [copy], to: session)
                         }
                     }
@@ -138,6 +139,8 @@
         @MainActor static var shown = 0
         /// The composer's fade, as drawn (ComposerFade sets it).
         @MainActor static var fade = 0.0
+        /// Moments to note in the log, each on its own line before the next frame's ("sent": a message sent).
+        @MainActor static var marks: [String] = []
 
         func makeUIView(context: Context) -> Logger { Logger() }
         func updateUIView(_ view: Logger, context: Context) {}
@@ -209,6 +212,8 @@
 
             @objc private func tick(_ link: CADisplayLink) {
                 guard let window else { return }
+                for mark in FrameLog.marks { lines.append(String(format: "%.4f mark %@", link.timestamp, mark)) }
+                FrameLog.marks = []
                 let guide = drawn(probe).maxY
                 let host = keyboardHost()
                 // The host's top, or the screen's foot with no keyboard drawn.

@@ -91,7 +91,7 @@ struct NavBar: View {
             Divider().padding(.horizontal, 10).padding(.vertical, 4)
             if choosingWorkspace {
                 ForEach(model.workspaces) { space in
-                    row(Home.title(space), image: nil, selected: space.id == model.currentWorkspace?.id) {
+                    row(space.name, mark: space, selected: space.id == model.currentWorkspace?.id) {
                         model.switchWorkspace(space.id)
                         setOpen(false)
                     }
@@ -124,8 +124,8 @@ struct NavBar: View {
             if model.workspaces.count > 1 { choosingWorkspace.toggle() }
         } label: {
             HStack(spacing: 12) {
-                Logo(size: 26)
-                Text(model.currentWorkspace.map(Home.title) ?? "Zero").font(.body.weight(.semibold)).lineLimit(1)
+                if let current = model.currentWorkspace { WorkspaceMark(workspace: current, size: 20) } else { Logo(size: 26) }
+                Text(model.currentWorkspace?.name ?? "Zero").font(.body.weight(.semibold)).lineLimit(1)
                 if model.workspaces.count > 1 {
                     Image("chevron-expand-y-outline").resizable().frame(width: 14, height: 14).foregroundStyle(.secondary)
                 }
@@ -136,10 +136,15 @@ struct NavBar: View {
         .buttonStyle(.plain)
     }
 
-    private func row(_ title: String, image: String?, selected: Bool = false, count: Int = 0, action: @escaping () -> Void) -> some View {
+    private func row(
+        _ title: String, image: String? = nil, mark: ZerodLink.Workspace? = nil, selected: Bool = false, count: Int = 0,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
                 if let image { Image(image).resizable().frame(width: 22, height: 22) }
+                // A workspace's mark in its row's icon slot, its tile a little past the icons' 22 pt.
+                if let mark { WorkspaceMark(workspace: mark, size: 18).frame(width: 22, height: 22) }
                 Text(title).font(.body.weight(.medium)).lineLimit(1)
                 Spacer(minLength: 8)
                 if count > 0 {

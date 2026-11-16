@@ -14,6 +14,9 @@ struct ZeroPhone: App {
         StateGlyph.terminal = { PhoneModel.shared.terminalName }
         // The workspace the Tasks list shows, for the share sheet's list of tasks to send to.
         Keychain.write("workspace", Data(PhoneModel.shared.workspace.utf8))
+        #if DEBUG
+            if CommandLine.arguments.contains("-homeTest") { PhoneModel.shared.seedForTests() }
+        #endif
     }
 
     var body: some Scene {
@@ -255,17 +258,49 @@ extension Home {
         .inbox: "Inbox", .tasks: "Tasks", .later: "Later", .record: "Record", .settings: "Settings",
     ]
 
-    /// A workspace's name, its emoji first when it has one (a Nucleo icon's name isn't shown here).
-    static func title(_ space: ZerodLink.Workspace) -> String {
-        let emoji = space.glyph.unicodeScalars.first.map { $0.properties.isEmojiPresentation } ?? false
-        return emoji ? space.glyph + " " + space.name : space.name
-    }
 }
 
 /// Zero's mark, as the app's own (tinted with the text).
 struct Logo: View {
     var size: CGFloat = 24
     var body: some View { Image("logo").resizable().scaledToFit().frame(width: size, height: size) }
+}
+
+/// A workspace's mark, as the Mac's rail draws it: its icon (Zero's mark when it has none, or an emoji), and with a
+/// colour of its own, the icon in white on a tile of that colour.
+struct WorkspaceMark: View {
+    let workspace: ZerodLink.Workspace
+    var size: CGFloat = 20
+
+    /// The colours a mark can take, by the name zerod keeps: the system's, as the Mac's (WorkspaceColors).
+    static func color(_ name: String) -> Color? {
+        [
+            "red": .red, "orange": .orange, "yellow": .yellow, "green": .green, "teal": .teal, "blue": .blue, "indigo": .indigo,
+            "purple": .purple, "pink": .pink, "gray": .gray,
+        ][name]
+    }
+
+    var body: some View {
+        let tint = Self.color(workspace.color)
+        glyph(filled: tint != nil)
+            .foregroundStyle(tint != nil ? Color.white : Color.primary)
+            .frame(width: size + 10, height: size + 10)
+            .background(tint ?? .clear, in: RoundedRectangle(cornerRadius: (size + 10) * 0.27, style: .continuous))
+    }
+
+    @ViewBuilder private func glyph(filled: Bool) -> some View {
+        let glyph = workspace.glyph
+        if glyph.isEmpty {
+            Logo(size: size)
+        } else if glyph.unicodeScalars.first?.properties.isEmoji == true && glyph.count <= 2 {
+            Text(glyph).font(.system(size: size - 2))
+        } else {
+            // An icon the phone doesn't have (one taken out of the Mac's palette since): the palette's first.
+            let name = glyph + (filled ? "-glyph" : "-outline")
+            Image(UIImage(named: name) != nil ? name : "layers" + (filled ? "-glyph" : "-outline")).resizable()
+                .frame(width: size, height: size)
+        }
+    }
 }
 
 /// Every task, most urgent first, as the Mac's board sorts them; as its sidebar has them, each lead's workers folded
@@ -469,6 +504,14 @@ struct TaskView: View {
     /// The Mac not reached since this page opened: said until it's back, through the tries again (each a moment of
     /// "connecting", which flipped the page between this and loading).
     @State private var missedMac = false
+    /// Its conversation here: held already as the page opens (no loading shape), or come since (crossfaded in).
+    @State private var arrived: Bool
+
+    init(model: PhoneModel, session: String) {
+        self.model = model
+        self.session = session
+        _arrived = State(initialValue: model.conversation(session) != nil)
+    }
 
     /// Its history, asked for again a few times when the Mac doesn't answer, rather than once and then a blank page.
     /// To the end while the page settles after opening. After this layout, not inside it: asked mid-layout (the app
@@ -495,6 +538,7 @@ struct TaskView: View {
             if let conversation {
                 ConversationView(model: model, conversation: conversation, lift: lifted?.room ?? 0, liftAt: lifted?.id, end: end)
                     .padding()
+                    .opacity(arrived ? 1 : 0)
             }
             // Not loaded: a moment the Mac couldn't be reached left the page blank, with nothing to say so.
             // Can't reach the Mac (or it didn't answer): said, in the page's middle, not a spinner going on.
@@ -514,9 +558,17 @@ struct TaskView: View {
                     .padding(.horizontal, 40)
                 }
                 .containerRelativeFrame(.vertical)
-            } else {
-                LoadingTurns()
             }
+        }
+        // Until the conversation comes (the first time it's opened: the phone has only what it's been sent), its
+        // shape, crossfading into it as it comes; cut from one to the other, the page flashed.
+        .overlay(alignment: .top) {
+            if !couldNotLoad && !missedMac {
+                LoadingTurns().opacity(arrived ? 0 : 1).allowsHitTesting(false).accessibilityHidden(arrived)
+            }
+        }
+        .onChange(of: conversation == nil) { _, missing in
+            if missing { arrived = false } else { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { arrived = true } }
         }
         .scrollPosition($position)
         // Opened at the end; after that only you scroll: words added below don't move what you're reading.
