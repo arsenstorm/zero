@@ -167,6 +167,7 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
             .set_permissions(&request.session()?, request.permissions.ok_or("Which permissions: auto or unrestricted?")?)
             .await
             .map(|_| Value::Null),
+        "setAdvisor" => daemon.set_advisor(&request.session()?, request.advisor.as_deref()).await.map(|_| Value::Null),
         "placeInWorkspace" => daemon.place_in_workspace(&request.session()?, request.workspace_id().as_deref()).map(|_| Value::Null),
         // The user's word on where a task stands, as its agent's confirmed note would say it: done when the last of it was
         // theirs, waiting or blocked on what the agent can't see. What the agent's activity says (working, asking) isn't
@@ -313,6 +314,7 @@ fn options(request: &Request, cwd: Option<String>, permissions: Option<Permissio
         workspace: request.workspace_id(),
         model: request.model.clone(),
         effort: request.effort.clone(),
+        advisor: request.advisor.clone(),
         permissions,
         label: request.label.clone(),
         ticket: request.ticket.clone(),

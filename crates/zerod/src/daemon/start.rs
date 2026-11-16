@@ -17,6 +17,7 @@ impl Daemon {
         if provider == parent.provider {
             options.model = options.model.or(parent.model.clone());
             options.effort = options.effort.or(parent.effort.clone());
+            options.advisor = options.advisor.or(parent.advisor.clone());
         }
         // The lead decides: its worker is in its workspace wherever the worker's folder is.
         options.workspace = options.workspace.or_else(|| Some(self.workspace_of(&parent)));
@@ -31,11 +32,14 @@ impl Daemon {
         let dir = self.home.join("sessions").join(&id);
         let conversation = self.new_conversation(&id, provider, &options)?;
         let session = Session::new(conversation.clone(), Some(dir.clone()), self.events.clone()).map_err(|e| e.to_string())?;
-        session.set_mcp(conversation.mcp.clone());
+        session.prepare(&conversation);
         // The workspace it starts in, kept in its history as a move into it is: restarted, it's still there (only
         // memory had it, and a restart put it back in Zero).
         if conversation.workspace.is_some() {
             session.change(Change::Placed { workspace: conversation.workspace.clone() })
+        }
+        if conversation.advisor.is_some() {
+            session.change(Change::Advised { advisor: conversation.advisor.clone() })
         }
         // The model it starts on, kept with it (Claude's thread is known already): resumed later, it starts on it again.
         if let (Some(thread), true) = (&conversation.thread, model.is_some() || effort.is_some()) {
@@ -114,6 +118,7 @@ impl Daemon {
         conversation.permissions = options.permissions.unwrap_or_default();
         conversation.parent = options.parent.clone();
         conversation.workspace = options.workspace.clone();
+        conversation.advisor = options.advisor.clone();
         // Chosen, else its lead's (a worker of the same CLI runs as its lead does), else the CLI's default.
         let lead = conversation
             .parent
@@ -133,7 +138,15 @@ impl Daemon {
             conversation.thread = Some(claude::new_session_id())
         }
         conversation.mcp = self.mcp_for(&conversation)?;
+        conversation.plain_answers = self.plain_answers(&conversation);
         Ok(conversation)
+    }
+
+    /// Whether a task's CLI is told the answer rules: unless the user turned them off, for all tasks or its workspace.
+    pub(super) fn plain_answers(&self, conversation: &Conversation) -> bool {
+        let workspace = self.workspace_of(conversation);
+        crate::server::Settings::load(&self.home).plain_answers()
+            && self.workspaces.list().iter().find(|w| w.id == workspace).is_none_or(|w| w.plain_answers != Some(false))
     }
 
     /// What a session's CLI starts with: its sign-in (signins.rs) and its workspace's MCP servers, their values read

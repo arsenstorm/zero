@@ -427,6 +427,64 @@ async fn scratchpads_are_reached_through_the_pad_op() {
     assert_eq!(client.call(json!({"op": "pad", "tool": "nope"})).await["error"], "No scratchpad tool nope");
 }
 
+/// Through `zerod mcp` as a task's agent runs it: its pads are made and listed in its task's workspace, another named
+/// by its name, and the list says which workspaces there are.
+#[tokio::test]
+async fn an_agents_pads_are_its_tasks_workspaces_unless_it_names_another() {
+    let h = harness("server-pad-agent").await;
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Personal", "glyph": "", "folders": []}})).await;
+    client.call(json!({"op": "pad", "tool": "create", "args": {"title": "App's"}})).await;
+    let started = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls", "workspace": "personal"})).await;
+    let session = started["result"]["session"].as_str().unwrap_or_else(|| panic!("{started}")).to_string();
+    let mut agent = tokio::process::Command::new(env!("CARGO_BIN_EXE_zerod"))
+        .args(["mcp", "--home", &h.home.to_string_lossy(), "--socket", &h.socket.to_string_lossy()])
+        .env("HOME", &h.home)
+        .env("ZERO_SESSION", &session)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut input = agent.stdin.take().unwrap();
+    let mut lines = BufReader::new(agent.stdout.take().unwrap()).lines();
+    let mut tool = async |name: &str, arguments: Value| -> Value {
+        let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}});
+        input.write_all(format!("{call}\n").as_bytes()).await.unwrap();
+        let answer: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        let text = answer["result"]["content"][0]["text"].as_str().unwrap_or_default();
+        serde_json::from_str(text).unwrap_or_else(|_| json!(text))
+    };
+    assert_eq!(tool("scratchpad_create", json!({"title": "Mine"})).await["workspace"], "personal", "made in its task's");
+    let theirs = tool("scratchpad_create", json!({"title": "Zero's", "workspace": "Zero"})).await;
+    assert_eq!(theirs["workspace"], "zero", "or the one it names: {theirs}");
+    let listed = tool("scratchpad_list", json!({})).await;
+    let titles =
+        |listed: &Value| listed["pads"].as_array().unwrap().iter().map(|p| p["title"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(titles(&listed), ["Mine"], "listed in its task's: {listed}");
+    assert_eq!(listed["workspaces"], json!([{"id": "zero", "name": "Zero"}, {"id": "personal", "name": "Personal"}]));
+    let mut zeros = titles(&tool("scratchpad_list", json!({"workspace": "Zero"})).await);
+    zeros.sort();
+    assert_eq!(zeros, ["App's", "Zero's"]);
+    assert_eq!(tool("scratchpad_list", json!({"workspace": "Nope"})).await, json!("No workspace Nope: Zero, Personal"));
+}
+
+#[tokio::test]
+async fn an_agent_moves_a_pad_to_a_workspace_by_its_name_and_not_to_one_that_isnt() {
+    let h = harness("server-pad-place").await;
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Personal", "glyph": "", "folders": []}})).await;
+    let created = client.call(json!({"op": "pad", "tool": "create", "args": {"title": "Plan", "folder": "Work"}})).await;
+    let link = created["result"]["link"].clone();
+    let moved = client.call(json!({"op": "pad", "tool": "move", "args": {"pad": link, "workspace": "personal"}})).await;
+    assert_eq!(moved["result"]["workspace"], "personal", "{moved}");
+    assert_eq!(moved["result"]["folder"], "Work", "a workspace alone leaves its folder");
+    let back = client.call(json!({"op": "pad", "tool": "move", "args": {"pad": link, "workspace": "Zero"}})).await;
+    assert_eq!(back["result"]["workspace"], "zero", "by its name too: {back}");
+    let typo = client.call(json!({"op": "pad", "tool": "move", "args": {"pad": link, "workspace": "Persnal"}})).await;
+    assert_eq!(typo["error"], "No workspace Persnal: Zero, Personal");
+}
+
 #[tokio::test]
 async fn a_subscriber_is_sent_the_board_and_told_when_pads_change() {
     let h = harness("server-feed").await;
@@ -722,7 +780,7 @@ async fn every_op_is_routed_to_its_handler() {
         deleteWorkspace deliver detach dismiss firefox follow following get hello interrupt items label later list loop loops \
         mcpServers message migrate notify openTerminal outline pad place placeInWorkspace queue recent release remind \
         reorderWorkspaces reply restartStatus result resume rewind rewindPreview saveBrowserSettings saveLoop saveMcpServer saveSignIn saveWorkspace \
-        schedule schedules seen send setPermissions settings signIns spawn start stop switch switchModel \
+        schedule schedules seen send setAdvisor setPermissions settings signIns spawn start stop switch switchModel \
         table takeBack unarchive unfollow unqueue unschedule unwatch wait watch watchFile watches window withdraw workers workspaces";
     for op in ops.split_whitespace() {
         let answer = client.call(json!({"op": op})).await;

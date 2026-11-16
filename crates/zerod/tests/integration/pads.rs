@@ -155,4 +155,10 @@ fn a_pad_is_in_a_workspace_kept_beside_the_files_else_zeros() {
     let moved = call(&again, "place", &serde_json::json!({"pad": theirs.link, "workspace": "zero"}), &gone).unwrap();
     assert_eq!(moved["workspace"], "zero");
     assert!(titles("acme").is_empty());
+    // An agent's move: to a workspace, a folder, or both; neither is a mistake.
+    let both = call(&again, "move", &serde_json::json!({"pad": theirs.id, "workspace": "acme", "folder": "Work"}), &gone).unwrap();
+    assert_eq!((&both["workspace"], &both["folder"]), (&serde_json::json!("acme"), &serde_json::json!("Work")));
+    let placed = call(&again, "move", &serde_json::json!({"pad": theirs.id, "workspace": "zero"}), &gone).unwrap();
+    assert_eq!((&placed["workspace"], &placed["folder"]), (&serde_json::json!("zero"), &serde_json::json!("Work")));
+    assert!(call(&again, "move", &serde_json::json!({"pad": theirs.id}), &gone).is_err());
 }

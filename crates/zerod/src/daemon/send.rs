@@ -173,7 +173,8 @@ impl Daemon {
             choice.effort.or(conversation.effort.as_deref()).map(String::from),
         );
         conversation.mcp = self.mcp_for(&conversation)?;
-        session.set_mcp(conversation.mcp.clone());
+        conversation.plain_answers = self.plain_answers(&conversation);
+        session.prepare(&conversation);
         let argv = conversation.provider.command(&conversation, false, model.as_deref(), effort.as_deref());
         let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(&conversation.id), &argv)
             .map_err(|e| format!("{} didn't start: {e}", conversation.provider.title()))?;
@@ -198,7 +199,8 @@ impl Daemon {
         let mut conversation = session.snapshot();
         // Its workspace's servers as they are now: one moved since, or a server added, applies from this start.
         conversation.mcp = self.mcp_for(&conversation)?;
-        session.set_mcp(conversation.mcp.clone());
+        conversation.plain_answers = self.plain_answers(&conversation);
+        session.prepare(&conversation);
         let argv = conversation.provider.command(&conversation, true, conversation.model.as_deref(), conversation.effort.as_deref());
         let transport = (self.runtime)(&conversation, &self.home.join("sessions").join(id), &argv)
             .map_err(|e| format!("{} didn't start: {e}", conversation.provider.title()))?;
@@ -265,6 +267,28 @@ impl Daemon {
         }
         self.take_offline(&session).await;
         session.change(Change::Permitted { permissions });
+        Ok(())
+    }
+
+    /// Changes the model Claude Code consults (none: no advisor), between turns as permissions are: the next message
+    /// resumes its thread with it.
+    pub async fn set_advisor(&self, id: &str, advisor: Option<&str>) -> Result<(), String> {
+        let session = self.session(id)?;
+        let conversation = session.snapshot();
+        if busy_turn(&conversation) {
+            let mut next = self.next(id).unwrap_or_default();
+            next.advisor = (advisor != conversation.advisor.as_deref()).then(|| advisor.unwrap_or_default().to_string());
+            self.keep_next(id, next);
+            return Ok(());
+        }
+        if conversation.advisor.as_deref() == advisor {
+            return Ok(());
+        }
+        if conversation.terminal.is_some() {
+            return Err(format!("{} is open in Terminal; bring it back to Zero first", conversation.provider.title()));
+        }
+        self.take_offline(&session).await;
+        session.change(Change::Advised { advisor: advisor.map(Into::into) });
         Ok(())
     }
 
@@ -622,6 +646,11 @@ impl Daemon {
             && let Err(error) = self.set_permissions(id, permissions).await
         {
             session.report(&format!("Couldn't change its permissions: {error}"));
+        }
+        if let Some(advisor) = &next.advisor
+            && let Err(error) = self.set_advisor(id, Some(advisor.as_str()).filter(|a| !a.is_empty())).await
+        {
+            session.report(&format!("Couldn't change its advisor: {error}"));
         }
         let provider = next.provider.unwrap_or(session.summary().provider);
         if next.provider.is_some() || next.model.is_some() || next.effort.is_some() {

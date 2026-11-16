@@ -23,11 +23,14 @@ pub struct Workspace {
     /// A colour's name ("teal"), or "" for none.
     #[serde(default)]
     pub color: String,
+    /// Its tasks' agents follow the answer rules (adapter::ANSWERS); unset, as Settings say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plain_answers: Option<bool>,
 }
 
 impl Workspace {
     fn zero() -> Workspace {
-        Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new(), color: String::new() }
+        Workspace { id: DEFAULT.into(), name: "Zero".into(), glyph: String::new(), color: String::new(), plain_answers: None }
     }
 }
 
@@ -122,6 +125,16 @@ impl Workspaces {
 
     pub fn exists(&self, id: &str) -> bool {
         self.list.lock().unwrap().iter().any(|w| w.id == id)
+    }
+
+    /// A workspace's id from its id or its name (case aside); else what there is, to say so.
+    pub fn find(&self, id_or_name: &str) -> Result<String, String> {
+        let list = self.list.lock().unwrap();
+        let wanted = id_or_name.trim();
+        match list.iter().find(|w| w.id == wanted || w.name.eq_ignore_ascii_case(wanted)) {
+            Some(found) => Ok(found.id.clone()),
+            None => Err(format!("No workspace {wanted}: {}", list.iter().map(|w| w.name.as_str()).collect::<Vec<_>>().join(", "))),
+        }
     }
 
     /// Which workspace a task is in: the one it was put in, if that still exists; else Zero.

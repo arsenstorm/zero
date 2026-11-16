@@ -4,6 +4,7 @@
 //! another, so 46 of them spent minutes before any test ran.
 
 mod adopt;
+mod answers;
 mod ask_links;
 mod attributes;
 mod auto_follow;

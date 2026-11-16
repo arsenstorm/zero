@@ -77,6 +77,11 @@ const TOOLS: &[(&str, &str, &[Arg])] = &[
         &[
             ("query", "Only pads whose title or text has this.", false),
             ("folder", "Only this folder's pads. Tasks' own pads (Tasks/<issue>) are listed only this way.", false),
+            (
+                "workspace",
+                "The workspace whose pads to list, by its name or id; left out, your task's. The list says which there are.",
+                false,
+            ),
         ],
     ),
     (
@@ -94,6 +99,7 @@ const TOOLS: &[(&str, &str, &[Arg])] = &[
             ("title", "Its title; left out, the content's first heading's.", false),
             ("folder", "Its folder, like Work/2026; left out, the top.", false),
             ("content", "Its Markdown.", false),
+            ("workspace", "Its workspace, by its name or id; left out, your task's.", false),
         ],
     ),
     (
@@ -128,8 +134,13 @@ const TOOLS: &[(&str, &str, &[Arg])] = &[
     ("rename", "Gives a pad a new title.", &[("pad", "Its id or link.", true), ("title", "The new title.", true)]),
     (
         "move",
-        "Moves a pad to another folder; its link stays the same.",
-        &[("pad", "Its id or link.", true), ("folder", "The folder; empty for the top.", true)],
+        "Moves a pad to another folder, or to another of the user's workspaces (the pad is listed in its workspace's \
+         scratchpads only); its link stays the same. Give a folder, a workspace or both.",
+        &[
+            ("pad", "Its id or link.", true),
+            ("folder", "The folder; empty for the top; left out, it stays in its own.", false),
+            ("workspace", "The workspace, by its name or id; left out, it stays in its own.", false),
+        ],
     ),
     ("delete", "Moves a pad to the scratchpads' trash.", &[("pad", "Its id or link.", true)]),
     ("folder", "Makes a folder.", &[("folder", "Its path, like Work/2026.", true)]),
@@ -299,7 +310,7 @@ async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, Stri
     } else if tool.starts_with("browser_") {
         json!({"id": 1, "op": "browserCall", "tool": tool, "args": args, "session": session})
     } else {
-        json!({"id": 1, "op": "pad", "tool": tool, "args": args})
+        json!({"id": 1, "op": "pad", "tool": tool, "args": args, "session": session})
     };
     let mut request = request.to_string();
     request.push('\n');

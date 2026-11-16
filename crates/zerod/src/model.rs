@@ -100,11 +100,18 @@ pub struct Conversation {
     /// to clients or kept (their values may be secrets).
     #[serde(skip)]
     pub mcp: Vec<crate::mcp_servers::Resolved>,
+    /// Its CLI is told the rules for its answers (adapter::ANSWERS): the user's setting and its workspace's, read as it
+    /// starts. In memory only, as `mcp` is.
+    #[serde(skip)]
+    pub plain_answers: bool,
     /// The provider's own id for the conversation (a Codex thread), once it exists; what resuming needs.
     pub thread: Option<String>,
     pub title: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The stronger model Claude Code consults mid-turn (`--advisor`), by its id; none, no advisor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advisor: Option<String>,
     pub status: Status,
     /// The turn in progress, which interrupting and steering name.
     pub turn: Option<String>,
@@ -543,6 +550,10 @@ pub enum Change {
     SignedIn {
         signin: Option<String>,
     },
+    /// The model Claude Code consults (none: no advisor), from its next start (set between turns).
+    Advised {
+        advisor: Option<String>,
+    },
     /// What the agent may do without asking, from its next start (set between turns).
     Permitted {
         permissions: Permissions,
@@ -665,6 +676,7 @@ impl Conversation {
             title: None,
             model: None,
             effort: None,
+            advisor: None,
             status: Status::Starting,
             turn: None,
             error: None,
@@ -682,6 +694,7 @@ impl Conversation {
             terminal: None,
             seq: 0,
             mcp: vec![],
+            plain_answers: false,
             rewound: Taken::default(),
         }
     }
@@ -709,6 +722,7 @@ impl Conversation {
             title: self.title.clone(),
             model: self.model.clone(),
             effort: self.effort.clone(),
+            advisor: self.advisor.clone(),
             status: self.status,
             turn: self.turn.clone(),
             error: self.error.clone(),
@@ -726,6 +740,7 @@ impl Conversation {
             terminal: self.terminal.clone(),
             seq: self.seq,
             mcp: self.mcp.clone(),
+            plain_answers: self.plain_answers,
             rewound: self.rewound.clone(),
         }
     }
@@ -806,6 +821,7 @@ impl Conversation {
             Change::Named { label, ticket } => (self.label, self.ticket) = (label, ticket),
             Change::Placed { workspace } => self.workspace = workspace,
             Change::SignedIn { signin } => self.signin = signin,
+            Change::Advised { advisor } => self.advisor = advisor,
             Change::Permitted { permissions } => self.permit(permissions),
             Change::Status { status, turn, error } => (self.status, self.turn, self.error) = (status, turn, error),
             Change::Item { item } => {
@@ -1050,6 +1066,9 @@ pub struct Next {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// The advisor to change to; empty for none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advisor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permissions: Option<Permissions>,
 }

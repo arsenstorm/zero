@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use crate::adapter::{Adapter, Answers, Effects, INSTRUCTIONS, json_rpc_answer, key};
+use crate::adapter::{Adapter, Answers, Effects, instructions, json_rpc_answer, key};
 use crate::model::{
     Approval, ApprovalKind, Change, Choice, ChoiceKind, Conversation, Field, FileChange, Item, ItemKind, ItemStatus, Permissions, Question,
     QuestionOption, Status,
@@ -518,7 +518,7 @@ pub async fn start(
     handshake(session, transport).await?;
     let conversation = session.snapshot();
     let (approvals, sandbox) = policy(conversation.permissions);
-    let mut params = json!({"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals, "sandbox": sandbox, "developerInstructions": INSTRUCTIONS});
+    let mut params = json!({"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals, "sandbox": sandbox, "developerInstructions": instructions(conversation.plain_answers)});
     if !conversation.mcp.is_empty() {
         params["config"] = mcp_config(&conversation.mcp)
     }
@@ -542,7 +542,7 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
     };
     let (approvals, sandbox) = policy(conversation.permissions);
     let mut params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "sandbox": sandbox,
-                            "developerInstructions": INSTRUCTIONS, "excludeTurns": true});
+                            "developerInstructions": instructions(conversation.plain_answers), "excludeTurns": true});
     if let Some(model) = &conversation.model {
         params["model"] = json!(model)
     }

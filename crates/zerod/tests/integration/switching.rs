@@ -291,6 +291,54 @@ async fn permissions_change_between_turns_and_the_next_turn_starts_the_agent_wit
 }
 
 #[tokio::test]
+async fn an_advisor_is_chosen_at_start_changed_between_turns_and_taken_by_workers() {
+    let home = temp_dir("switch-advisor");
+    let started = Arc::new(std::sync::Mutex::new(vec![]));
+    let seen = started.clone();
+    let runtime: Runtime = Arc::new(move |_, _, argv| {
+        seen.lock().unwrap().push(argv.join(" "));
+        Ok(zerod::session::Transport::new(tokio::io::empty(), tokio::io::sink()))
+    });
+    let last = || started.lock().unwrap().last().unwrap().clone();
+    let daemon = Daemon::open(&home, runtime.clone()).unwrap();
+    let options = zerod::daemon::Options {
+        cwd: Some(home.to_str().unwrap().into()),
+        model: Some("claude-opus-5-5".into()),
+        advisor: Some("claude-fable-5-2".into()),
+        ..Default::default()
+    };
+    let id = daemon.start(Provider::Claude, "hi", options).unwrap();
+    crate::common::until(&daemon.session(&id).unwrap(), |c| c.status == Status::Offline).await;
+    assert!(last().contains("--advisor claude-fable-5-2"), "{}", last());
+    let worker = daemon.spawn(&id, Provider::Claude, "work", zerod::daemon::Options::default()).unwrap();
+    assert!(last().contains("--advisor claude-fable-5-2"), "its lead's: {}", last());
+    assert_eq!(daemon.get(&worker).unwrap().advisor.as_deref(), Some("claude-fable-5-2"));
+
+    // Kept across a restart; off between turns, from the next start.
+    drop(daemon);
+    let daemon = Daemon::open(&home, runtime).unwrap();
+    assert_eq!(daemon.get(&id).unwrap().advisor.as_deref(), Some("claude-fable-5-2"), "kept in the transcript");
+    daemon.set_advisor(&id, None).await.unwrap();
+    daemon.resume(&id).await.ok();
+    assert!(!last().contains("--advisor"), "{}", last());
+
+    // Mid-turn: kept for the next turn, applied as this one ends.
+    let session = daemon.session(&id).unwrap();
+    session.change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
+    daemon.set_advisor(&id, Some("claude-opus-5-5")).await.unwrap();
+    assert_eq!(daemon.next(&id).unwrap().advisor.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(daemon.get(&id).unwrap().advisor, None, "not mid-turn");
+    session.change(Change::Status { status: Status::Idle, turn: None, error: None });
+    for _ in 0..50 {
+        if daemon.next(&id).is_none() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(daemon.get(&id).unwrap().advisor.as_deref(), Some("claude-opus-5-5"), "applied as the turn ended");
+}
+
+#[tokio::test]
 async fn a_task_keeps_the_model_it_started_on_and_its_workers_take_it() {
     // Started on a model: resumed later (parked, then a message), it runs on that model, not the provider's default.
     let home = temp_dir("switch-kept-model");

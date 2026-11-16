@@ -385,7 +385,8 @@ pub async fn start(session: &Session, transport: Transport, message: Message<'_>
     let mut blocks = blocks(message.text, message.images);
     // ACP has no standing instructions (Claude's system prompt, Codex's developer ones): Zero's go first, as context.
     if let Some(list) = blocks.as_array_mut() {
-        for text in message.context.into_iter().chain([crate::adapter::INSTRUCTIONS]) {
+        let instructions = crate::adapter::instructions(snapshot.plain_answers);
+        for text in message.context.into_iter().chain([instructions.as_str()]) {
             list.insert(0, json!({"type": "text", "text": text, "_meta": {"zero": "context"}}));
         }
     }

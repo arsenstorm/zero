@@ -35,6 +35,8 @@ pub struct Session(Arc<Mutex<Inner>>);
 struct Inner {
     /// The MCP servers its CLI is started with (Conversation::mcp), set by zerod before each start.
     mcp: Vec<crate::mcp_servers::Resolved>,
+    /// Whether its CLI is told the answer rules (Conversation::plain_answers), set with `mcp`.
+    plain_answers: bool,
     /// The conversation, replayed; None while parked.
     core: Option<Core>,
     /// What's kept of a parked session: its summary and latest items, until something needs the rest.
@@ -140,6 +142,7 @@ impl Session {
         if let Some(parked) = parked.filter(|p| p.lines == lines) {
             let session = Session(Arc::new(Mutex::new(Inner {
                 mcp: vec![],
+                plain_answers: false,
                 core: None,
                 parked: Some(parked),
                 summary: None,
@@ -236,6 +239,7 @@ impl Session {
     fn with(core: Core, transcript: Option<File>, events: broadcast::Sender<Event>, next: u64) -> Session {
         Session(Arc::new(Mutex::new(Inner {
             mcp: vec![],
+            plain_answers: false,
             core: Some(core),
             parked: None,
             summary: None,
@@ -267,7 +271,14 @@ impl Session {
         let mut inner = self.lock();
         let mut conversation = inner.core().conversation().clone();
         conversation.mcp = inner.mcp.clone();
+        conversation.plain_answers = inner.plain_answers;
         conversation
+    }
+
+    /// What its CLI is to be started with, from now on: `conversation`'s MCP servers and answer rules.
+    pub fn prepare(&self, conversation: &Conversation) {
+        self.set_mcp(conversation.mcp.clone());
+        self.lock().plain_answers = conversation.plain_answers;
     }
 
     /// The MCP servers its CLI is to be started with, from now on.

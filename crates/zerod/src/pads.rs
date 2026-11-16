@@ -591,7 +591,18 @@ pub fn call(pads: &Pads, tool: &str, args: &serde_json::Value, of: &dyn Fn(&str)
         "edit" => pad(pads.edit(need("pad")?, need("section")?, need("content")?, text("revision"))),
         "find" => Ok(json!(pads.find(need("query")?))),
         "rename" => pad(pads.rename(need("pad")?, need("title")?)),
-        "move" => pad(pads.move_to(need("pad")?, text("folder").unwrap_or(""))),
+        // To a folder, a workspace or both.
+        "move" => {
+            let (folder, workspace) = (text("folder"), text("workspace"));
+            if folder.is_none() && workspace.is_none() {
+                return Err("move needs a folder or a workspace".into());
+            }
+            let moved = match folder {
+                Some(folder) => pads.move_to(need("pad")?, folder)?,
+                None => pads.read(need("pad")?, None)?,
+            };
+            pad(workspace.map_or(Ok(moved.clone()), |w| pads.place(&moved.id, w)))
+        }
         "delete" => pads.delete(need("pad")?).map(|_| json!({"deleted": true})),
         "folder" => pads.make_folder(need("folder")?).map(|_| json!({"folders": pads.folders()})),
         other => Err(format!("No scratchpad tool {other}")),

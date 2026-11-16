@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use crate::adapter::INSTRUCTIONS;
+use crate::adapter::instructions;
 use crate::adapter::{Adapter, Answers, Effects, after_approval, login_shell};
 use crate::codex::file_title;
 use crate::model::{
@@ -51,6 +51,7 @@ pub const NO_IDLE_COMPACTION: &str = r#"{"idleCompaction":false}"#;
 pub const NO_SUBAGENTS: &[&str] = &["--disallowed-tools=Agent"];
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool) -> Vec<String> {
+    let instructions = instructions(conversation.plain_answers);
     let mut args = vec![
         "claude",
         "-p",
@@ -71,7 +72,7 @@ pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, e
             Permissions::Unrestricted => "bypassPermissions",
         },
         "--append-system-prompt",
-        INSTRUCTIONS,
+        &instructions,
         "--settings",
         NO_IDLE_COMPACTION,
     ];
@@ -86,6 +87,9 @@ pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, e
     }
     if let Some(effort) = effort {
         args.extend(["--effort", effort])
+    }
+    if let Some(advisor) = &conversation.advisor {
+        args.extend(["--advisor", advisor])
     }
     let config = mcp_config(&conversation.mcp).map(|(config, _)| config);
     if let Some(config) = &config {
@@ -448,6 +452,18 @@ impl Claude {
                     tool(conversation, &block["name"], &block["input"]),
                     ItemStatus::Running,
                 ),
+                // Its advisor (`--advisor`), called on the API's side: the call, then its advice, readable only from
+                // the older advisors (the newer ones' is encrypted, for Claude alone).
+                Some("server_tool_use") if block["name"] == "advisor" => (
+                    block["id"].as_str().unwrap_or("advisor").into(),
+                    ItemKind::Tool { name: "advisor".into(), detail: String::new(), output: String::new() },
+                    ItemStatus::Running,
+                ),
+                Some("advisor_tool_result") => {
+                    let advice = block["content"]["text"].as_str().unwrap_or("").to_string();
+                    let kind = ItemKind::Tool { name: "advisor".into(), detail: advice, output: String::new() };
+                    (block["tool_use_id"].as_str().unwrap_or("advisor").into(), kind, ItemStatus::Done)
+                }
                 _ => continue,
             };
             effects.changes.push(Change::Item { item: Item { at: None, id, turn: turn.clone(), kind, status } });

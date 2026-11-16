@@ -369,7 +369,13 @@ async fn a_worker_is_in_its_leads_workspace_wherever_it_runs() {
     let w = world("leads-workspaces");
     w.daemon
         .workspaces
-        .save(zerod::workspaces::Workspace { id: "work".into(), name: "Acme".into(), glyph: "".into(), color: "".into() })
+        .save(zerod::workspaces::Workspace {
+            id: "work".into(),
+            name: "Acme".into(),
+            glyph: "".into(),
+            color: "".into(),
+            plain_answers: None,
+        })
         .unwrap();
     let elsewhere = w.home.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();

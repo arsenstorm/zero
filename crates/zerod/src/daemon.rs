@@ -219,6 +219,8 @@ pub struct Options {
     pub workspace: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The model Claude Code consults mid-turn (`--advisor`).
+    pub advisor: Option<String>,
     pub permissions: Option<Permissions>,
     pub label: Option<String>,
     pub ticket: Option<String>,

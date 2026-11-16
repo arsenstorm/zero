@@ -49,6 +49,10 @@ async fn it_introduces_itself_and_lists_the_scratchpad_tools() {
         names[11..].iter().all(|n| n.starts_with("browser_") || n.starts_with("zero_")) && names.contains(&"browser_computer"),
         "then Zero for Chrome's and Zero's own: {names:?}"
     );
+    let takes_workspace = |at: usize| tools["result"]["tools"][at]["inputSchema"]["properties"]["workspace"].is_object();
+    assert!(takes_workspace(0) && takes_workspace(2), "list and create name a workspace");
+    let mv = &tools["result"]["tools"][8];
+    assert!(mv["inputSchema"]["properties"]["workspace"].is_object() && mv["inputSchema"]["required"] == json!(["pad"]), "{mv}");
     let unknown = ask(&pads, json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"})).await.unwrap();
     assert_eq!(unknown["error"]["code"], -32601);
 }

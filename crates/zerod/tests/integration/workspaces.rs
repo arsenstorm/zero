@@ -5,7 +5,7 @@ use crate::common::temp_dir;
 use zerod::workspaces::{DEFAULT, Workspace, Workspaces};
 
 fn workspace(name: &str) -> Workspace {
-    Workspace { id: String::new(), name: name.into(), glyph: String::new(), color: String::new() }
+    Workspace { id: String::new(), name: name.into(), glyph: String::new(), color: String::new(), plain_answers: None }
 }
 
 #[test]
@@ -17,9 +17,14 @@ fn zero_is_always_there_and_the_rest_are_made_named_and_kept() {
     assert_eq!(workspaces.save(workspace("Acme")).unwrap().id, "acme-2", "a second of the same name gets its own id");
     assert_eq!(workspaces.save(workspace("  ")).unwrap_err(), "A workspace needs a name");
     // Changed by id; Zero keeps its name whatever it is called.
-    workspaces.save(Workspace { id: "acme".into(), name: "Work".into(), glyph: "briefcase".into(), color: "teal".into() }).unwrap();
+    workspaces
+        .save(Workspace { id: "acme".into(), name: "Work".into(), glyph: "briefcase".into(), color: "teal".into(), plain_answers: None })
+        .unwrap();
     assert_eq!(
-        workspaces.save(Workspace { id: DEFAULT.into(), name: "Mine".into(), glyph: "".into(), color: "".into() }).unwrap().name,
+        workspaces
+            .save(Workspace { id: DEFAULT.into(), name: "Mine".into(), glyph: "".into(), color: "".into(), plain_answers: None })
+            .unwrap()
+            .name,
         "Zero"
     );
     assert_eq!(workspaces.delete(DEFAULT).unwrap_err(), "Zero is always there");

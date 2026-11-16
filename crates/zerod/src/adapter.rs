@@ -155,6 +155,20 @@ Chrome, through Zero for Chrome): your own browser tools are off in Zero. To sho
 render), save it as a file and put `![what it shows](/its/absolute/path.png)` on a line of its own in your message: \
 Zero shows it there, on their Mac and their phone.";
 
+/// How agents write the answer the user reads at the end of a turn (Settings › Plain answers, and each workspace's):
+/// ASD-STE100's rules, the few that change most. Every agent's prompt carries it, so it stays short.
+pub const ANSWERS: &str = "Your final message to the user in a turn (the answer they read) follows ASD-STE100 Simplified \
+Technical English: sentences of at most 20 words for instructions and 25 for descriptions; one instruction or one topic \
+per sentence; active voice and simple tenses; one word for one meaning, the same word each time; articles kept; the \
+condition before the command (\"If the build fails, run …\"); no filler, hedges or build-up; steps as a numbered list; at \
+the end, the next step or what you need from the user, said plainly. These rules are for that message alone, not your \
+thinking, tool use, or messages to other agents and workers; code, commands, identifiers and quoted errors stay as they are.";
+
+/// Zero's instructions for a CLI, with the answer rules unless the user turned them off for this task's workspace or all.
+pub fn instructions(plain_answers: bool) -> String {
+    if plain_answers { format!("{INSTRUCTIONS} {ANSWERS}") } else { INSTRUCTIONS.to_string() }
+}
+
 /// The start of a compaction row's id, whichever CLI compacted: once it's done, Zero gives the agent its record (recap.rs).
 pub const COMPACTED: &str = "compaction-";
 
@@ -298,6 +312,11 @@ impl Provider {
             && let Some(model) = conversation.model.as_deref()
         {
             args.extend(["--model", model])
+        }
+        if self == Provider::Claude
+            && let Some(advisor) = conversation.advisor.as_deref()
+        {
+            args.extend(["--advisor", advisor])
         }
         Ok(login_shell(&args))
     }

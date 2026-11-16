@@ -600,3 +600,38 @@ fn a_limit_claude_code_reports_fills_its_window_until_it_resets() {
         assert_eq!(usage.windows[0].read_at, Some(1_794_300_000), "when it was heard");
     }
 }
+
+#[test]
+fn a_task_with_an_advisor_starts_claude_with_it_and_its_call_reads_as_a_step() {
+    let mut conversation = Conversation::new("s1", Provider::Claude, "/work/project");
+    let at = |args: &[String]| args.iter().position(|a| a == "--advisor").map(|i| args[i + 1].clone());
+    assert_eq!(at(&Provider::Claude.command(&conversation, false, None, None)), None);
+    conversation.advisor = Some("claude-fable-5-2".into());
+    assert_eq!(at(&Provider::Claude.command(&conversation, true, None, None)).as_deref(), Some("claude-fable-5-2"));
+    assert_eq!(
+        at(&Provider::Claude.terminal(&Conversation { thread: Some("t".into()), ..conversation.clone() }).unwrap()).as_deref(),
+        Some("claude-fable-5-2")
+    );
+
+    // As Claude Code 2.1.325 streams it: the call, then its result (encrypted from the newer advisors; plain text from older).
+    let mut core = Core::new(conversation);
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "plan it"}}));
+    let call = json!({"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}});
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [call]}}));
+    let step = core.conversation().item("srvtoolu_1").cloned().expect("a step for the call");
+    assert!(matches!(&step.kind, ItemKind::Tool { name, .. } if name == "advisor"), "{:?}", step.kind);
+    assert_eq!(step.status, ItemStatus::Running);
+    let redacted = json!({"type": "advisor_tool_result", "tool_use_id": "srvtoolu_1", "content": {"type": "advisor_redacted_result", "encrypted_content": "Eu0O"}});
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [redacted]}}));
+    let step = core.conversation().item("srvtoolu_1").cloned().unwrap();
+    assert!(
+        matches!(&step.kind, ItemKind::Tool { name, detail, .. } if name == "advisor" && detail.is_empty()),
+        "nothing readable: {:?}",
+        step.kind
+    );
+    assert_eq!(step.status, ItemStatus::Done);
+    let plain = json!({"type": "advisor_tool_result", "tool_use_id": "srvtoolu_2", "content": {"type": "advisor_result", "text": "Expand, then contract."}});
+    core.receive(&json!({"type": "assistant", "message": {"id": "m2", "content": [plain]}}));
+    let step = core.conversation().item("srvtoolu_2").cloned().unwrap();
+    assert!(matches!(&step.kind, ItemKind::Tool { detail, .. } if detail == "Expand, then contract."), "the advice: {:?}", step.kind);
+}

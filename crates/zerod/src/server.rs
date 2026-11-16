@@ -42,6 +42,8 @@ struct Request {
     text: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    /// The model Claude Code consults; none (or left out), no advisor.
+    advisor: Option<String>,
     approval: Option<String>,
     choice: Option<String>,
     question: Option<String>,
@@ -194,6 +196,9 @@ pub struct Settings {
     /// The terminal app a task opens in (its name, or an .app's path); unset, Ghostty where installed, else Terminal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal: Option<String>,
+    /// Agents follow the answer rules (adapter::ANSWERS); unset, they do. A workspace can turn them off for its tasks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plain_answers: Option<bool>,
     /// What this zerod doesn't read (an older one's settings, such as drop folders' patterns), kept as it was.
     #[serde(flatten)]
     pub rest: serde_json::Map<String, Value>,
@@ -225,6 +230,10 @@ impl Settings {
 
     pub fn shares_build_cache(&self) -> bool {
         self.build_cache.unwrap_or(false)
+    }
+
+    pub fn plain_answers(&self) -> bool {
+        self.plain_answers.unwrap_or(true)
     }
 
     pub fn allows_subagents(&self) -> bool {
@@ -495,9 +504,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "unrewind" | "branch" | "switch"
         | "interrupt" | "stop" | "restartAgent" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
-        "label" | "setPermissions" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" | "expect" | "stopCommand" => {
-            sessions::properties(zerod, request).await
-        }
+        "label" | "setPermissions" | "setAdvisor" | "placeInWorkspace" | "setStatus" | "attr" | "issue" | "table" | "place" | "expect"
+        | "stopCommand" => sessions::properties(zerod, request).await,
         "hello" | "selfCheck" | "list" | "get" | "workers" | "result" | "wait" | "usage" | "board" | "recent" | "items" | "window"
         | "outline" | "anchor" => sessions::reads(zerod, request).await,
         "browserCall"
@@ -631,6 +639,7 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     settings.build_cache = given.build_cache.or(settings.build_cache);
     settings.stuck = given.stuck.or(settings.stuck);
     settings.terminal = given.terminal.or(settings.terminal);
+    settings.plain_answers = given.plain_answers.or(settings.plain_answers);
     settings.apply_git(daemon.home());
     settings.apply(&zerod.inbox);
     let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());

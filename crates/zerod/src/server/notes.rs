@@ -40,18 +40,32 @@ fn placed(zerod: &Zerod, mut found: crate::loops::Loop) -> crate::loops::Loop {
     found
 }
 
-/// A scratchpad tool called, subscribers told of a change. One an agent makes is in its task's workspace.
+/// A scratchpad tool called, subscribers told of a change. An agent's pads are made and listed in its task's workspace
+/// unless it names another, and its list says which workspaces there are.
 fn pad(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let daemon = &zerod.daemon;
     let tool = request.tool.as_deref().ok_or("Which scratchpad tool?")?;
     let mut args = request.args.clone().unwrap_or(json!({}));
-    if tool == "create"
+    let task = request.session.as_deref().and_then(|id| daemon.get(id));
+    if matches!(tool, "create" | "list")
         && args["workspace"].is_null()
-        && let (Some(task), Some(fields)) = (request.session.as_deref().and_then(|id| daemon.get(id)), args.as_object_mut())
+        && let (Some(task), Some(fields)) = (&task, args.as_object_mut())
     {
-        fields.insert("workspace".into(), json!(daemon.workspace_of(&task)));
+        fields.insert("workspace".into(), json!(daemon.workspace_of(task)));
     }
-    let result = crate::pads::call(&zerod.pads, tool, &args, &|w| daemon.workspaces.of(Some(w)));
+    // Named as an agent knows it, or refused: a workspace that isn't would read as Zero's.
+    if matches!(tool, "create" | "list" | "move" | "place")
+        && let Some(named) = args["workspace"].as_str()
+    {
+        args["workspace"] = json!(daemon.workspaces.find(named)?);
+    }
+    let mut result = crate::pads::call(&zerod.pads, tool, &args, &|w| daemon.workspaces.of(Some(w)));
+    if tool == "list"
+        && task.is_some()
+        && let Ok(listed) = &mut result
+    {
+        listed["workspaces"] = daemon.workspaces.list().iter().map(|w| json!({"id": w.id, "name": w.name})).collect();
+    }
     if result.is_ok() && !matches!(tool, "list" | "read" | "find") {
         let _ = zerod.notices.send("pads");
     }
