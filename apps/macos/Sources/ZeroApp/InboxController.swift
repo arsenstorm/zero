@@ -34,6 +34,8 @@ final class InboxController {
     /// two slots below. The app matches the pointer against these: a hover handler only answered over what a
     /// control draws, an 11 pt dot.
     @ObservationIgnored var barSlots: [String: CGRect] = [:]
+    /// Which view set each slot (PillView's `BarSlot`), so only that one clears it.
+    @ObservationIgnored var barSlotOwners: [String: UUID] = [:]
     /// The agents the bar shows now, top to bottom: a slot of one gone from the bar is not under the pointer.
     @ObservationIgnored var barOrder: [String] = []
     static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new", workspacesSlot = "\u{0}workspaces", settingsSlot = "\u{0}settings"
@@ -42,6 +44,9 @@ final class InboxController {
     /// The pointer is on its way from the bar into the open panel (MenuAim): the bar's controls it crosses, and the
     /// bar's buttons, stay as they are until it stops heading in or rests.
     var barAiming = false
+    /// Which of the bar's buttons the pointer on it is at (`BarReach`, from `hoverBar`): that one comes out, and its
+    /// zone opens what it does (the inbox's pane; the settings', nothing peeked).
+    var barReach = BarReach.neither
 
     /// The new-agent view: just the composer, opened from the bar's + button.
     var newAgentOpen = false

@@ -19,10 +19,12 @@ struct BarKnob<Label: View>: View {
     var pulse = 0
     @ViewBuilder var label: (_ hovered: Bool) -> Label
     @State private var hovered = false
+    /// How far out it is, eased by the button itself (see `.onChange` below).
+    @State private var open: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let open: CGFloat = out || hovered && !passing ? 1 : 0, tint: CGFloat = waiting ? 1 : 0
+        let target = out || hovered && !passing, tint: CGFloat = waiting ? 1 : 0
         ZStack {
             if reduceMotion {
                 // Reduce Motion: the arc and the button cross-fade, and the icon only fades.
@@ -41,11 +43,14 @@ struct BarKnob<Label: View>: View {
             }
         }
         .frame(width: barKnob, height: barKnob)
-        // One eased progress drives the ring and the icon together: ease-out-cubic, 220 ms out, 150 ms back in.
-        .animation(
-            reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.33, 1, 0.68, 1, duration: open == 1 ? 0.22 : 0.15),
-            value: open
-        )
+        // One eased progress drives the ring and the icon together: ease-out-cubic, 220 ms out, 150 ms back in. Its own
+        // animation, not an implicit one: what moves it often comes with a cut (the pane switching to an agent's as the
+        // pointer leaves the inbox's zone), whose transaction would snap it.
+        .onChange(of: target, initial: true) { was, now in
+            let curve: Animation =
+                reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.33, 1, 0.68, 1, duration: now ? 0.22 : 0.15)
+            withAnimation(was == now ? nil : curve) { open = now ? 1 : 0 }
+        }
         .animation(.easeOut(duration: 0.2), value: waiting)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }

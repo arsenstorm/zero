@@ -60,10 +60,6 @@ struct PillView: View {
     /// The settings button in the bar's foot (Settings › Control bar), and the pointer on the bar that brings it out.
     @AppStorage("barFoot") private var barFoot = false
     @State private var overBar = false
-    /// Which of the two buttons the pointer on the bar brings out: the one it's nearer (`BarReach`).
-    @State private var reach = BarReach.both
-    /// Where the pointer is on the bar, kept while it's on its way into the panel (`barAiming`) to place it after.
-    @State private var hoverPoint: CGPoint?
     /// Bumped as a new ask comes in while the inbox is folded: its arc brightens once.
     @State private var inboxPulse = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -164,22 +160,7 @@ struct PillView: View {
             }
         }
         .frame(width: 44)
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let point):
-                overBar = true
-                hoverPoint = point
-                // On the way into the open panel, the buttons crossed stay as they are.
-                if !controller.barAiming { reach = BarReach.at(point.y, height: controller.barHeight, was: reach) }
-            case .ended:
-                overBar = false
-                hoverPoint = nil
-                reach = .both
-            }
-        }
-        .onChange(of: controller.barAiming) { _, aiming in
-            if !aiming, let hoverPoint { reach = BarReach.at(hoverPoint.y, height: controller.barHeight, was: reach) }
-        }
+        .onHover { overBar = $0 }
         .onChange(of: names, initial: true) { controller.barOrder = $1 }
         // Nothing switched on: no bar at all, rather than an empty tab at the edge.
         .opacity(slim && !inbox ? 0 : 1)
@@ -232,7 +213,7 @@ struct PillView: View {
         .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
     }
 
-    /// The inbox, in the top hollow: out while its panel is open or with the pointer on the bar's upper part;
+    /// The inbox, in the top hollow: out while its pane is open or with the pointer in its zone at the bar's top;
     /// otherwise folded to its arc, blue while asks wait. The pointer on it opens the inbox, as the other slots do.
     /// Nothing in the body: the two buttons alone, 12 pt apart, joined from the screen edge by a low bump that's always
     /// there, so a button that's out never floats alone. Without the settings button its arc stays, for the same reason.
@@ -245,24 +226,27 @@ struct PillView: View {
         .background { BarPeak().fill(Theme.pill).overlay(BarPeak().stroke(Theme.stroke, lineWidth: 1)) }
     }
 
-    /// The inbox is out while its panel is open, or with the pointer on the bar and not nearer the settings button.
+    /// The inbox is out while its pane (the asks) is open, or with the pointer in its zone at the bar's top
+    /// (`BarReach`); over the agents it stays folded.
     private var inboxOut: Bool {
-        settings.shows(.inbox) && (controller.panelOpen || overBar && (reach != .settings || !barFoot))
+        let asksOpen = controller.panelOpen && controller.agentFilter == nil && !controller.newAgentOpen && !controller.workspacesOpen
+        return settings.shows(.inbox) && (asksOpen || overBar && controller.barReach == .inbox)
     }
-    /// The settings button is out with the pointer on the bar and not nearer the inbox, and in while the inbox's
-    /// panel is open.
+    /// The settings button is out with the pointer in its zone at the bar's foot, and in while the inbox's panel is
+    /// open.
     private var settingsOut: Bool {
-        barFoot && overBar && (reach != .inbox || !settings.shows(.inbox)) && !controller.panelOpen
+        barFoot && overBar && controller.barReach == .settings && !controller.panelOpen
     }
 
     private var inboxKnob: some View {
         let selected = controller.agentFilter
         return BarKnob(
             top: true, out: inboxOut, passing: controller.barAiming, waiting: !controller.store.open.isEmpty, pulse: inboxPulse
-        ) { hovered in
-            // 16 pt, on whole points in the 32 pt disc; half a point up, as the tray's ink sits low in its box.
+        ) { _ in
+            // 16 pt, on whole points in the 32 pt disc; half a point up, as the tray's ink sits low in its box. Out is
+            // the only time it shows, so always the text's colour (one solid white in dark).
             NucleoIcon("inbox", size: 16).offset(y: -0.5)
-                .foregroundStyle(hovered || (controller.panelOpen && selected == nil && !controller.newAgentOpen) ? .primary : .secondary)
+                .foregroundStyle(.primary)
                 .overlay(alignment: .topTrailing) {
                     if controller.pinned && selected == nil && !controller.newAgentOpen { PinBadge().offset(x: 4, y: -6) }
                 }
@@ -270,30 +254,18 @@ struct PillView: View {
         .onChange(of: controller.store.open.count) { before, now in
             if now > before, !inboxOut, !reduceMotion { inboxPulse += 1 }
         }
-        .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .global)
-        } action: {
-            controller.barSlots[InboxController.inboxSlot] = $0
-        }
-        .onDisappear { controller.barSlots[InboxController.inboxSlot] = nil }
         .onTapGesture(perform: openInbox)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Open asks")
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The settings button, in the bottom hollow: out with the pointer on the bar's lower part, in while the inbox's
-    /// panel is open.
+    /// The settings button, in the bottom hollow: out with the pointer in its zone at the bar's foot, in while the
+    /// inbox's panel is open.
     private var settingsKnob: some View {
-        BarKnob(out: settingsOut, passing: controller.barAiming) { hovered in
-            NucleoIcon("gear", size: 16).foregroundStyle(hovered ? .primary : .secondary)
+        BarKnob(out: settingsOut, passing: controller.barAiming) { _ in
+            NucleoIcon("gear", size: 16).foregroundStyle(.primary)
         }
-        .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .global)
-        } action: {
-            controller.barSlots[InboxController.settingsSlot] = $0
-        }
-        .onDisappear { controller.barSlots[InboxController.settingsSlot] = nil }
         .onTapGesture(perform: customiseBar)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Customise bar")
@@ -318,12 +290,7 @@ struct PillView: View {
         .contentShape(Rectangle())
         .onHover { overWorkspace = $0 }
         // A slot of the bar's, as its others: the pointer on it opens its view in the inbox's pane.
-        .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .global)
-        } action: {
-            controller.barSlots[InboxController.workspacesSlot] = $0
-        }
-        .onDisappear { controller.barSlots[InboxController.workspacesSlot] = nil }
+        .modifier(BarSlot(controller: controller, key: InboxController.workspacesSlot))
         .onTapGesture(perform: openWorkspaces)
     }
 
@@ -348,13 +315,8 @@ struct PillView: View {
         // above and below it, so the slots meet and there is no dead space between dots.
         .frame(width: 32, height: slot)
         .contentShape(Rectangle())
-        .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .global)
-        } action: {
-            controller.barSlots[name] = $0
-        }
         // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
-        .onDisappear { controller.barSlots[name] = nil }
+        .modifier(BarSlot(controller: controller, key: name))
         .zIndex(drag?.name == name ? 1 : 0)
         // A right-click: Zero's own menu by the dot, with the task's actions under its name (not the system's menu,
         // which said "Remove zerod-01a1…").
@@ -465,4 +427,28 @@ func speaker(_ agent: String) -> String {
     guard parts.count > 1, let last = parts.last, last.allSatisfy(\.isNumber) else { return agent }
     let base = parts.dropLast().joined(separator: "-")
     return base.prefix(1).uppercased() + base.dropFirst()
+}
+
+/// A control's slot on the bar (`InboxController.barSlots`), kept as the control moves and dropped when it goes. Owned
+/// by the view that set it: when the bar changes shape the control's new view can set its slot before the old one
+/// disappears, and the old one's leaving mustn't clear it (the frames can be the same, so they can't tell them apart).
+private struct BarSlot: ViewModifier {
+    let controller: InboxController
+    let key: String
+    @State private var owner = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .global)
+            } action: {
+                controller.barSlots[key] = $0
+                controller.barSlotOwners[key] = owner
+            }
+            .onDisappear {
+                guard controller.barSlotOwners[key] == owner else { return }
+                controller.barSlots[key] = nil
+                controller.barSlotOwners[key] = nil
+            }
+    }
 }

@@ -40,10 +40,11 @@ public enum BarPins {
     }
 }
 
-/// Which of the bar's two buttons (the inbox at its top, the settings at its foot) the pointer on the bar brings out:
-/// the one it's near, the nearer one where it's near both, and both where it's near neither (over the agents).
+/// Which of the bar's two buttons (the inbox at its top, the settings at its foot) the pointer on the bar is at: the
+/// one it's near, the nearer one where it's near both, and neither where it's near neither (over the agents, which
+/// keep the buttons folded).
 public enum BarReach: Sendable {
-    case inbox, settings, both
+    case inbox, settings, neither
 
     /// Near is within 12 pt of a button's edge. `was` is what's out now: it holds on for 3 pt past each line, so a
     /// pointer resting on one doesn't flicker the buttons.
@@ -53,6 +54,6 @@ public enum BarReach: Sendable {
         let nearInbox = y - top <= near + (was == .inbox ? slack : 0)
         let nearSettings = foot - y <= near + (was == .settings ? slack : 0)
         if nearInbox, !nearSettings || y < split { return .inbox }
-        return nearSettings ? .settings : .both
+        return nearSettings ? .settings : .neither
     }
 }

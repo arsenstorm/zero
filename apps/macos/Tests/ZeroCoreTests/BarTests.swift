@@ -26,13 +26,16 @@ import Testing
 
 @Test func theButtonNearerThePointerComesOut() {
     // The slim pair: buttons' centres at 16 and 60, so everything is near one of them, split at 38.
-    #expect(BarReach.at(10, height: 76, was: .both) == .inbox)
-    #expect(BarReach.at(37, height: 76, was: .both) == .inbox)
-    #expect(BarReach.at(39, height: 76, was: .both) == .settings)
-    // A tall bar: near the top the inbox, near the foot the settings, both over the middle (the agents).
-    #expect(BarReach.at(40, height: 300, was: .both) == .inbox)
-    #expect(BarReach.at(150, height: 300, was: .both) == .both)
-    #expect(BarReach.at(270, height: 300, was: .both) == .settings)
+    #expect(BarReach.at(10, height: 76, was: .neither) == .inbox)
+    #expect(BarReach.at(37, height: 76, was: .neither) == .inbox)
+    #expect(BarReach.at(39, height: 76, was: .neither) == .settings)
+    // A tall bar: near the top the inbox, near the foot the settings, neither over the middle (the agents).
+    #expect(BarReach.at(40, height: 300, was: .neither) == .inbox)
+    #expect(BarReach.at(150, height: 300, was: .neither) == .neither)
+    #expect(BarReach.at(270, height: 300, was: .neither) == .settings)
+    // The inbox's reach ends where the first slot starts (the body's top padding, 46 pt down).
+    #expect(BarReach.at(44, height: 300, was: .neither) == .inbox)
+    #expect(BarReach.at(46, height: 300, was: .neither) == .neither)
 }
 
 @Test func theBarsButtonsDontFlickerOnTheLineBetweenThem() {
@@ -43,5 +46,5 @@ import Testing
     #expect(BarReach.at(34, height: 76, was: .settings) == .inbox)
     // The same at the edge of a button's reach on a tall bar.
     #expect(BarReach.at(46, height: 300, was: .inbox) == .inbox)
-    #expect(BarReach.at(46, height: 300, was: .both) == .both)
+    #expect(BarReach.at(46, height: 300, was: .neither) == .neither)
 }

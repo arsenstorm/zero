@@ -128,18 +128,36 @@ extension AppDelegate {
     }
 
     /// The bar's control under the pointer opens its view: each control's slot spans the bar's width and meets
-    /// its neighbours, so the pointer never has to find the dot itself.
+    /// its neighbours, so the pointer never has to find the dot itself. At the top and the foot, the buttons' zones
+    /// (`BarReach`, which also says which button is out): the inbox's opens the asks, the settings' closes a peek.
     private func hoverBar(at mouse: NSPoint) {
-        guard pill.isVisible, pill.frame.contains(mouse), NSEvent.pressedMouseButtons == 0 else { inbox.barHover = nil; return }
-        // On the way into the open panel, what the pointer crosses doesn't take over (aimAtPanel).
-        guard !inbox.barAiming else { return }
         let local = pill.convertPoint(fromScreen: mouse)
         let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
-        // Among the controls shown now, the one whose slot is nearest: slots meet, so a point on their seam is in two.
-        let shown = Set(
-            [InboxController.inboxSlot, InboxController.newSlot, InboxController.workspacesSlot, InboxController.settingsSlot]
-                + inbox.barOrder)
-        let under = inbox.barSlots.filter { shown.contains($0.key) && $0.value.insetBy(dx: -8, dy: -1).contains(point) }
+        // The bar sits centred in its tall panel; above or below it is off the bar.
+        let y = point.y - (pill.frame.height - inbox.barHeight) / 2
+        guard pill.isVisible, pill.frame.contains(mouse), (0...inbox.barHeight).contains(y) else {
+            inbox.barHover = nil
+            if inbox.barReach != .neither { inbox.barReach = .neither }
+            return
+        }
+        // A button held (a dot dragged): nothing opens, and the buttons stay as they are.
+        guard NSEvent.pressedMouseButtons == 0 else { inbox.barHover = nil; return }
+        // On the way into the open panel, what the pointer crosses doesn't take over (aimAtPanel).
+        guard !inbox.barAiming else { return }
+        let reach = BarReach.at(y, height: inbox.barHeight, was: inbox.barReach)
+        if inbox.barReach != reach { inbox.barReach = reach }
+        // The buttons' zones are theirs whenever the button is on the bar, by the zone alone: no slot frame needed (a
+        // button's frame went missing when the bar changed shape, its old view's onDisappear clearing the new one's).
+        let zone =
+            reach == .inbox && settings.shows(.inbox)
+            ? InboxController.inboxSlot
+            : reach == .settings && UserDefaults.standard.bool(forKey: "barFoot") ? InboxController.settingsSlot : nil
+        // Elsewhere, among the controls shown now, the one whose slot is nearest: slots meet, so a point on their seam
+        // is in two.
+        let shown = Set([InboxController.newSlot, InboxController.workspacesSlot] + inbox.barOrder)
+        let under =
+            zone
+            ?? inbox.barSlots.filter { shown.contains($0.key) && $0.value.insetBy(dx: -8, dy: -1).contains(point) }
             .min { abs($0.value.midY - point.y) < abs($1.value.midY - point.y) }?.key
         guard let under, under != inbox.barHover else { if under == nil { inbox.barHover = nil }; return }
         inbox.barHover = under
@@ -147,7 +165,7 @@ extension AppDelegate {
         case InboxController.inboxSlot: peek(nil)
         case InboxController.newSlot: peekNewAgent()
         case InboxController.workspacesSlot: peekWorkspaces()
-        // Down to the bar's settings: a peeked inbox goes (one opened by a click stays).
+        // Down to the bar's settings: a peeked pane goes (one opened by a click stays).
         case InboxController.settingsSlot: if !openedByIntent && inboxPanel.isVisible { hideInbox() }
         default: peek(under)
         }
