@@ -91,3 +91,17 @@ private let acme = Slack.State(team: .init(id: "T0AB", name: "Acme", domain: "ac
     #expect(manifest.removingPercentEncoding?.contains("chat:write") == false)
     #expect(Slack.createAppURL(posts: true).absoluteString.removingPercentEncoding?.contains("\"chat:write\"") == true)
 }
+
+/// Messages rendered before a team was known render again once it is (their cache keys hold the version), and a
+/// refresh that brings the same teams leaves them be.
+@MainActor @Test func newLinearTeamsBumpTheLinkVersionOnlyWhenTheyChange() {
+    let before = LinkInputs.shared.version
+    LinearTeams.known = ["SH": "acme", "U": "acme"]
+    let after = LinkInputs.shared.version
+    #expect(after > before)
+    LinearTeams.known = ["SH": "acme", "U": "acme"]
+    #expect(LinkInputs.shared.version == after)
+    #expect(
+        References.find(in: "U-9918", repo: nil, linear: LinearTeams.known, linearApp: false).first?.url.absoluteString
+            == "https://linear.app/acme/issue/U-9918")
+}

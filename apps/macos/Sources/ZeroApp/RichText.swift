@@ -28,10 +28,10 @@ enum RichMarkdown {
 
     /// The text as rendered before, or rendered now and kept: a message that hasn't changed isn't parsed and styled
     /// again each time its view is drawn. The same rendering is the same object, which the view checks for.
-    static func cached(_ text: String, size: CGFloat, compact: Bool, repo: String?, yours: Bool = false, render: () -> NSAttributedString)
-        -> NSAttributedString
+    /// `links`: what its links depend on (MarkdownText.Links.key).
+    static func cached(_ text: String, size: CGFloat, compact: Bool, links: String, render: () -> NSAttributedString) -> NSAttributedString
     {
-        let key = "\(size)|\(compact)|\(yours)|\(repo ?? "")|\(text)" as NSString
+        let key = "\(size)|\(compact)|\(links)|\(text)" as NSString
         if let kept = rendered.object(forKey: key) { return kept }
         let made = render()
         rendered.setObject(made, forKey: key)
@@ -59,8 +59,8 @@ enum RichMarkdown {
         return out
     }
 
-    static func kept(_ text: String, size: CGFloat, compact: Bool, repo: String?, yours: Bool = false) -> NSAttributedString? {
-        rendered.object(forKey: "\(size)|\(compact)|\(yours)|\(repo ?? "")|\(text)" as NSString)
+    static func kept(_ text: String, size: CGFloat, compact: Bool, links: String) -> NSAttributedString? {
+        rendered.object(forKey: "\(size)|\(compact)|\(links)|\(text)" as NSString)
     }
 
     private static let renderedBlocks: NSCache<NSString, NSAttributedString> = {

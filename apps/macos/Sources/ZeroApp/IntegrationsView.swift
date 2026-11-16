@@ -135,6 +135,7 @@ struct IntegrationPage: View {
             }
         }
         .task { await workspace?.loadIntegrations() }
+        .onChange(of: [github, linear, linearInApp]) { LinkInputs.shared.changed() }
         .zeroDialog(isPresented: $connectingSlack) { if let workspace { SlackConnect(workspace: workspace) } }
     }
 

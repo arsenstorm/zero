@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Linear issues ("OPS-3096", "eng-9559"), pull requests ("#12846", "app#12846") and commits ("064c6bb7b5") in
 /// what agents write, as links.
@@ -143,7 +144,23 @@ public enum SlackLinks {
 /// Linear's team keys to the connected workspace's URL key ("ENG" → "acme"), from zerod's connection: which "ENG-123"
 /// in messages are issues, and where they open.
 public enum LinearTeams {
-    @MainActor public static var known: [String: String] = [:]
+    @MainActor public static var known: [String: String] {
+        get { LinkInputs.shared.teams }
+        set { LinkInputs.shared.teams = newValue }
+    }
+}
+
+/// What makes words in messages links beyond their own folder (Linear's teams, Slack's workspaces, loops, pads, the
+/// links' settings), as a number bumped when one of them changes. It's in rendered messages' cache keys and read by
+/// their views: a message rendered before its issue's team was known links it once it is.
+@MainActor @Observable public final class LinkInputs {
+    public static let shared = LinkInputs()
+    public private(set) var version = 0
+    var teams: [String: String] = [:] {
+        didSet { if teams != oldValue { changed() } }
+    }
+
+    public func changed() { version += 1 }
 }
 
 /// Whether GitHub's references in messages are links (Settings › GitHub).

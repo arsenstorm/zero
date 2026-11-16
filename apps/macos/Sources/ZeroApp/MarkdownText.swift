@@ -7,12 +7,8 @@ import ZeroCore
 /// monospace on their own surface. ponytail: fences and inline syntax only; headings and lists read as text.
 struct MarkdownText: View {
     let text: String
-    /// Where "#123" points: the GitHub repository of the agent's folder.
-    var repo: String?
     /// The agent's folder: what "./" in the text is in, and whose skills a "/word" may name.
     var cwd: String?
-    /// Whose "name#123" is, when the folder holds repositories rather than being one.
-    var owner: String?
     /// The body text's size; headings, code and markers scale with it. The inbox's cards are smaller than a task's page.
     var size: CGFloat
     /// Quieter, for a preview: headings at the text's size, code without pills, tighter spacing.
@@ -35,8 +31,6 @@ struct MarkdownText: View {
     ) {
         self.text = text
         self.cwd = cwd
-        repo = cwd.flatMap(References.repo(of:))
-        owner = cwd.flatMap(References.owner(of:))
         self.size = size
         self.compact = compact
         self.hugs = hugs
@@ -53,11 +47,13 @@ struct MarkdownText: View {
         let _ = rendered
         if let rich = styled {
             RichText(text: rich, hugs: hugs, onClick: onClick).onChange(of: text, initial: true) { styleLong() }
+                .onChange(of: LinkInputs.shared.version) { styleLong() }
         } else {
             // Its words while it's styled: a long answer never holds up the page.
             Text(ZeroEnding.split(text).0).font(.system(size: size)).lineSpacing(round(size * 0.42)).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .onChange(of: text, initial: true) { styleLong() }
+                .onChange(of: LinkInputs.shared.version) { styleLong() }
         }
     }
 
@@ -69,7 +65,7 @@ struct MarkdownText: View {
             guard let fade else { return made }
             return Self.faded(made, sourceLength: fadeLength, alpha: fade)
         }
-        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo, yours: yours) { return kept }
+        if let kept = RichMarkdown.kept(text, size: size, compact: compact, links: keyOfLinks) { return kept }
         if text.count < Self.long { return Self.render(text, size: size, compact: compact, links: links) }
         if let last, text.hasPrefix(last.text) { return last.rich }
         return nil
@@ -130,7 +126,7 @@ struct MarkdownText: View {
     private func styleLong() {
         styler.latest = text
         guard !streaming, text.count >= Self.long, !styler.busy else { return }
-        if let kept = RichMarkdown.kept(text, size: size, compact: compact, repo: repo, yours: yours) { last = (text, kept); return }
+        if let kept = RichMarkdown.kept(text, size: size, compact: compact, links: keyOfLinks) { last = (text, kept); return }
         styler.busy = true
         let (size, compact, links, styler) = (size, compact, links, styler)
         Task { @MainActor in
@@ -149,13 +145,15 @@ struct MarkdownText: View {
 
     /// What finding links needs, read on the main thread so rendering can happen anywhere.
     private var links: Links { Self.links(cwd: cwd, yours: yours) }
+    /// `links.key` without building them (yours read the folder's skills): reading the version redraws this when it changes.
+    private var keyOfLinks: String { Links.key(cwd: cwd, yours: yours, version: LinkInputs.shared.version) }
 
     static func links(cwd: String?, yours: Bool) -> Links {
         Links(
             repo: cwd.flatMap(References.repo(of:)), owner: cwd.flatMap(References.owner(of:)), github: GitHubLinks.enabled,
             slack: SlackLinks.teams, teams: LinearLinks.enabled ? LinearTeams.known : [:],
             app: LinearLinks.inApp, loops: LoopNames.known, skills: yours, pads: PadNames.known, cwd: cwd,
-            skillNames: yours ? ClaudeCommands.names(projectPath: cwd) : [])
+            skillNames: yours ? ClaudeCommands.names(projectPath: cwd) : [], version: LinkInputs.shared.version)
     }
 
     /// Styles a conversation's messages ahead of their first drawing (the window opening on it), off the main thread,
@@ -193,6 +191,12 @@ struct MarkdownText: View {
         var cwd: String?
         /// The skills a "/word" of yours may name (the composer's "/" list); a "/word" naming none is a path or words.
         var skillNames: Set<String> = []
+        /// LinkInputs' version when these were read.
+        var version = 0
+
+        /// What the rendering depends on, for its cache keys: repo and owner come from the folder; the rest is the version.
+        var key: String { Self.key(cwd: cwd, yours: skills, version: version) }
+        static func key(cwd: String?, yours: Bool, version: Int) -> String { "\(cwd ?? "")|\(yours)|\(version)" }
     }
 
     private struct Rendered: @unchecked Sendable { let text: NSAttributedString; init(_ text: NSAttributedString) { self.text = text } }
@@ -200,7 +204,7 @@ struct MarkdownText: View {
     /// A text still arriving, styled but not kept: its finished blocks come from the block cache, its last styled anew.
     nonisolated static func renderGrowing(_ text: String, size: CGFloat, links: Links) -> NSAttributedString {
         let source = MarkdownBlock.growing(ZeroEnding.split(text).0)
-        let key = "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|false"
+        let key = "\(links.key)|false"
         let render = { (part: String, growing: Bool, trimmed: Bool) in
             RichMarkdown.render(
                 MarkdownBlock.parse(part), size: size, inline: { inline($0, links: links) }, key: key, growing: growing, trimmed: trimmed)
@@ -226,10 +230,10 @@ struct MarkdownText: View {
 
     /// Parsed, styled and kept. Zero's own ending ("[zero: done]") is for its hook, not for reading.
     nonisolated static func render(_ text: String, size: CGFloat, compact: Bool, links: Links) -> NSAttributedString {
-        RichMarkdown.cached(text, size: size, compact: compact, repo: links.repo, yours: links.skills) {
+        RichMarkdown.cached(text, size: size, compact: compact, links: links.key) {
             let made = RichMarkdown.render(
                 MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
-                key: "\(links.repo ?? "")|\(links.owner ?? "")|\(links.skills)|\(compact)")
+                key: "\(links.key)|\(compact)")
             // Yours, in a bubble: its code without a panel of its own (never a card in a card).
             let flat = links.skills ? RichMarkdown.flat(made) : made
             return compact ? RichMarkdown.compact(flat, size: size) : flat

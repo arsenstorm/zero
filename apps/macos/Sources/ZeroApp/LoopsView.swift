@@ -6,12 +6,12 @@ import ZeroCore
 
 /// The loops' names, for messages' renderer: "@name" in a message is a pill that opens the loop.
 @MainActor enum LoopNames {
-    static var known: [String] = []
+    static var known: [String] = [] { didSet { if known != oldValue { LinkInputs.shared.changed() } } }
 }
 
 /// The scratchpads' titles by id, for the renderer: a zero://pad link in a message reads as its pad's title.
 @MainActor enum PadNames {
-    static var known: [String: String] = [:]
+    static var known: [String: String] = [:] { didSet { if known != oldValue { LinkInputs.shared.changed() } } }
 }
 
 struct LoopsPage: View {

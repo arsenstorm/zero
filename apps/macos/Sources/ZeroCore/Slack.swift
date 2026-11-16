@@ -59,6 +59,7 @@ public final class Slack {
 
     /// What zerod says now.
     public func apply(_ teams: [State]) {
+        if teams != self.teams { LinkInputs.shared.changed() }
         self.teams = teams
         UserDefaults.standard.set(try? JSONEncoder().encode(teams), forKey: Self.key)
     }
