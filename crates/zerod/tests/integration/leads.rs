@@ -867,3 +867,176 @@ async fn a_message_to_an_archived_worker_brings_it_back() {
     assert!(w.daemon.get(&worker).is_some());
     assert_eq!(w.daemon.resolve("nothing").unwrap_err(), "No task nothing");
 }
+
+/// A worker's limit as its CLI says it: the account's window full until `resets`, and the turn ended on it.
+fn limited(seen: &Seen, resets: i64) {
+    seen.say(json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets,
+                    "unifiedWindows": {"seven_day": {"utilization": 1.0, "resetsAt": resets}}}}));
+    seen.say(json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "You've hit your limit"}));
+}
+
+fn claude_account(w: &World, label: &str) -> zerod::signins::SignIn {
+    w.daemon
+        .signins
+        .save(zerod::signins::SignIn {
+            id: String::new(),
+            cli: Provider::Claude,
+            kind: zerod::signins::Kind::ClaudeHome,
+            label: label.into(),
+            plan: None,
+            variable: None,
+            pending: false,
+        })
+        .unwrap()
+}
+
+/// A worker that Zero carries on as another account at its limit hasn't stopped: its lead hears neither the limit nor
+/// the restart onto the new account, only how the work ends.
+#[tokio::test]
+async fn a_worker_switched_to_another_account_doesnt_alarm_its_lead() {
+    let w = world("leads-switch-quiet");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let (_, second) = (claude_account(&w, "a@example.com"), claude_account(&w, "b@example.com"));
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "fix it", named("Fix", None)).unwrap();
+    let fixing = nth_runtime(&w, 1).await;
+    fixing.said("user", 1).await;
+    limited(&fixing, zerod::now() + 3_600);
+    until(&w.daemon, &worker, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    let again = nth_runtime(&w, 2).await;
+    assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("another account"));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(users(&led), 1, "no limit, no process ended: {:?}", led.all());
+    // It carries on as the second account, and its end is the news.
+    again.say(json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": "Fixed."}]}}));
+    again.say(turn_ends());
+    let told = led.said("user", 2).await;
+    assert!(told[1]["message"]["content"].as_str().unwrap().contains("Worker Fix finished: Fixed."), "{told:?}");
+}
+
+/// With no other account to go on as, the limit is its lead's news, with when it resets.
+#[tokio::test]
+async fn a_worker_at_its_only_accounts_limit_tells_its_lead() {
+    let w = world("leads-limit-only");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    claude_account(&w, "a@example.com");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    w.daemon.spawn(&lead, Provider::Claude, "fix it", named("Fix", None)).unwrap();
+    let fixing = nth_runtime(&w, 1).await;
+    fixing.said("user", 1).await;
+    let resets = 1_794_942_000;
+    limited(&fixing, resets);
+    let told = led.said("user", 2).await;
+    let text = told[1]["message"]["content"].as_str().unwrap();
+    assert!(text.contains("Worker Fix hit a usage limit (it resets at 2026-11-17T19:00:00Z)"), "{text}");
+}
+
+/// A worker that wrote its report and ended it, then hit its account's limit on the next call: its lead gets that
+/// report, once, as any turn's end, and nothing of the limit; its turn was over, so it isn't carried on to say it again.
+#[tokio::test]
+async fn a_worker_limited_after_its_report_hands_its_lead_the_report() {
+    let w = world("leads-limit-after-report");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let (_, second) = (claude_account(&w, "a@example.com"), claude_account(&w, "b@example.com"));
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "fix it", named("Fix", None)).unwrap();
+    let fixing = nth_runtime(&w, 1).await;
+    fixing.said("user", 1).await;
+    fixing.say(json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": "Fixed the leak in send.rs.\n\n[zero: done]"}]}}));
+    limited(&fixing, zerod::now() + 3_600);
+    until(&w.daemon, &worker, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    let told = led.said("user", 2).await;
+    assert!(told[1]["message"]["content"].as_str().unwrap().contains("Worker Fix finished: Fixed the leak in send.rs."), "{told:?}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(users(&led), 2, "once, no alarms: {:?}", led.all());
+    assert_eq!(w.claude.lock().unwrap().len(), 2, "not started again to say it again");
+}
+
+/// One that wrote its report and went on (a command after it) when the limit came: its lead gets what it wrote, and
+/// it carries on as another account, told its lead has that, so its next end doesn't say it all again.
+#[tokio::test]
+async fn a_worker_limited_mid_turn_after_writing_its_report_carries_on_without_repeating_it() {
+    let w = world("leads-limit-mid-report");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let (_, second) = (claude_account(&w, "a@example.com"), claude_account(&w, "b@example.com"));
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "fix it", named("Fix", None)).unwrap();
+    let fixing = nth_runtime(&w, 1).await;
+    fixing.said("user", 1).await;
+    fixing.say(json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": "Fixed the leak in send.rs."},
+        {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "zero done \"fixed\""}}]}}));
+    fixing.say(json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Marked done."}]}}));
+    limited(&fixing, zerod::now() + 3_600);
+    until(&w.daemon, &worker, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    let told = led.said("user", 2).await;
+    assert!(told[1]["message"]["content"].as_str().unwrap().contains("Worker Fix finished: Fixed the leak in send.rs."), "{told:?}");
+    let again = nth_runtime(&w, 2).await;
+    let carry_on = again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().to_string();
+    assert!(carry_on.contains("another account") && carry_on.contains("don't repeat it"), "{carry_on}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(users(&led), 2, "no alarms: {:?}", led.all());
+    led.say(turn_ends());
+    again.say(json!({"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "[zero: done]"}]}}));
+    again.say(turn_ends());
+    let told = led.said("user", 3).await;
+    let reports = told.iter().filter(|m| m["message"]["content"].as_str().unwrap().contains("Fixed the leak")).count();
+    assert_eq!(reports, 1, "the report once: {told:?}");
+}
+
+/// A worker's report without Zero's ending is sent back for one, and the turn that adds only the ending ("my part is
+/// finished, the answer above has it") isn't the report: its lead gets the answer kept from the turn sent back, with
+/// what the new turn adds, as the new turn's ending says.
+#[tokio::test]
+async fn a_worker_sent_back_for_its_ending_keeps_its_report() {
+    let w = world("leads-sent-back-report");
+    w.daemon.require_endings();
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    w.daemon.spawn(&lead, Provider::Claude, "fix it", named("Fix", None)).unwrap();
+    let fixing = nth_runtime(&w, 1).await;
+    fixing.said("user", 1).await;
+    fixing.say(json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": "The cause is a race in send.rs; the fix holds the lock."}]}}));
+    fixing.say(turn_ends());
+    let back = fixing.said("user", 2).await;
+    assert!(back[1]["message"]["content"].as_str().unwrap().contains("Zero can't tell where your turn left the task"), "{back:?}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(users(&led), 1, "nothing for the turn sent back");
+    fixing.say(json!({"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "My part is finished. Tests pass.\n\n[zero: done]"}]}}));
+    fixing.say(turn_ends());
+    let told = led.said("user", 2).await;
+    let text = told[1]["message"]["content"].as_str().unwrap();
+    assert!(
+        text.contains("Worker Fix finished: The cause is a race in send.rs; the fix holds the lock.\n\nMy part is finished. Tests pass.\n"),
+        "{text}"
+    );
+    assert!(!text.contains("[zero: done]"), "{text}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(users(&led), 2, "once: {:?}", led.all());
+}

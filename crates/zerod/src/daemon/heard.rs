@@ -18,7 +18,9 @@ impl Daemon {
     /// A session stopped by a usage limit is told to go on once the limit has reset.
     /// At its account's usage limit: carried on as another of its CLI's accounts, the one the policy picks
     /// (signins.rs choose), its agent started again on the same conversation. False when there's none to go to.
-    fn switch_account(&self, conversation: &Conversation) -> bool {
+    /// With what it answered before the limit (its lead has that): a turn it ended there isn't carried on, and one it
+    /// went on from is told not to say it again.
+    fn switch_account(&self, conversation: &Conversation, answered: Option<&str>) -> bool {
         let reported = conversation.usage.as_ref().is_some_and(|u| u.limited);
         // Or said only in its CLI's error, without figures for the account's windows (a worker's process ending on it).
         let said = conversation.failure.as_ref().is_some_and(|f| f.kind == crate::model::FailureKind::Limit);
@@ -36,13 +38,27 @@ impl Daemon {
         // As is the error that said so (the failure is worked out from it).
         session.change(Change::Status { status: conversation.status, turn: conversation.turn.clone(), error: None });
         session.change(Change::Failed { failure: None });
+        if session.is_attached() {
+            self.switching.lock().unwrap().insert(conversation.id.clone());
+        }
+        let carry_on = match answered {
+            Some(answer) if crate::board::ending(answer).is_some_and(|e| e != "working") => None,
+            Some(_) => Some(
+                "Your account reached its usage limit, so Zero carries this task on as another account. Your lead already has what you wrote before the limit: don't repeat it; carry on with what you were doing.",
+            ),
+            None => Some(
+                "Your account reached its usage limit, so Zero carries this task on as another account: carry on with what you were doing.",
+            ),
+        };
         let (me, id) = (self.me.clone(), conversation.id.clone());
         tokio::spawn(async move {
             let Some(daemon) = me.upgrade() else { return };
             if let Ok(session) = daemon.session(&id) {
                 daemon.take_offline(&session).await
             }
-            daemon.tell(&id, crate::model::from_line("zero", "Your account reached its usage limit, so Zero carries this task on as another account: carry on with what you were doing."));
+            if let Some(words) = carry_on {
+                daemon.tell(&id, crate::model::from_line("zero", words));
+            }
         });
         true
     }
@@ -60,6 +76,9 @@ impl Daemon {
         session.change(Change::SignedIn { signin: Some(next.id.clone()) });
         session.change(Change::Status { status: conversation.status, turn: conversation.turn.clone(), error: None });
         session.change(Change::Failed { failure: None });
+        if session.is_attached() {
+            self.switching.lock().unwrap().insert(conversation.id.clone());
+        }
         let (me, id, model) = (self.me.clone(), conversation.id.clone(), model.to_string());
         tokio::spawn(async move {
             let Some(daemon) = me.upgrade() else { return };
@@ -201,7 +220,36 @@ impl Daemon {
         };
         // Nor the turn it was just sent back from (no Zero ending): its lead hears the turn as it ends properly, once.
         let sent_back = self.sent_back.lock().unwrap().contains(id);
+        // What its CLI says of its account's usage is the account's, for choosing accounts by.
+        if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) {
+            self.signins.record_usage(signin, usage)
+        }
+        // Carried on as another account (at a limit, refused its model): it hasn't stopped, so its lead hears
+        // nothing, nor of its process stopped for the switch. Only with no account left is the limit news.
+        // Unless it had answered before the limit: that answer is its turn's end, for its lead as any.
+        let answered = (now == Attention::Limited)
+            .then(|| {
+                this_turn(&conversation).iter().rev().find_map(|i| match &i.kind {
+                    ItemKind::Agent { text, final_answer: true } => Some(text.as_str()),
+                    _ => None,
+                })
+            })
+            .flatten();
+        let switched = match now {
+            Attention::Limited => {
+                self.switch_account(&conversation, answered) || {
+                    self.after_reset(&conversation);
+                    false
+                }
+            }
+            Attention::Failed if before != Some(Attention::Failed) => self.switch_for_model(&conversation),
+            Attention::Offline => self.switching.lock().unwrap().remove(id),
+            _ => false,
+        };
+        let reported_answer = switched && answered.is_some();
+        let now = if reported_answer { Attention::Done } else { now };
         if let Some(lead) = &conversation.parent
+            && (!switched || reported_answer)
             && (came_to_an_end || got_stuck)
             && !restarting
             && !self.is_paused(id)
@@ -220,9 +268,14 @@ impl Daemon {
             } else {
                 self.leaving.lock().unwrap().remove(&conversation.id);
             }
-            let said = match background {
-                Some(runs) => waiting_on_background(&conversation, &runs),
-                None => report(&conversation, now),
+            // Kept through a turn that ends without an answer (a failure, a limit): the one that answers takes it.
+            let kept = matches!(now, Attention::Done | Attention::NeedsYou | Attention::Blocked)
+                .then(|| self.kept_reports.lock().unwrap().remove(id))
+                .flatten();
+            let said = match (background, kept) {
+                (Some(runs), _) => waiting_on_background(&conversation, &runs),
+                (None, Some(kept)) => report(&with_kept_report(&conversation, &kept), now),
+                (None, None) => report(&conversation, now),
             };
             // Its pull requests are the lead's to act on too (a merge): followed by it, said so before the report.
             for topic in self.following.get().map(|f| f.pass(id, lead)).unwrap_or_default() {
@@ -233,16 +286,6 @@ impl Daemon {
             if !self.last_report(lead, id).is_some_and(|last| same_report(&last, &said)) {
                 self.tell(lead, crate::model::from_line(&conversation.id, &said));
             }
-        }
-        // What its CLI says of its account's usage is the account's, for choosing accounts by.
-        if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) {
-            self.signins.record_usage(signin, usage)
-        }
-        if now == Attention::Limited && !self.switch_account(&conversation) {
-            self.after_reset(&conversation)
-        }
-        if now == Attention::Failed && before != Some(Attention::Failed) {
-            self.switch_for_model(&conversation);
         }
         if between_turns(&conversation) {
             // A change kept for this moment first (a model, permissions picked mid-turn), then what's queued, on it.
@@ -338,6 +381,10 @@ impl Daemon {
             return;
         }
         self.sent_back.lock().unwrap().insert(conversation.id.clone());
+        // Its report, which the turn that ends it ("the answer above has it") would otherwise stand in for.
+        if worker {
+            self.kept_reports.lock().unwrap().insert(conversation.id.clone(), answer.to_string());
+        }
         let words = if worker { END_A_WORKERS_TURN } else { END_YOUR_TURN };
         self.pending.lock().unwrap().entry(conversation.id.clone()).or_default().push(Queued {
             id: new_id(),
@@ -531,7 +578,10 @@ pub fn report(worker: &Conversation, attention: Attention) -> String {
         }
         Attention::Failed => format!("failed: {}", worker.failure.as_ref().map(|f| f.message.as_str()).unwrap_or("no reason given")),
         Attention::Stuck => format!("looks stuck: {}", worker.stalled.as_deref().unwrap_or("no progress")),
-        Attention::Limited => "hit a usage limit".into(),
+        Attention::Limited => match worker.usage.as_ref().and_then(|u| u.resets_at) {
+            Some(at) => format!("hit a usage limit (it resets at {})", crate::ask::Time(at).iso()),
+            None => "hit a usage limit".into(),
+        },
         Attention::Blocked => format!("is blocked: {}", worker.answer().map(crate::board::without_ending).unwrap_or("no reason given")),
         Attention::Offline => "stopped: its process ended".into(),
         _ => "stopped without an answer".into(),
@@ -585,6 +635,20 @@ impl Daemon {
             ),
         );
     }
+}
+
+/// A worker's answer as its report after it was sent back for its ending: the answer kept from that turn, then what
+/// its new answer adds, ending as the new one does. A new answer that repeats the kept one stands alone.
+fn with_kept_report(worker: &Conversation, kept: &str) -> Conversation {
+    let mut worker = worker.clone();
+    let kept = kept.trim();
+    if let Some(ItemKind::Agent { text, .. }) =
+        worker.items.iter_mut().rev().map(|i| &mut i.kind).find(|k| matches!(k, ItemKind::Agent { final_answer: true, .. }))
+        && !text.contains(kept)
+    {
+        *text = format!("{kept}\n\n{}", text.trim());
+    }
+    worker
 }
 
 /// This turn's own items (since the last message to it): a turn stopped before it answered (by the user, by a restart)

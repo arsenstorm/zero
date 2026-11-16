@@ -129,8 +129,20 @@ async fn a_worker_ends_its_turn_as_a_task_does_and_its_lead_hears_once() {
         tokio::time::sleep(Duration::from_millis(20)).await
     }
     assert_eq!((reports(), sent_back(&sent)), (1, 1), "then its lead hears once, and it isn't sent back again");
+    let told = |text: &str| {
+        std::fs::read_to_string(home.join("zerod/sessions").join(&lead).join("pending.json")).unwrap_or_default().contains(text)
+            || sent.lock().unwrap().contains(text)
+    };
+    assert!(told("is blocked: I stopped: the dump needs production."), "with the answer it was sent back from");
     turn(&session, 3, &zeros("carry on"), "All green.\n\n[zero: done]").await;
     assert_eq!(sent_back(&sent), 1, "a worker's proper ending passes");
+    for _ in 0..50 {
+        if reports() > 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await
+    }
+    assert!(told("finished: All green."), "a later report is its own, nothing kept from before");
 }
 
 #[tokio::test]

@@ -120,6 +120,10 @@ pub struct Daemon {
     leaving: Mutex<HashSet<String>>,
     /// Sessions being archived now: their end is the archiving, not news for their lead.
     archiving: Mutex<HashSet<String>>,
+    /// Sessions whose process Zero stops to carry them on as another account: that stop is no news for their lead.
+    switching: Mutex<HashSet<String>>,
+    /// A worker's answer from the turn sent back for its ending: its report, with what the turn that ends it adds.
+    kept_reports: Mutex<HashMap<String, String>>,
     /// What's in archive/, kept in archive.json: listing it read every archived folder (hundreds) each time.
     archive_index: Mutex<Option<Vec<archive::Archived>>>,
     /// (lead, ticket) → when Zero last reminded the lead to set that row: once, until the row is set again.
@@ -353,6 +357,8 @@ impl Daemon {
             reminded_rows: Mutex::default(),
             leaving: Mutex::default(),
             archiving: Mutex::default(),
+            switching: Mutex::default(),
+            kept_reports: Mutex::default(),
             archive_index: Mutex::default(),
             blocked: Default::default(),
             noted: Default::default(),
