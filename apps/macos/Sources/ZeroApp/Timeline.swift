@@ -263,7 +263,7 @@ struct WorkBlock: View {
                             }
                         }
                         .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
-                        .opacity(0.7).allowsHitTesting(false)
+                        .allowsHitTesting(false)
                     }
                     // Between steps, until its words start to stream (before any step, the heading breathes): not
                     // under a step still running, which says so itself. Its place kept, so nothing below moves.
@@ -1109,16 +1109,17 @@ struct SkeletonTurns: View {
 }
 
 /// A step as one line, for the working bar's latest: what it is, not its card (a command's box, cut to a line, was
-/// half a box). Running, a spinner; done, a tick; failed, a cross.
+/// half a box). Running, a spinner; done, a tick; failed, a cross. Drawn as the step's own row is (StepRow: its size,
+/// tone and spacing), so opening the block changes nothing about the line.
 struct StepLine: View {
     let item: ConversationItem
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             StatusIcon(status: item.status)
             text.lineLimit(1).truncationMode(.tail)
         }
-        .font(.system(size: 12.5))
+        .font(.system(size: 12))
         .foregroundStyle(.secondary)
     }
 
@@ -1130,7 +1131,8 @@ struct StepLine: View {
             } else {
                 Text(description)
             }
-        case let .tool(name, detail): Text(ToolNames.name(name)).fontWeight(.medium) + Text(" " + ToolNames.detail(detail))
+        case let .tool(name, detail):
+            Text(ToolNames.name(name)).fontWeight(.medium) + Text("  " + ToolNames.detail(detail)).foregroundStyle(.tertiary)
         case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))
         case let .agent(text, _), let .reasoning(text), let .plan(text): Text(text.split(separator: "\n").first.map(String.init) ?? "")
         case let .notice(text, _): Text(text)
