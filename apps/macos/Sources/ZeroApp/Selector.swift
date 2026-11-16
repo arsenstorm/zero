@@ -702,7 +702,8 @@ private struct ContextMenuHost: ViewModifier {
     }
 }
 
-/// A right-click on what it lies over, and nothing else: any other click goes through to the view under it.
+/// A right-click on what it lies over, or a ⌃-click (the trackpad's way, as the system takes it), and nothing else: any
+/// other click goes through to the view under it.
 struct RightClick: NSViewRepresentable {
     let action: () -> Void
     func makeNSView(context: Context) -> Catcher { Catcher(action: action) }
@@ -713,10 +714,14 @@ struct RightClick: NSViewRepresentable {
         init(action: @escaping () -> Void) { self.action = action; super.init(frame: .zero) }
         required init?(coder: NSCoder) { fatalError() }
         override func hitTest(_ point: NSPoint) -> NSView? {
-            let event = NSApp.currentEvent?.type
-            return event == .rightMouseDown || event == .rightMouseUp ? super.hitTest(point) : nil
+            guard let event = NSApp.currentEvent else { return nil }
+            let control = event.modifierFlags.contains(.control) && (event.type == .leftMouseDown || event.type == .leftMouseUp)
+            return event.type == .rightMouseDown || event.type == .rightMouseUp || control ? super.hitTest(point) : nil
         }
         override func rightMouseDown(with event: NSEvent) { action() }
+        override func mouseDown(with event: NSEvent) { if event.modifierFlags.contains(.control) { action() } }
+        // Its up too, so the ⌃-click doesn't also land as a click on what's under it.
+        override func mouseUp(with event: NSEvent) {}
     }
 }
 
