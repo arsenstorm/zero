@@ -12,8 +12,8 @@ When an agent needs something from you, it sends an ask: a question, a choice, a
 
 Your asks show in two places:
 
-- **The inbox panel**, beside the control bar on the right edge of your screen. Point at the tray icon at the top of the bar to peek at the panel, or click the icon to keep it open. A blue dot on the icon means at least one ask is waiting. See [The control bar](/docs/control-bar).
-- **The Inbox page** in Zero's window. Click the tray icon in the window's left rail. Its tip reads **Inbox**. A red badge on the icon shows how many asks are waiting on you.
+- **The inbox panel**, beside the control bar on the right edge of your screen. Point at the tray icon at the top of the bar to peek at the panel, or click the icon to keep it open. Away from the pointer, the icon folds into an arc, which turns blue while at least one ask is waiting. See [The control bar](/docs/control-bar).
+- **The Inbox page** in Zero's window. Click the tray icon at the top of the window's left rail. Its tip reads **Inbox**. A red dot on the icon means asks are waiting on you. The Inbox has the asks of every workspace.
 
 The **Inbox hotkey** works from any app: <kbd>⌥</kbd> <kbd>Space</kbd> unless you've changed it. It opens the inbox panel. To change it, see [Keyboard shortcuts](/docs/keyboard-shortcuts).
 

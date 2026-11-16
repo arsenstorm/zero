@@ -69,6 +69,8 @@ A time you set in an earlier version of Zero stays in the list of choices.
 | Setting | Where | What it does |
 |---|---|---|
 | Show the control bar | Settings › Control bar › Control bar | Off: asks reach you in Zero's window, in notifications and on the Dock instead. While it's off, the bar's other settings are greyed out and read **The control bar is off.** On by default. |
+| In the bar | Settings › Control bar › In the bar | The bar's parts, top to bottom. **Inbox**, first and always there, and **Workspace** each have a switch. **Agents** shows **All tasks**, **Only those that need you**, **Pinned tasks only** or **None**. Drag **Workspace** and **Agents** to change their order. |
+| Settings button | Settings › Control bar › In the bar | A button at the foot of the bar that opens this page. It comes out when the pointer is on the bar. Off by default. |
 | Follow the active screen | Settings › Control bar › Placement | On: the bar moves to the screen you're using. Off by default. |
 | Show the bar in Zero's window | Settings › Control bar › Placement | Puts the bar inside Zero's window instead of on the screen's edge: **When it fills the screen**, **Always** or **Never**. Default: **When it fills the screen**. |
 | Agents in the bar | Settings › Control bar › Agents in the bar | The agents outside Zero that the bar shows. Point at one for the pen, **Rename**, and the bin, **Remove**. The bin is **Remove and stop** when Zero can stop the agent. Drag rows to change the order. A removed agent comes back the next time it asks you something. The list is empty until an agent first asks you something. |
@@ -93,6 +95,7 @@ The iPhone app, coming soon, calls this Mac **Your Mac** and unpairs with **Unpa
 | Archive done tasks | Settings › Agents › Tasks | When Zero archives a done task: **Once you've read it**, **After an hour**, **After a day**, **After a week** or **Never**. Default: **After a day**. An archived task comes back when something it follows changes. |
 | Terminal app | Settings › Agents › Tasks | The app a task opens in, and where **Terminal** on a running command follows its output: Ghostty, Terminal, iTerm or Warp when installed, each with its icon, or **Other app…**. The task's actions name the app you chose, such as **Open in Ghostty**. By default, Ghostty when it's installed, else Terminal. |
 | Suggest files after @ | Settings › Agents › Tasks | Typing <kbd>@</kbd> in a message box also lists files from the task's project, after your loops. Off by default. |
+| Sending to a paused task | Settings › Agents › Tasks | What sending a message to a paused task does: **Ask**, **Resume and send** or **Queue message**. Default: **Ask**. Ticking **Don't ask again** in the dialog sets it too. |
 | When a command looks stuck | Settings › Agents › Stuck commands | What Zero does about a command that looks stuck: **Tell me**, **Stop it** or **Never check**. A command looks stuck when it runs well past its usual time with no output and no CPU, or waits for input that no one will type. When Zero stops one, it tells the agent why, and the agent carries on. |
 | Thresholds | Settings › Agents › Stuck commands | When a command counts as stuck, in one line. **Change…** opens a dialog: **Hung after** (no output and no CPU for 1 to 15 minutes), **Past its usual time** (2× to 10× its usual time, and at least 1 to 30 minutes), and **Never stop commands containing**, words separated by commas, such as `migrate, deploy`. Hidden when the setting above is **Never check**. |
 
@@ -135,9 +138,9 @@ The agents' GitHub token and how they push are on the GitHub page, under **Agent
 
 ## Workspaces
 
-Each row has a workspace's icon and name. **Shown** marks the one the window shows. Point at a row for the pen, **Edit**, and the bin, **Delete: its tasks are Zero's again**. The **Zero** workspace is always there: it can't be deleted or renamed.
+Each row has a workspace's icon and name. **Shown** marks the one the window shows. Point at a row for the pen, **Edit**, and the bin, **Delete: its tasks are Zero's again**. Drag a row up or down to change the order, here and on the window's rail. The **Zero** workspace is always there: it can't be deleted or renamed.
 
-**Add workspace** opens **New workspace**: a **Name**, an **Icon** and a **Colour**. Editing a workspace also lists the **MCP servers** its tasks get.
+**Add workspace** opens **New workspace**: a **Name**, an **Icon** and a **Colour**. Editing a workspace also lists the **MCP servers** its tasks get. The **+** on the window's rail opens a fuller **New workspace** page, with the MCP servers too.
 
 | Setting | Where | What it does |
 |---|---|---|
@@ -198,7 +201,7 @@ Set up an MCP server here once, and Zero gives it to your tasks as they start, i
 Zero also remembers these as you use it:
 
 - How wide you dragged the sidebars. One width counts for all of them.
-- The agent and project you last picked for a new task.
+- The agent and project you last picked for a new task, and the model and effort you last picked for each agent.
 - How the tasks sidebar is sorted, the order you dragged tasks into, and which tasks have their workers folded.
 - The workspace the window shows, and whether a task's details pane is open.
 - Your unsent drafts, and where you scrolled to in each conversation.

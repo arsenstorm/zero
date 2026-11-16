@@ -91,6 +91,8 @@ The composer is the box at the foot of a task's conversation. See [Tasks and wor
 | <kbd>⌘</kbd> <kbd>V</kbd> | Pastes. A pasted image or video goes with the message. |
 | <kbd>1</kbd> to <kbd>9</kbd>, with the composer empty | Picks that answer on the first ask that the agent sent you through Zero. |
 | Any letter, with nothing else to type in | Starts to type that letter into the composer, wherever the window's focus is. <kbd>⌘</kbd> <kbd>V</kbd> pastes into the composer the same way. |
+| <kbd>Space</kbd>, with nothing else to type in | Types a space into the composer, as a letter does. |
+| <kbd>⌫</kbd>, <kbd>⌥</kbd> <kbd>⌫</kbd> or <kbd>⌘</kbd> <kbd>⌫</kbd>, with nothing else to type in | Deletes from the end of the composer's text: the last character, the last word, or back to the start of the line. |
 | <kbd>Esc</kbd> | Closes the **+** menu. |
 
 When you type `/` or `@`, a list of suggestions opens:

@@ -34,29 +34,35 @@ From the window:
 2. Type a **Name**, and pick an **Icon**, a **Colour** and the **MCP servers** its tasks get. The preview shows how the workspace will look on the rail.
 3. Click **Create workspace**, or press <kbd>Return</kbd>. Zero shows the new workspace and opens its **New task** page. **Cancel**, or <kbd>Esc</kbd>, goes back to where you were.
 
+Servers that every workspace gets aren't listed: the page says **Some MCP servers are already available in every workspace.** **Configure**, beside **MCP servers**, opens **Settings › MCP servers**. While you have fewer than nine workspaces, the page also says which <kbd>⌥</kbd> key will show the new one.
+
 From Settings:
 
 1. Go to **Settings › Workspaces** and click **Add workspace**.
-2. Type a **Name** and pick an **Icon**.
+2. Type a **Name**, and pick an **Icon** and a **Colour**.
 3. Click **Save**.
 
 A new workspace gets the first icon in the grid until you pick another.
 
 ## Switch workspace
 
-- **In the window**: click the workspace's button on the rail, or press <kbd>⌥</kbd> <kbd>1</kbd> to <kbd>⌥</kbd> <kbd>9</kbd> for the first nine, in the rail's order. Point at its button to see its name and keys. A bar at the rail's edge marks the workspace you're looking at. A red dot on a workspace's button means a task there needs you.
+- **In the window**: click the workspace's button on the rail, or press <kbd>⌥</kbd> <kbd>1</kbd> to <kbd>⌥</kbd> <kbd>9</kbd> for the first nine, in the rail's order. Point at its button to see its name and keys. A bar at the rail's edge, in the workspace's colour, marks the workspace you're looking at, and its icon is filled. A red dot on a workspace's button means a task there needs you. Clicking the button of the workspace you're looking at takes you back to its tasks, from its Later, Scratchpads or Loops.
 - **In the control bar**: click the workspace's icon, below the inbox. The icon shows only when you have more than one workspace.
 
-Each workspace reopens the task you last had open in it. When you open a task from another workspace, for example from the inbox or a notification, the window goes to that task's workspace.
+Each workspace reopens the task you last had open in it, or its **New task** page. When you open a task from another workspace, for example from the inbox or a notification, the window goes to that task's workspace.
 
 ## Change a workspace's name, icon, colour or servers
 
 1. Go to **Settings › Workspaces**. The workspace you're looking at has a **Shown** pill.
-2. Point at a workspace and click the pen, **Edit**, or double-click its row. In the window, you can also right-click the workspace's button on the rail and choose **Edit**.
-3. Change its **Name**, pick an **Icon** from the grid, pick a **Colour**, or tick the **MCP servers** its tasks get. Servers that every workspace gets show as "(every workspace)", and you can't untick them here. Add and change servers in **Settings › MCP servers**.
+2. Point at a workspace and click the pen, **Edit**, or double-click its row. In the window, you can also right-click the workspace's button on the rail and choose **Edit** and its name. The same menu has **New workspace** and **Workspace settings**.
+3. Change its **Name**, pick an **Icon** from the grid, pick a **Colour**, or tick the **MCP servers** its tasks get. Servers that every workspace gets aren't listed: the form says **Some MCP servers are already available in every workspace.** Add and change servers in **Settings › MCP servers**, or click **Configure** beside **MCP servers**. The **Zero** workspace has no **Name** field, as it can't be renamed.
 4. Click **Save**.
 
 The icon shows on the workspace's button on the rail, in the control bar and in Settings. Zero's own workspace shows Zero's mark until you pick an icon for it. With no colour, the default, the icon looks like the rail's other buttons. With a colour, it shows in white on a tile of that colour.
+
+## Change the order of workspaces
+
+Drag a workspace's button up or down the rail, or drag its row in **Settings › Workspaces**. Both take the same order, and <kbd>⌥</kbd> <kbd>1</kbd> to <kbd>⌥</kbd> <kbd>9</kbd> follow it.
 
 ## Delete a workspace
 
@@ -64,7 +70,7 @@ In **Settings › Workspaces**, point at the workspace and click the bin, **Dele
 
 ## Move a task to another workspace
 
-Right-click the task in the tasks sidebar and choose **Move to** and the workspace's name (**Move to Zero** puts it back in the Zero workspace). These show only when you have more than one workspace. The task's workers go with it.
+Right-click the task in the tasks sidebar, point at **Workspace** and choose the workspace. A tick marks the one it's in. **Workspace** shows only when you have more than one workspace, and not on a worker. The task's workers go with it.
 
 ## Add your projects
 

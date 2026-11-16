@@ -137,7 +137,7 @@ Agents can only read. A Slack post or a Linear change is refused unless you turn
 
 | Command | Flags | What it does |
 |---|---|---|
-| `zero later save "note"` | `--asked`, `--file PATH`, `--link URL`, `--attach FILE` | Saves work to **Later** in the window's left rail. The note is a short headline. The file is the full write-up. `--file -` reads it from standard input. `--link` and `--attach` can each be given more than once. Without `--asked`, the item is a suggestion. It shows under **Suggested by agents**. Each task can have at most 3 open suggestions. A suggestion goes away after a week unless you keep it. |
+| `zero later save "note"` | `--asked`, `--file PATH`, `--link URL`, `--attach FILE` | Saves work to **Later**, in the tasks sidebar of the task's workspace. The note is a short headline. The file is the full write-up. `--file -` reads it from standard input. `--link` and `--attach` can each be given more than once. Without `--asked`, the item is a suggestion. It shows under **Suggested by agents**. Each task can have at most 3 open suggestions. A suggestion goes away after a week unless you keep it. |
 | `zero later list [words]` | | Lists saved items, or those with these words. |
 | `zero later view <id>` | `--version N` | Prints an item in full. |
 | `zero later edit <id>` | `--note`, `--file`, `--link`, `--attach` | Changes an item. |

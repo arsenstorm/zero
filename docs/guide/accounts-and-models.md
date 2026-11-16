@@ -61,7 +61,7 @@ Under the tiles, **Activity** has a square for each day, darker the more turns t
 
 While the page is open, Zero asks each agent for its accounts' usage every two minutes. API keys have no allowance, so they show no tiles.
 
-The foot of the tasks sidebar also shows the accounts your tasks used in the last day, with a **5h** and a **Week** bar each. Point at a bar to see when it resets. Click the card to open **Settings › Accounts and models**.
+The window's left rail also shows usage, above the gear: two rings for the account your tasks used last, the outer one for the last 5 hours and the inner one for the week. Point at the rings for every account's rings, by agent. Point at an account for how much of each allowance is used and when it resets. Click the rings to open **Settings › Accounts and models**. The rings show as soon as Zero opens, with the figures from last time until new ones come in.
 
 ## Which account a task uses
 
@@ -84,13 +84,13 @@ When an account's key is missing from your Keychain, the task doesn't start. It 
 
 ## Pick a model and effort for a new task
 
-To open the **New task** page, click **Home**, the house at the top of the window's left rail. On the right of the row under the box, a chip shows the agent's icon, the model and the effort, such as "Opus 5.5 · High". A model the list doesn't have shows by a readable name, such as "Opus 5.5" for `claude-opus-5-5`.
+To open the **New task** page, click **New task** at the top of the tasks sidebar, or press <kbd>⌘</kbd> <kbd>N</kbd>. On the right of the row under the box, a chip shows the agent's icon, the model and the effort, such as "Opus 5.5 · High". A model the list doesn't have shows by a readable name, such as "Opus 5.5" for `claude-opus-5-5`.
 
 1. Click the chip. It has a tab for each agent: **Claude Code**, **Codex** and **OpenCode**. To switch agent, click a tab or press <kbd>←</kbd> and <kbd>→</kbd>.
 2. Point at a model, or move to it with <kbd>↑</kbd> and <kbd>↓</kbd>. The pane beside the list describes the model. For models that have levels, the pane also shows an **Effort** slider.
 3. Click the model, or press <kbd>Return</kbd>. Or move the **Effort** slider. The slider picks the model at that level and keeps the list open. <kbd>Esc</kbd> closes the list.
 
-When you pick no model, the task uses the agent's first model. OpenCode uses the default from its own configuration. The effort levels are different for each model. On the chip, Zero shows **Extra High** as "XHigh".
+**New task** opens with the model and effort you last picked for each agent. Until you pick one, the task uses the agent's first model. OpenCode uses the default from its own configuration. The effort levels are different for each model. On the chip, Zero shows **Extra High** as "XHigh".
 
 Zero remembers the agent you picked last and uses it for the next new task.
 
@@ -119,8 +119,8 @@ When an account turns out not to have the model, its tasks on that model run on 
 
 ## Where the lists come from
 
-- **Claude Code**: first **Fable**, **Opus**, **Sonnet** and **Haiku**. Each follows the latest model of its family. Once a task has run one, the row shows that version's name, such as "Opus 5.5". Then come the models that Claude Code has offered your account, such as the 1M-context versions, and the models you added. Zero reads these from Claude Code's own files and never calls Anthropic.
-- Under them, each version your tasks ran or you typed, newest first. Such a row stays on that version, even when a newer one comes out.
+- **Claude Code**: the models Claude Code's own model picker offers. Zero asks Claude Code for them, as the account new Claude Code tasks start with, and never calls Anthropic. First come **Fable**, **Opus**, **Sonnet** and **Haiku**, by the names Claude Code gives them. Each follows the latest model of its family, and the one Claude Code uses by default says **Claude Code's default.** Then come the 1M-context versions and the models you added. Until Claude Code has answered, the rows are named by the newest version a task has run, such as "Opus 5.5".
+- Under them, every version Claude Code offers, ran or you typed, newest first. Such a row stays on that version, even when a newer one comes out.
 - **Other model…**, at the end of Claude Code's list, takes any Claude model by its full id. Click it, type the id, such as `claude-opus-5`, and press <kbd>Return</kbd>. The model stays in the list from then on.
 - **Codex**: the models that Codex offers your account, as Codex lists them, plus the models you added.
 - **OpenCode**: its own list, which Zero reads when you open the chip. The rows fill in after Zero reads the list.

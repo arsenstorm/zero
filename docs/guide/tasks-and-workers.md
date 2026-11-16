@@ -6,7 +6,7 @@ order: 2
 
 A task is one agent working on one job for you, such as "Fix the flaky login test". It runs Claude Code, Codex or OpenCode in a folder on your Mac. You start, read and steer tasks in Zero's window. A task can also start workers: tasks of its own, each taking part of the job.
 
-To open the window, choose **Show Zero** from the menu bar icon. While that menu is open, <kbd>⌘</kbd> <kbd>0</kbd> does the same. The rail runs down its left edge: **Inbox** at the top, then a button for each workspace. Next to it, the tasks sidebar lists the tasks in the workspace you're looking at.
+To open the window, choose **Show Zero** from the menu bar icon. While that menu is open, <kbd>⌘</kbd> <kbd>0</kbd> does the same. The rail runs down its left edge: **Inbox** at the top, then a button for each workspace and **+**, **New workspace**. Settings is the gear at its foot. Next to it, the tasks sidebar lists the tasks in the workspace you're looking at.
 
 ## Start a task
 
@@ -15,7 +15,7 @@ To open the window, choose **Show Zero** from the menu bar icon. While that menu
 3. Check the chips under the box:
    - **The project**: the folder the task starts in. Click it to pick another from **Projects**. Zero lists the folders you added in **Settings › Workspaces › Projects**. Until you add a folder, **Add a project in Settings › Workspaces** shows in place of the chips. See [Workspaces and folders](/docs/workspaces-and-folders).
    - **The workspace**: shown only when you have more than one workspace. The task and every worker it starts go into the workspace you pick here. It starts as the workspace you're looking at.
-   - **The agent**: the model and effort, such as "Opus 5.5 · High", with the provider's mark as its icon. Click it to pick a provider from the tabs at the top, a model from the list, and an effort with the **Effort** slider. With no model picked, the task starts on the provider's first model. OpenCode starts on the model set in its own config.
+   - **The agent**: the model and effort, such as "Opus 5.5 · High", with the provider's mark as its icon. Click it to pick a provider from the tabs at the top, a model from the list, and an effort with the **Effort** slider. It starts on the model and effort you last picked here for that provider. With none picked yet, the task starts on the provider's first model. OpenCode starts on the model set in its own config.
    - **Permissions**: an icon with no label. Point at it to see **Permissions: Auto** or **Permissions: Unrestricted**.
 4. Click the paper plane, or press <kbd>↩</kbd>. The task starts and opens.
 
@@ -26,7 +26,7 @@ The two permission modes:
 | **Auto** | The default. The agent's CLI decides what's safe and asks you about the rest. Its requests reach your inbox. |
 | **Unrestricted** | Anything, without asking. An orange bolt marks the task wherever its permissions show. |
 
-Zero keeps what you write on this page as a draft until you send it, and remembers the provider and project you used last. For accounts and models, see [Accounts and models](/docs/accounts-and-models).
+Zero keeps what you write on this page as a draft until you send it, and remembers the provider and project you used last, and each provider's model and effort. For accounts and models, see [Accounts and models](/docs/accounts-and-models).
 
 ## Find your tasks in the sidebar
 
@@ -153,7 +153,7 @@ Write in the composer at the foot of the page:
 | Stop the agent's turn | Click the square that replaces the paper plane, or press <kbd>⌘</kbd> <kbd>.</kbd>. |
 | Start a new line | Press <kbd>⇧</kbd> <kbd>↩</kbd> or <kbd>⌥</kbd> <kbd>↩</kbd>. |
 
-Start typing, or press <kbd>⌘</kbd> <kbd>V</kbd>, anywhere on the page, and it goes into the composer without a click. Zero keeps an unsent message as a draft for each task, and puts your words back in the box if a message can't be sent.
+Start typing, or press <kbd>⌘</kbd> <kbd>V</kbd>, anywhere on the page, and it goes into the composer without a click. <kbd>Space</kbd> and the delete keys work the same way: <kbd>⌫</kbd> deletes the last character, <kbd>⌥</kbd> <kbd>⌫</kbd> the last word, and <kbd>⌘</kbd> <kbd>⌫</kbd> back to the start of the line. Zero keeps an unsent message as a draft for each task, and puts your words back in the box if a message can't be sent.
 
 OpenCode takes one message at a time, so you can't steer it. Its box says **OpenCode answers one message at a time**.
 
@@ -246,7 +246,15 @@ Zero archives a finished worker an hour after its task has its report, so finish
 | **Resume** | The same menus, or **Resume** above the composer | Takes the task and its workers off hold. What came for it meanwhile goes to the agent first, in one message, then the messages you wrote. |
 | **Restart agent** | The same menus | Stops the agent's process and starts a fresh one on the same conversation right away. Use it for an agent that's stuck, or to pick up a new MCP server, account or plugin. If the agent is mid-turn, Zero asks first, as the turn stops. |
 
-While a task is paused, its title bar and sidebar row say **Paused**. Events for it (pull requests it follows, workers' reports, watches, wake-ups, messages from other tasks, answers to its asks) still arrive: each shows in the conversation as **Held while paused**, and the bar above the composer counts them, for example **Paused · 4 held while paused**. A message you send waits there too. Its box says **Paused · your message waits until you resume**.
+While a task is paused, its title bar and sidebar row say **Paused**. Events for it (pull requests it follows, workers' reports, watches, wake-ups, messages from other tasks, answers to its asks) still arrive: each shows in the conversation as **Held while paused**. Above the composer, under the **Paused** heading, a line counts them, for example **3 events since you paused**.
+
+When you send a message to a paused task, Zero asks **Resume this task?**:
+
+- **Resume and send** resumes the task. The agent gets what came in while it was paused first, then your message.
+- **Queue message** keeps the task paused. Your message waits above the composer until you click **Resume**.
+- **Cancel** leaves your message in the box.
+
+Tick **Don't ask again** to keep your choice. To change it later, or to be asked again, use **Settings › Agents › Tasks › Sending to a paused task**. The box says what sending will do: **Paused · send to resume it or queue your message**, **Paused · sending resumes it** or **Paused · your message waits until you resume**.
 
 To pause every task in a workspace, use **Pause all tasks** in the sliders menu beside the sidebar's **Tasks** heading.
 

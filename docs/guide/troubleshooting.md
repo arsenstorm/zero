@@ -117,7 +117,7 @@ To have Zero stop such commands itself, or never check, change **Settings › Ag
 
 ## Your Mac runs short of memory
 
-While memory is short, the **Tasks** card at the foot of the tasks sidebar starts with **Memory is short**. It lists what uses the most memory, by app. Under Zero's tasks, it lists the three heaviest tasks. Click one to open it.
+While memory is short, the server icon near the foot of the window's left rail turns orange. Point at it for the **Tasks** card, which then starts with **Memory is short**. It lists what uses the most memory, by app. Under Zero's tasks, it lists the three heaviest tasks. Click one to open it.
 
 Tasks that are done, archived or quiet can leave things running, such as a dev server, a simulator or a container. The card shows how many, such as **3 left running · 2.1 GB**. Click that line to see them by task. **Stop** stops one thing, and **Stop all** stops all of a task's things. Some may be meant to stay, such as a dev server that you're using.
 

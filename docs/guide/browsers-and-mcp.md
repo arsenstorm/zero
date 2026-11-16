@@ -123,7 +123,7 @@ OpenCode signs in to a server only in a terminal, with `opencode mcp auth <serve
 
 In the server's form, turn off **Every workspace**. Then tick the workspaces whose tasks get the server. The server's row in **Settings › MCP servers** shows **Every workspace**, or the names of its workspaces.
 
-Or choose from the workspace: open **Settings › Workspaces**, point at a workspace and click the pen, **Edit**. Under **MCP servers**, tick the servers for its tasks. Servers for every workspace show as ticked, and you can't change them there. When you take a server out of its last workspace, Zero turns the server off rather than give it to every workspace. See [Workspaces and folders](/docs/workspaces-and-folders).
+Or choose from the workspace: open **Settings › Workspaces**, point at a workspace and click the pen, **Edit**. Under **MCP servers**, tick the servers for its tasks. Servers for every workspace aren't listed there: the form says **Some MCP servers are already available in every workspace.** The **New workspace** page, from the **+** on the window's rail, has the same list. When you take a server out of its last workspace, Zero turns the server off rather than give it to every workspace. See [Workspaces and folders](/docs/workspaces-and-folders).
 
 ## Turn a server off, change it or delete it
 

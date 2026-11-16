@@ -133,12 +133,14 @@ Write to the task in the box at the foot, **Write to this task**. When you leave
 
 | Control | What it does |
 |---|---|
-| **+** | Adds up to 10 photos. |
+| **+** | Adds up to 10 photos and videos. |
 | Microphone | Dictates into the box. |
 | **Permissions: auto** | Switches between **Auto** and **Unrestricted** for the task. |
 | The model, such as **Opus 5.5 High** | Picks the model and effort, from this agent's models, for your next message. |
 | Send | Sends. While the task works, it's **Queue for after this turn**. |
 | Stop | Shows while the task works and the box is empty. Stops the turn. |
+
+A video shows as a tile with a play mark. While it goes to your Mac, a ring fills in the mark's place. In the conversation, tap a video's tile to play it, and an image to see it full size. The agent gets three pictures taken from the video, and where the video is kept on your Mac.
 
 Messages that wait for the end of the turn show above the box under **Queued**. Tap one to edit or delete it, or tap **Steer** to send it now. After you stop the task, these messages show as **Held**. Tap **Send** to send them.
 
@@ -148,7 +150,7 @@ Tap the round **+** button.
 
 1. At the top, tap the folder to pick where the task works. The list has your Mac's project folders. Zero remembers the last one you used.
 2. Type the job in **What should it do?**.
-3. Tap the agent chip to pick **Claude Code**, **Codex** or **OpenCode** and its model. Claude Code is the default.
+3. Tap the agent chip to pick **Claude Code**, **Codex** or **OpenCode** and its model. Claude Code is the default. Each agent starts on the model and effort you last picked for it on the phone.
 4. Tap the permissions chip for **Auto** or **Unrestricted**. **Auto** is the default.
 5. Tap **Start**.
 

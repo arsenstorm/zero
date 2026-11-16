@@ -78,7 +78,7 @@ Until you add a folder, the new task page shows **Add a project in Settings › 
 ## Start your first task
 
 1. Open Zero's window: click the Zero icon in the menu bar and choose **Show Zero**.
-2. Click **Home**, the house at the top of the left rail. The new task page opens, with a box that says **Do anything**.
+2. Click **New task** at the top of the tasks sidebar, or press <kbd>⌘</kbd> <kbd>N</kbd>. The new task page opens, with a box that says **Do anything**.
 3. Look at the chips under the box:
    - **The project.** Click it to choose the folder the task works in.
    - **The agent and model**, on the right of the row. Click it to choose Claude Code, Codex or OpenCode and one of its models. See [Accounts and models](/docs/accounts-and-models).
@@ -91,7 +91,7 @@ The task opens and the agent gets to work. When it needs you, its question shows
 
 Zero has three places on your screen:
 
-- **The window.** Your tasks and their conversations. The rail on its left side leads to **Home**, **Inbox**, **Later**, **Scratchpads**, **Loops** and **Settings**. To open it, choose **Show Zero** from the menu bar icon, or open Zero again from the Applications folder.
+- **The window.** Your tasks and their conversations. The rail on its left side has **Inbox** at the top, then your workspaces, **+** to make a workspace, and the gear for **Settings** at its foot. Next to the rail, the tasks sidebar has **New task**, **All tasks**, **Later**, **Scratchpads**, **Loops** and the workspace's tasks. To open it, choose **Show Zero** from the menu bar icon, or open Zero again from the Applications folder.
 - **The control bar.** A small bar on the right edge of your screen, halfway down. It shows the inbox and a mark for each task. Point at it to open the inbox. See [The control bar](/docs/control-bar).
 - **The menu bar icon.** Zero's mark in the menu bar. Click it for:
 

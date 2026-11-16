@@ -12,10 +12,13 @@ The control bar is a small bar on the right edge of your screen, halfway down. I
 
 From the top:
 
-- **The inbox.** A tray icon. A blue dot on it means at least one ask is waiting for you.
+- **The inbox.** A round button with a tray icon, at the top of the bar. While the pointer is away from the bar, it folds into a thin arc. The arc turns blue while at least one ask is waiting for you, and brightens once when a new one comes in.
 - **The workspace.** Its icon shows only when you have more than one workspace. Click it to see your workspaces and switch to another one.
 - **A line**, then **one mark for each task** in the workspace, workers included. They're in the same order as the window's sidebar. Each mark is the task's state icon, the same one the sidebar shows. A blue spinner means the task is working.
 - **Agents outside Zero**, such as Claude Code in a terminal. When one asks you something, it shows as a coloured dot after the tasks.
+- **The settings button**, at the foot of the bar, when you turn it on in **Settings › Control bar › In the bar**. It folds into an arc too. Click it to change what the bar shows.
+
+With the pointer on the bar, only the button nearer to it comes out: the inbox near the top, the settings button near the foot. Over the tasks, both come out.
 
 The task states:
 
@@ -36,6 +39,8 @@ The task states:
 - **Point** at the inbox icon or at a task's mark. The inbox opens beside the bar and shows the asks, or that task. A task's view shows its latest answer, with **Open task** to open it in Zero's window.
 - **Click** to keep the inbox open. To close it, click the same icon or mark again, or press <kbd>Esc</kbd>.
 - **Click a task's mark.** When the task has asked you something, its asks open in the inbox. Otherwise the task opens in Zero's window.
+
+When you move the pointer from the bar into the open inbox, the marks and buttons it crosses on the way don't take over. Pointing at the settings button closes an inbox you opened by pointing, but not one you opened with a click.
 
 While the inbox is open, <kbd>1</kbd>, <kbd>2</kbd> and <kbd>3</kbd> pick an answer. See [The inbox and asks](/docs/inbox-and-asks).
 
@@ -63,6 +68,7 @@ Right-click the mark of an agent outside Zero:
 
 Right-click the bar for:
 
+- **Customise bar…**: opens **Settings › Control bar**.
 - **Open log**: opens `~/.zero/asks.jsonl`, the file where Zero records every ask and answer.
 - **Settings…**: opens Zero's settings.
 - **Quit Zero**: quits the app.
@@ -73,6 +79,8 @@ These are in **Settings › Control bar**. Open Settings with <kbd>⌘</kbd> <kb
 
 | Setting | Where | What it does |
 |---|---|---|
+| In the bar | Settings › Control bar › In the bar | Turns the bar's parts on or off, and sets their order: drag a row up or down. **Inbox** stays first. **Workspace** shows only while you have more than one. **Agents** shows **All tasks**, **Only those that need you**, **Pinned tasks only** or **None**. |
+| Settings button | Settings › Control bar › In the bar | Puts the settings button at the foot of the bar. It comes out when the pointer is on the bar. |
 | Follow the active screen | Settings › Control bar › Placement | On: the bar moves to the screen you're using. Off: it stays on the screen where it first appeared. |
 | Show the bar in Zero's window | Settings › Control bar › Placement | Puts the bar in Zero's window, not on the screen's edge: **When it fills the screen**, **Always** or **Never**. **When it fills the screen** is the default. |
 | Agents in the bar | Settings › Control bar › Agents in the bar | The agents outside Zero that the bar shows. Rename or remove one, or drag them into a new order. A removed agent comes back when it next asks you something. |

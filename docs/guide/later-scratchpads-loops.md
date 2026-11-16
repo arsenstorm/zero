@@ -10,7 +10,7 @@ Three places in Zero's window keep things that you and your agents come back to:
 - **Scratchpads**: Markdown notes that you and every agent can read and write.
 - **Loops**: named instructions that you give an agent when you type `@name`.
 
-Each opens from its row in the tasks sidebar, below **All tasks**, in this order. Each shows the items of the workspace you're looking at. An item you make goes into that workspace. An item an agent makes goes into its task's workspace. Agents can still read every pad and use every loop. To go back to the tasks, click the arrow beside the page's name. To open the window, choose **Show Zero**, <kbd>⌘</kbd> <kbd>0</kbd>, in the menu bar icon's menu.
+Each opens from its row in the tasks sidebar, below **All tasks**, in this order. Each shows the items of the workspace you're looking at. An item you make goes into that workspace. An item an agent makes goes into its task's workspace. Agents can still read every pad and use every loop. To go back to the tasks, click the arrow beside the page's name, **Back to tasks**, or the workspace's button on the rail. To open the window, choose **Show Zero**, <kbd>⌘</kbd> <kbd>0</kbd>, in the menu bar icon's menu.
 
 ## Save something for later
 
