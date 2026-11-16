@@ -2,9 +2,10 @@ import Testing
 @testable import ZeroCore
 
 @Test func aKeptBarOrderNeverLosesAPart() {
-    #expect(BarPart.order([]) == [.inbox, .workspaces, .agents])
-    #expect(BarPart.order(["agents", "inbox"]) == [.agents, .inbox, .workspaces])
-    #expect(BarPart.order(["gone", "agents", "agents"]) == [.agents, .inbox, .workspaces])
+    #expect(BarPart.order([]) == [.inbox, .agents])
+    #expect(BarPart.order(["agents", "inbox"]) == [.agents, .inbox])
+    // The workspace control, gone from the bar, is dropped from an order kept from before.
+    #expect(BarPart.order(["gone", "workspaces", "agents", "agents"]) == [.agents, .inbox])
 }
 
 @Test func theBarShowsTheAgentsItsModeSays() {
@@ -47,4 +48,73 @@ import Testing
     // The same at the edge of a button's reach on a tall bar.
     #expect(BarReach.at(46, height: 300, was: .inbox) == .inbox)
     #expect(BarReach.at(46, height: 300, was: .neither) == .neither)
+}
+
+private func dot(_ name: String, in workspace: String?, running: Bool = false, waiting: Bool = false) -> BarGroups.Dot {
+    BarGroups.Dot(name: name, workspace: workspace, running: running, waiting: waiting)
+}
+
+@Test func theGroupsKeepTheRailsOrderWhicheverTheWindowShows() {
+    // The window's workspace in its own place, not first; an agent outside Zero (no workspace) goes with the window's.
+    let dots = [dot("a", in: "site"), dot("b", in: "zero"), dot("c", in: "notes"), dot("t", in: nil), dot("d", in: "site")]
+    let groups = BarGroups.make(dots, workspaces: ["zero", "notes", "site"], window: "site", from: .all)
+    #expect(groups.map(\.workspace) == ["zero", "notes", "site"])
+    #expect(groups.map(\.dots) == [["b"], ["c"], ["a", "t", "d"]])
+    #expect(groups.map(\.window) == [false, false, true])
+    // Switching the window changes which group is the window's, never the order.
+    let switched = BarGroups.make(dots, workspaces: ["zero", "notes", "site"], window: "zero", from: .all)
+    #expect(switched.map(\.workspace) == ["zero", "notes", "site"])
+    #expect(switched.map(\.window) == [true, false, false])
+    // A workspace the rail doesn't list yet follows the listed ones.
+    let unknown = BarGroups.make([dot("x", in: "new"), dot("b", in: "zero")], workspaces: ["zero"], window: "zero", from: .all)
+    #expect(unknown.map(\.workspace) == ["zero", "new"])
+}
+
+@Test func anotherWorkspaceFoldsToItsRunningCountUnlessSomethingThereWaitsOnTheUser() {
+    let dots = [
+        dot("w", in: "zero"),
+        dot("a", in: "infra", running: true), dot("b", in: "infra", running: true), dot("c", in: "infra"),
+        dot("d", in: "site", running: true), dot("e", in: "site", waiting: true),
+    ]
+    let groups = BarGroups.make(dots, workspaces: ["zero", "site", "infra"], window: "zero", from: .all)
+    #expect(groups.map(\.folds) == [false, false, true])
+    #expect(groups[2].running == 2)
+    // The window's workspace never folds, whatever waits there.
+    #expect(!BarGroups.make([dot("w", in: "zero")], workspaces: ["zero"], window: "zero", from: .all)[0].folds)
+}
+
+@Test func aWorkspaceWithNoAgentsHasNoGroup() {
+    // The window's workspace has none either: only the one with agents shows, under its mark (not the window's).
+    let groups = BarGroups.make([dot("a", in: "site")], workspaces: ["zero", "site", "notes"], window: "zero", from: .all)
+    #expect(groups.map(\.workspace) == ["site"])
+    #expect(!groups[0].window)
+}
+
+@Test func showingTheWindowsWorkspaceOnlyLeavesTheOthersOut() {
+    let dots = [dot("a", in: "site"), dot("b", in: "zero"), dot("t", in: nil)]
+    let groups = BarGroups.make(dots, workspaces: ["zero", "site"], window: "zero", from: .window)
+    #expect(groups.map(\.workspace) == ["zero"])
+    #expect(groups[0].dots == ["b", "t"])
+}
+
+@Test func theBarMarksItsGroupsOnlyWhenThereIsMoreThanTheWindowsOwn() {
+    let window = BarGroups.make([dot("a", in: "zero")], workspaces: ["zero", "site"], window: "zero", from: .all)
+    #expect(!BarGroups.marked(window))
+    let two = BarGroups.make([dot("a", in: "zero"), dot("b", in: "site")], workspaces: ["zero", "site"], window: "zero", from: .all)
+    #expect(BarGroups.marked(two))
+    // Another workspace's agents alone: marked, so they don't pass for the window's.
+    let other = BarGroups.make([dot("b", in: "site")], workspaces: ["zero", "site"], window: "zero", from: .all)
+    #expect(BarGroups.marked(other))
+}
+
+@Test func aGroupSaysWhatItHoldsInWords() {
+    let groups = BarGroups.make(
+        [
+            dot("a", in: "infra", running: true), dot("b", in: "infra", running: true), dot("c", in: "site", running: true),
+            dot("d", in: "site", waiting: true), dot("e", in: "notes"),
+        ],
+        workspaces: ["zero", "site", "infra", "notes"], window: "zero", from: .all)
+    #expect(BarGroups.summary(name: "Website", groups[0]) == "Website · needs you · 1 working")
+    #expect(BarGroups.summary(name: "Infra", groups[1]) == "Infra · 2 working")
+    #expect(BarGroups.summary(name: "Notes", groups[2]) == "Notes · nothing working")
 }

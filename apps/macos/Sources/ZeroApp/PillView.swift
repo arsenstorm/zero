@@ -54,9 +54,19 @@ struct PillView: View {
     let moveHere: () -> Void
     /// Hovering a control peeks: nil for the open asks, a name for that agent's timeline.
     let peek: (String?) -> Void
-    /// The workspace control clicked: the workspaces, in the inbox's pane.
-    var openWorkspaces: () -> Void = {}
-    @State private var overWorkspace = false
+    /// The mark clicked: that workspace, in Zero's window.
+    var openWorkspace: (String) -> Void = { _ in }
+    /// Another workspace's group folded to its mark, opened while the pointer is on it: after a moment's rest (a
+    /// pass-through down the bar opens nothing), closed after a short grace (an overshoot doesn't collapse it).
+    @State private var openGroup: String?
+    @State private var hoverGroup: Task<Void, Never>?
+    /// Dots moving between groups (a task moved to another workspace, the window switching) travel to their new place.
+    @Namespace private var dotSpace
+    /// The groups as drawn: they follow the board's in an animation of their own (`follow`), as the board's changes come
+    /// in with none, and a dot can only travel between groups in one. A dot gone from the board keeps its last look
+    /// here while it fades out. Nil until the first draw, which takes the board's as they are.
+    @State private var drawn: [BarGroup]?
+    @State private var drawnDots: [String: Dot] = [:]
     /// The settings button in the bar's foot (Settings › Control bar), and the pointer on the bar that brings it out.
     @AppStorage("barFoot") private var barFoot = false
     @State private var overBar = false
@@ -71,12 +81,12 @@ struct PillView: View {
     init(
         controller: InboxController, settings: Settings, workspace: Workspace? = nil, openInbox: @escaping () -> Void,
         selectAgent: @escaping (String) -> Void, moveHere: @escaping () -> Void,
-        peek: @escaping (String?) -> Void = { _ in }, openWorkspaces: @escaping () -> Void = {},
+        peek: @escaping (String?) -> Void = { _ in }, openWorkspace: @escaping (String) -> Void = { _ in },
         previewHovered: String? = nil
     ) {
         self.controller = controller; self.settings = settings; self.workspace = workspace
         self.openInbox = openInbox; self.selectAgent = selectAgent; self.moveHere = moveHere; self.peek = peek
-        self.openWorkspaces = openWorkspaces
+        self.openWorkspace = openWorkspace
     }
 
     /// Every agent that has spoken and has not been closed, with its status. Expired asks don't count. A worker's
@@ -92,34 +102,61 @@ struct PillView: View {
     /// A dot: one of Zero's tasks, drawn as the sidebar draws it, or an agent outside Zero (a terminal's) with asks.
     private enum Mark: Equatable { case task(BoardRow.State, why: String), agent(AgentStatus) }
 
-    /// The bar's dots: this workspace's tasks as the sidebar lists them (its order, its icons), then the agents
+    /// A dot and what the bar groups it by.
+    private struct Dot {
+        let mark: Mark
+        let workspace: String?
+        let running: Bool
+        let waiting: Bool
+        /// For VoiceOver: the task (or agent) and its state.
+        let label: String
+    }
+
+    /// The bar's dots: every workspace's tasks as the sidebar lists them (its order, its icons), then the agents
     /// outside Zero that have asks; those the user's choice of agents (Settings › Control bar) keeps. Built from
     /// the agents with asks alone, it showed other things than the sidebar, in other shapes.
-    private func dots(_ agents: [(String, AgentStatus)]) -> [(String, Mark)] {
+    private func dots(_ agents: [(String, AgentStatus)]) -> [(String, Dot)] {
         let mode = settings.barAgents
         guard mode != .none else { return [] }
         let pinned = BarPins.set(barPinned)
-        let rows =
-            workspace.map { w in BoardRow.sorted(w.board.filter { $0.workspace == w.current }, by: taskSort, order: taskOrder) } ?? []
+        let rows = workspace.map { BoardRow.sorted($0.board, by: taskSort, order: taskOrder) } ?? []
         // A lead needs you when its team does (a worker's ask), though its dot draws the lead's own state.
         let tasks = rows.filter { mode.shows("zerod-" + $0.session, needsYou: $0.state.needsYou || $0.ownState.needsYou, pinned: pinned) }
         let others = agents.filter {
             !$0.0.hasPrefix("zerod-") && mode.shows($0.0, needsYou: [.needsYou, .handed, .trouble].contains($0.1), pinned: pinned)
         }
         // The lead's own state, as the sidebar's icon: the team's (a worker's trouble) drew another icon than the sidebar.
-        return tasks.map { ("zerod-" + $0.session, Mark.task($0.ownState, why: $0.why)) } + others.map { ($0.0, Mark.agent($0.1)) }
+        return tasks.map { row in
+            (
+                "zerod-" + row.session,
+                Dot(
+                    mark: .task(row.ownState, why: row.why), workspace: row.workspace, running: row.ownState == .working,
+                    waiting: row.state.needsYou || row.ownState.needsYou,
+                    label: "\(row.task), \(TaskStateIcon.look(row.ownState).name)")
+            )
+        }
+            + others.map { name, status in
+                let waiting = [.needsYou, .handed, .trouble].contains(status)
+                return (
+                    name,
+                    Dot(
+                        mark: .agent(status), workspace: nil, running: status == .working, waiting: waiting,
+                        label: controller.store.displayName(of: name) + (waiting ? ", needs you" : ""))
+                )
+            }
     }
 
-    /// The parts on in the bar's body, in the user's order; one with nothing to show (a lone workspace, no dots) takes
-    /// no room. The inbox isn't one: it's the button in the top hollow.
-    private func parts(dots: [(String, Mark)]) -> [BarPart] {
-        settings.barParts.filter { part in
-            switch part {
-            case .inbox: false
-            case .workspaces: settings.shows(.workspaces) && (workspace?.workspaces.count ?? 0) > 1
-            case .agents: !dots.isEmpty
-            }
-        }
+    /// The dots by workspace (`BarGroups`), in the rail's order.
+    private func groups(_ dots: [(String, Dot)]) -> [BarGroup] {
+        BarGroups.make(
+            dots.map { BarGroups.Dot(name: $0.0, workspace: $0.1.workspace, running: $0.1.running, waiting: $0.1.waiting) },
+            workspaces: workspace?.workspaces.map(\.id) ?? [], window: workspace?.current ?? "zero", from: settings.barAgentsFrom)
+    }
+
+    /// The parts on in the bar's body, in the user's order; one with nothing to show (no dots) takes no room. The
+    /// inbox isn't one: it's the button in the top hollow.
+    private func parts(groups: [BarGroup]) -> [BarPart] {
+        settings.barParts.filter { $0 == .agents && !groups.isEmpty }
     }
 
     private func scale(_ name: String) -> CGFloat { controller.agentFilter == name ? 13 / 11 : 1 }
@@ -143,10 +180,19 @@ struct PillView: View {
     var body: some View {
         // Once a redraw: worked out from every ask the store holds, four reads of it cost the bar a frame.
         let dots = dots(agents)
-        let names = dots.map(\.0)
-        let parts = parts(dots: dots)
+        let live = groups(dots)
+        let groups = drawn ?? live
+        let looks = drawnDots.merging(dots.map { ($0.0, $0.1) }, uniquingKeysWith: { _, now in now })
+        // The dots on the bar now: a folded group's are not (nor are their slots).
+        let names = groups.flatMap { !$0.folds || openGroup == $0.workspace ? $0.dots : [] }
+        let parts = parts(groups: groups)
         let inbox = settings.shows(.inbox)
         let slim = parts.isEmpty
+        // A group opened by the pointer grows the bar downward only: the bar sits centred in its panel, so it's moved
+        // down by half of what it grew, and the mark under the pointer, the inbox and all above stay where they were.
+        let shift =
+            openGroup.flatMap { id in groups.first { $0.workspace == id && $0.folds } }
+            .map { CGFloat($0.dots.count) * (slot + 2) / 2 } ?? 0
         Group {
             if slim {
                 slimPair
@@ -154,14 +200,17 @@ struct PillView: View {
                 // The buttons sit in the hollows, half over the body's ends: its fillets are centred on its edges.
                 VStack(spacing: -barKnob / 2) {
                     if inbox { inboxKnob.zIndex(1) }
-                    barBody(parts: parts, dots: dots, names: names)
+                    barBody(groups: groups, dots: looks)
                     if barFoot { settingsKnob.zIndex(1) }
                 }
             }
         }
+        .offset(y: reduceMotion ? 0 : shift)
+        .onChange(of: reduceMotion ? 0 : shift, initial: true) { controller.barShift = $1 }
         .frame(width: 44)
         .onHover { overBar = $0 }
         .onChange(of: names, initial: true) { controller.barOrder = $1 }
+        .onChange(of: live, initial: true) { _, now in follow(now, dots: looks) }
         // Nothing switched on: no bar at all, rather than an empty tab at the edge.
         .opacity(slim && !inbox ? 0 : 1)
         // The bar's drawn height, which the inbox uses for its scroll limits.
@@ -170,9 +219,11 @@ struct PillView: View {
         } action: {
             controller.barHeight = $0
         }
-        // Outermost on purpose: placed inside, only the dots would animate and the shape would snap.
-        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: names)
-        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: parts)
+        // Outermost on purpose: placed inside, only the dots would animate and the shape would snap. One motion on the
+        // whole bar, the knobs' ease-out cubic: 220 ms as things come or open, 150 ms as they go (the board's changes
+        // by `follow`, the same curve). Reduce Motion: no movement (the dots still fade in and out, by their own
+        // transition).
+        .animation(reduceMotion ? nil : barMotion(entering: openGroup != nil), value: openGroup)
         // Behind the dots, so a dot's own menu (in front) answers on a dot and this one everywhere else on the bar.
         .background {
             RightClick {
@@ -192,25 +243,107 @@ struct PillView: View {
         }
     }
 
-    /// The workspaces and the dots, between the bar's curves; at least a slot tall, so the curves always fit.
-    private func barBody(parts: [BarPart], dots: [(String, Mark)], names: [String]) -> some View {
-        VStack(spacing: 2) {
-            ForEach(Array(parts.enumerated()), id: \.element) { index, part in
-                // The dots set apart from the controls, on whichever side they meet them.
-                if index > 0, part == .agents || parts[index - 1] == .agents {
-                    Rectangle().fill(Theme.stroke).frame(width: 18, height: 1).padding(.vertical, 4)
-                }
-                switch part {
-                case .inbox: EmptyView()
-                case .workspaces: workspace.map(workspaceSlot)
-                case .agents: ForEach(dots, id: \.0) { name, mark in agentDot(name, mark, among: names) }
-                }
-            }
+    /// The dots, between the bar's curves, grouped by workspace; at least a slot tall, so the curves always fit.
+    private func barBody(groups: [BarGroup], dots: [String: Dot]) -> some View {
+        // One group, the window's: the bar as it always was, no mark and no segment.
+        let marked = BarGroups.marked(groups)
+        return VStack(spacing: 4) {
+            ForEach(groups, id: \.workspace) { group in groupView(group, dots: dots, marked: marked) }
         }
         .frame(width: 32).frame(minHeight: 28)
         .padding(.vertical, 8 + 22).padding(.horizontal, 6)
         .background(PillShape().fill(Theme.pill))
         .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
+    }
+
+    /// A workspace's agents under its mark (the window's too, when more than one group shows): another workspace's
+    /// folded to just the mark while nothing there waits on the user, and opened while the
+    /// pointer rests on it. Open, its dots have its colour beside them, a segment at the screen's edge. A click on the
+    /// mark opens the workspace in Zero's window.
+    private func groupView(_ group: BarGroup, dots: [String: Dot], marked: Bool) -> some View {
+        let open = !group.folds || openGroup == group.workspace
+        let space =
+            workspace?.workspaces.first { $0.id == group.workspace } ?? ZerodLink.Workspace(id: group.workspace, name: group.workspace)
+        let summary = BarGroups.summary(name: space.name, group)
+        return VStack(spacing: 2) {
+            if marked {
+                BarMark(workspace: space)
+                    .frame(width: 32, height: slot)
+                    .contentShape(Rectangle())
+                    .onTapGesture { openWorkspace(group.workspace) }
+                    .tip(summary, side: .left)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(summary)
+                    .accessibilityHint("Opens the workspace in Zero's window")
+                    .accessibilityAddTraits(.isButton)
+                    .transition(arrival)
+            }
+            if open {
+                VStack(spacing: 2) {
+                    ForEach(group.dots, id: \.self) { name in
+                        if let dot = dots[name] { agentDot(name, dot.mark, among: group.dots).accessibilityLabel(dot.label) }
+                    }
+                }
+                .overlay(alignment: .trailing) {
+                    if marked {
+                        Capsule().fill(WorkspaceColors.color(space.color) ?? Color.secondary.opacity(0.6))
+                            .frame(width: 3).padding(.vertical, 6).offset(x: 3)
+                            .transition(.opacity)
+                    }
+                }
+            }
+        }
+        // The whole group, mark and dots, keeps it open, so the pointer can go down to its dots.
+        .onHover { on in hover(group, on) }
+        .transition(arrival)
+    }
+
+    /// The pointer on a folded group or off it: open after 120 ms at rest on it (a pass-through down the bar opens
+    /// nothing; straight from another open group's mark, at once, as a tooltip's neighbours do), and not while it heads
+    /// into the open panel (the aim triangle); closed 200 ms after it leaves, unless it comes back.
+    private func hover(_ group: BarGroup, _ on: Bool) {
+        guard group.folds else { return }
+        hoverGroup?.cancel()
+        let id = group.workspace
+        if on {
+            guard openGroup != id else { return }
+            let wait: Duration = openGroup == nil ? .milliseconds(120) : .zero
+            hoverGroup = Task { @MainActor in
+                try? await Task.sleep(for: wait)
+                guard !Task.isCancelled, !controller.barAiming else { return }
+                openGroup = id
+            }
+        } else if openGroup == id {
+            hoverGroup = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+                if openGroup == id { openGroup = nil }
+            }
+        }
+    }
+
+    /// The board's groups drawn: at once the first time, then on the bar's curve (220 ms, 150 ms when the bar only loses
+    /// dots), so arrivals, departures, moves between groups and the window's switches all move one way.
+    private func follow(_ now: [BarGroup], dots: [String: Dot]) {
+        guard let was = drawn else { drawn = now; drawnDots = dots; return }
+        guard now != was else { return }
+        drawnDots = dots
+        let grows = now.flatMap(\.dots).count >= was.flatMap(\.dots).count
+        withAnimation(reduceMotion ? nil : barMotion(entering: grows)) { drawn = now }
+    }
+
+    /// The bar's one curve, the knobs' ease-out cubic: 220 ms in, 150 ms out.
+    private func barMotion(entering: Bool) -> Animation { .timingCurve(0.33, 1, 0.68, 1, duration: entering ? 0.22 : 0.15) }
+
+    /// How a dot or a mark comes and goes: in from 0.9 with a fade (nothing from nothing), out by fading,
+    /// faster. Reduce Motion: the fades alone.
+    private var arrival: AnyTransition {
+        let fadeIn = AnyTransition.opacity.animation(.easeOut(duration: reduceMotion ? 0.15 : 0.22))
+        let fadeOut = AnyTransition.opacity.animation(.easeOut(duration: 0.15))
+        return .asymmetric(
+            insertion: reduceMotion
+                ? fadeIn : AnyTransition.opacity.combined(with: .scale(scale: 0.9)).animation(barMotion(entering: true)),
+            removal: fadeOut)
     }
 
     /// The inbox, in the top hollow: out while its pane is open or with the pointer in its zone at the bar's top;
@@ -229,7 +362,7 @@ struct PillView: View {
     /// The inbox is out while its pane (the asks) is open, or with the pointer in its zone at the bar's top
     /// (`BarReach`); over the agents it stays folded.
     private var inboxOut: Bool {
-        let asksOpen = controller.panelOpen && controller.agentFilter == nil && !controller.newAgentOpen && !controller.workspacesOpen
+        let asksOpen = controller.panelOpen && controller.agentFilter == nil && !controller.newAgentOpen
         return settings.shows(.inbox) && (asksOpen || overBar && controller.barReach == .inbox)
     }
     /// The settings button is out with the pointer in its zone at the bar's foot, and in while the inbox's panel is
@@ -272,28 +405,6 @@ struct PillView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The workspace the bar lists (and the window shows): its glyph; a click opens the others beside the bar.
-    private func workspaceSlot(_ workspace: Workspace) -> some View {
-        // Under the pointer, the chevron the phone's selector has: it switches, it isn't a workspace's own button.
-        Group {
-            if overWorkspace {
-                NucleoIcon("chevron-expand-y", size: 15)
-            } else {
-                WorkspaceGlyph(glyph: workspace.currentWorkspace.glyph, size: 15)
-            }
-        }
-        .foregroundStyle(controller.workspacesOpen || overWorkspace ? .primary : .secondary)
-        .overlay(alignment: .topTrailing) {
-            if controller.pinned && controller.workspacesOpen { PinBadge().offset(x: 4, y: -6) }
-        }
-        .frame(width: 32, height: 32)
-        .contentShape(Rectangle())
-        .onHover { overWorkspace = $0 }
-        // A slot of the bar's, as its others: the pointer on it opens its view in the inbox's pane.
-        .modifier(BarSlot(controller: controller, key: InboxController.workspacesSlot))
-        .onTapGesture(perform: openWorkspaces)
-    }
-
     private func agentDot(_ name: String, _ mark: Mark, among names: [String]) -> some View {
         Group {
             switch mark {
@@ -314,6 +425,9 @@ struct PillView: View {
         // The whole slot, not just the dot, answers the pointer: full bar width, and the gap halves
         // above and below it, so the slots meet and there is no dead space between dots.
         .frame(width: 32, height: slot)
+        // Moving to another group, the dot travels there rather than fading out here and in there (not under Reduce
+        // Motion, where nothing moves).
+        .modifier(Travels(id: name, space: dotSpace, on: !reduceMotion))
         .contentShape(Rectangle())
         // Gone from the bar, gone from its slots: a pointer where it was peeks nothing.
         .modifier(BarSlot(controller: controller, key: name))
@@ -334,7 +448,7 @@ struct PillView: View {
                     drop(name, among: names)
                 }
         )
-        .transition(.opacity)
+        .transition(arrival)
     }
 
     /// A dot's menu, in Zero's selector by the dot: a task's own actions (open it, pause or resume it, move it to Later,
@@ -411,7 +525,11 @@ struct PillView: View {
         order.insert(name, at: to)
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) {
             if name.hasPrefix("zerod-") {
-                taskOrder = order.filter { $0.hasPrefix("zerod-") }.map { String($0.dropFirst("zerod-".count)) }.joined(separator: "\n")
+                // The group's own order, merged in: every workspace's tasks share the one order, and the others'
+                // keep their places (each group is sorted within itself, so only their own sequence counts).
+                let mine = order.filter { $0.hasPrefix("zerod-") }.map { String($0.dropFirst("zerod-".count)) }
+                let rest = taskOrder.split(separator: "\n").map(String.init).filter { !mine.contains($0) }
+                taskOrder = (rest + mine).joined(separator: "\n")
                 taskSort = .manual
             } else {
                 settings.agentOrder = order.filter { !$0.hasPrefix("zerod-") }
@@ -450,5 +568,30 @@ private struct BarSlot: ViewModifier {
                 controller.barSlots[key] = nil
                 controller.barSlotOwners[key] = nil
             }
+    }
+}
+
+/// A workspace's mark at the bar's size: its glyph in white on a tile of its colour, as the rail's, on 18 pt; without a
+/// colour, on a faint tile of its own (bare, it read as one more dot).
+private struct BarMark: View {
+    let workspace: ZerodLink.Workspace
+
+    var body: some View {
+        let tint = WorkspaceColors.color(workspace.color)
+        WorkspaceGlyph(glyph: workspace.glyph, size: 11)
+            .foregroundStyle(tint != nil ? Color.white : Color.secondary)
+            .frame(width: 18, height: 18)
+            .background(RoundedRectangle(cornerRadius: 5).fill(tint ?? Color.primary.opacity(0.1)))
+    }
+}
+
+/// A dot's matched geometry across the bar's groups, so one moving between them travels; off, nothing.
+private struct Travels: ViewModifier {
+    let id: String
+    let space: Namespace.ID
+    let on: Bool
+
+    func body(content: Content) -> some View {
+        if on { content.matchedGeometryEffect(id: id, in: space) } else { content }
     }
 }

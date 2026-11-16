@@ -12,17 +12,14 @@ struct InboxView: View {
     @State private var position = ScrollPosition()
     /// The stack's top within the bar's frame, kept while an opening grows it downward.
     @State private var heldTop: CGFloat = 0
-    /// The bar's height as the workspaces' view opened: switching workspace changes the bar's (its tasks), and the
-    /// view, laid out by it, moved with each switch. Held while it's open.
-    @State private var barForWorkspaces: CGFloat?
-    private var bar: CGFloat { barForWorkspaces ?? controller.barHeight }
+    private var bar: CGFloat { controller.barHeight }
     /// An agent's conversation stays at its end, its composer on the bar's centre line; the inbox and the
     /// new-agent composer simply centre on the bar. So the composer, or the empty inbox, is always in one place.
     private var pinsBottom: Bool { controller.agentFilter != nil }
     /// Each view starts from a fresh scroll position at its end: reusing the last view's carried its offset into
     /// the next, which showed it low for a moment before it settled.
     private var viewKey: String {
-        controller.workspacesOpen ? "+workspaces" : controller.newAgentOpen ? "+new" : (controller.agentFilter ?? "inbox")
+        controller.newAgentOpen ? "+new" : (controller.agentFilter ?? "inbox")
     }
 
     var body: some View {
@@ -44,7 +41,6 @@ struct InboxView: View {
             }
         }
         .frame(width: 380)
-        .onChange(of: controller.workspacesOpen, initial: true) { _, open in barForWorkspaces = open ? controller.barHeight : nil }
         .onChange(of: controller.focusedReply) { _, id in focus = id }
         // The composers are text views outside SwiftUI's focus system: its nil for them is not a blur.
         .onChange(of: focus) { _, id in
@@ -55,9 +51,7 @@ struct InboxView: View {
     /// The new-agent composer, an agent's timeline, or the inbox's cards, on one surface; `height` is the panel's.
     private func cardStack(height: CGFloat) -> some View {
         VStack(spacing: 10) {
-            if controller.workspacesOpen, let workspace = controller.workspace {
-                WorkspacesCard(workspace: workspace)
-            } else if controller.newAgentOpen {
+            if controller.newAgentOpen {
                 ComposerCard(controller: controller, focus: $focus, mode: .newAgent)
             } else if controller.agentFilter != nil {
                 AgentTimeline(controller: controller, focus: $focus)
@@ -164,39 +158,5 @@ struct InboxView: View {
         }
         guard let id = controller.selected else { return }
         proxy.scrollTo(id, anchor: .center)
-    }
-}
-
-/// The bar's workspaces, in the inbox's pane: each with its icon, the one shown ticked; a click shows that one, here and
-/// in the window.
-private struct WorkspacesCard: View {
-    let workspace: Workspace
-    @State private var hovered: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Workspaces").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 4)
-            ForEach(workspace.workspaces, id: \.id) { space in
-                Button {
-                    workspace.current = space.id
-                } label: {
-                    HStack(spacing: 10) {
-                        WorkspaceGlyph(glyph: space.glyph, size: 15).foregroundStyle(.secondary).frame(width: 18)
-                        Text(space.name).font(SelectorView.menuFont).lineLimit(1)
-                        Spacer(minLength: 8)
-                        NucleoIcon("check", size: 13).foregroundStyle(Theme.menuHot).opacity(space.id == workspace.current ? 1 : 0)
-                    }
-                    .padding(.horizontal, 10).frame(height: 32)
-                    .background(hovered == space.id ? Theme.menuHover : .clear, in: RoundedRectangle(cornerRadius: 12))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { inside in if inside { hovered = space.id } else if hovered == space.id { hovered = nil } }
-            }
-        }
-        .padding(6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
     }
 }

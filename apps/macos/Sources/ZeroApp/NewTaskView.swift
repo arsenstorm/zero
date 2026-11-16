@@ -24,7 +24,6 @@ struct NewTaskView: View {
 
     private var chosen: Provider { Provider(rawValue: provider) ?? .codex }
     /// The workspace the task starts in: the one shown, unless picked.
-    @State private var into = ""
     /// The project folders, to start in.
     private var folders: [String] { Projects.folders }
 
@@ -57,17 +56,6 @@ struct NewTaskView: View {
                                     )
                                 })
                         }
-                        // Started from one workspace into another: the lead is there, and so are the workers it starts.
-                        if workspace.workspaces.count > 1 {
-                            ComposerChip(
-                                id: "new.workspace",
-                                label: workspace.workspaces.first { $0.id == into }?.name ?? workspace.currentWorkspace.name,
-                                symbol: "layers"
-                            ) {
-                                ComposerRows.list(
-                                    "Workspace", workspace.workspaces.map { w in (w.id, w.name, nil, w.id == into, { into = w.id }) })
-                            }
-                        }
                     }
                     // What runs it on the right, beside Send, as Devin's mode; where it runs on the left.
                     Spacer(minLength: 8)
@@ -85,7 +73,10 @@ struct NewTaskView: View {
                                 },
                                 pick: { picked, choice in
                                     // Onto another CLI: the advisor kept for it (Claude's, Fable at first).
-                                    if picked != chosen { advisor = NewTaskChoice.kept(for: picked).advisor }
+                                    if picked != chosen {
+                                        advisor = NewTaskChoice.kept(for: picked).advisor
+                                        permissions = NewTaskChoice.permissions(for: picked)
+                                    }
                                     provider = picked.rawValue
                                     model = choice.id
                                     if !choice.levels.contains(where: { $0.id == effort }) { effort = "" }
@@ -109,11 +100,11 @@ struct NewTaskView: View {
                             [
                                 (
                                     "auto", "Auto", "\(chosen.title) decides what's safe, and asks you the rest", permissions == .auto,
-                                    { permissions = .auto }
+                                    { pick(.auto) }
                                 ),
                                 (
                                     "unrestricted", "Unrestricted", "Anything, without asking", permissions == .unrestricted,
-                                    { permissions = .unrestricted }
+                                    { pick(.unrestricted) }
                                 ),
                             ])
                     }
@@ -149,6 +140,7 @@ struct NewTaskView: View {
         .onAppear {
             if !folders.contains(project) { project = folders.first ?? "" }
             (model, effort, advisor) = NewTaskChoice.kept(for: chosen)
+            permissions = NewTaskChoice.permissions(for: chosen)
             if let kept = Drafts.load("new") { prompt = kept.text; images = kept.images }
             // Started from something saved for later: its words, over whatever was being written.
             if let waiting = workspace.pendingDrafts.removeValue(forKey: "new") { prompt = waiting }
@@ -176,6 +168,11 @@ struct NewTaskView: View {
     /// The chosen provider's models, from its CLI's own cache.
     private var models: [SpawnChoice] { ComposerRows.catalogue(chosen) }
 
+    private func pick(_ picked: Permissions) {
+        permissions = picked
+        NewTaskChoice.keep(chosen, permissions: picked)
+    }
+
     private func start() {
         let (text, attached) = ImageToken.outgoing(prompt.trimmingCharacters(in: .whitespacesAndNewlines), images: images.map(\.path))
         guard !text.isEmpty || !attached.isEmpty, !starting else { return }
@@ -187,11 +184,13 @@ struct NewTaskView: View {
             if let id = await workspace.start(
                 provider: chosen, cwd: project, prompt: text, images: attached, model: shown.isEmpty ? nil : shown,
                 effort: effort.isEmpty ? nil : effort, advisor: startAdvisor, permissions: permissions,
-                workspace: into.isEmpty ? workspace.current : into)
+                workspace: workspace.current)
             {
+                // Cleared here, not left to onChange(of: prompt): started(id) takes this view away in the same update,
+                // and a view gone before its onChange runs never saves the empty box, so the sent prompt came back.
+                Drafts.save("new", text: "", images: [])
                 prompt = ""
                 images = []
-                into = ""
                 started(id)
             }
             starting = false

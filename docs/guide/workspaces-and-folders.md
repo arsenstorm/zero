@@ -18,7 +18,7 @@ Zero always has a workspace called **Zero**, which you can't rename or delete. A
 
 These things act on the workspace you're looking at:
 
-- **New task** starts tasks there, unless you pick another in its workspace chip.
+- **New task** starts tasks in the workspace you're in.
 - The workers a task starts go into its workspace.
 - <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> open that workspace's first nine tasks.
 - A note, pad or loop you make goes into that workspace. One an agent makes goes into its task's workspace.

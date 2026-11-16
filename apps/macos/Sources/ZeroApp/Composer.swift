@@ -276,14 +276,14 @@ struct Composer<Controls: View>: View {
         .background(translucent ? .clear : Theme.field, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .strokeBorder(dropping ? Color.accentColor : translucent ? .clear : Theme.fieldEdge, lineWidth: dropping ? 1.5 : 1)
+                .strokeBorder(dropping ? Self.dropTint : translucent ? .clear : Theme.fieldEdge, lineWidth: dropping ? 1.5 : 1)
         )
         // Files over it: what's in it fades behind a quiet line saying what a drop does; gone as the drag leaves.
         .overlay {
             if dropping {
                 // Inside the 1.5 pt edge, concentric with it.
                 RoundedRectangle(cornerRadius: 24.5, style: .continuous).fill(Theme.field.opacity(translucent ? 0.75 : 0.9)).padding(1.5)
-                    .overlay { Text("Drop to attach").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.accentColor) }
+                    .overlay { Text("Drop to attach").font(.system(size: 13, weight: .medium)).foregroundStyle(Self.dropTint) }
                     .allowsHitTesting(false)
             }
         }
@@ -343,6 +343,9 @@ struct Composer<Controls: View>: View {
         let trimmed = text.reversed().drop { $0.isWhitespace }
         return String(trimmed.drop { !$0.isWhitespace }.reversed())
     }
+
+    /// A drop's edge and words: the accent on light, white on dark, where the accent's blue reads faintly.
+    private static var dropTint: Color { Color(nsColor: Theme.dynamicColor(dark: .white, light: .controlAccentColor)) }
 
     private static func isWords(_ text: String) -> Bool {
         guard !text.isEmpty, text != " " else { return false }

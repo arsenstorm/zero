@@ -789,6 +789,15 @@ private struct InboxPage: View {
                 VStack(spacing: 10) {
                     BarPartsCard(settings: settings)
                     Rows {
+                        SettingRow(
+                            title: "Show agents from",
+                            detail: "Other workspaces' agents under their mark, folded while nothing there needs you."
+                        ) {
+                            SettingChoice(
+                                id: "barAgentsFrom",
+                                choices: [[("All workspaces", BarAgentsFrom.all), ("The window's workspace", .window)]],
+                                selection: $settings.barAgentsFrom)
+                        }
                         SettingRow(title: "Settings button", detail: "Under the bar, out when the pointer is on it.") {
                             Switch(isOn: $barFoot)
                         }
@@ -939,15 +948,13 @@ private struct BarPartsCard: View {
     private func title(_ part: BarPart) -> String {
         switch part {
         case .inbox: "Inbox"
-        case .workspaces: "Workspace"
         case .agents: "Agents"
         }
     }
 
     private func detail(_ part: BarPart) -> String {
         switch part {
-        case .inbox: "Open asks, with a dot while one waits."
-        case .workspaces: "Switch workspaces. Shown while you have more than one."
+        case .inbox: "Open asks, blue while one waits."
         case .agents: "A dot for each task, as the sidebar lists them."
         }
     }

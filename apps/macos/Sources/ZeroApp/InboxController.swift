@@ -36,9 +36,12 @@ final class InboxController {
     @ObservationIgnored var barSlots: [String: CGRect] = [:]
     /// Which view set each slot (PillView's `BarSlot`), so only that one clears it.
     @ObservationIgnored var barSlotOwners: [String: UUID] = [:]
+    /// How far down the bar is drawn from its place centred in its panel: a group opened by the pointer grows it
+    /// downward only (PillView). The pointer's zones and the inbox's hold go by where it's drawn.
+    @ObservationIgnored var barShift: CGFloat = 0
     /// The agents the bar shows now, top to bottom: a slot of one gone from the bar is not under the pointer.
     @ObservationIgnored var barOrder: [String] = []
-    static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new", workspacesSlot = "\u{0}workspaces", settingsSlot = "\u{0}settings"
+    static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new", settingsSlot = "\u{0}settings"
     /// The control the bar last opened from the pointer, so moving within it doesn't reopen it.
     @ObservationIgnored var barHover: String?
     /// The pointer is on its way from the bar into the open panel (MenuAim): the bar's controls it crosses, and the
@@ -50,24 +53,11 @@ final class InboxController {
 
     /// The new-agent view: just the composer, opened from the bar's + button.
     var newAgentOpen = false
-    /// The workspaces' view: the user's workspaces, the one shown ticked; opened from the bar's workspace control, as
-    /// its other controls open theirs (a selector of its own beside the bar worked otherwise, and lay over these).
-    var workspacesOpen = false
     /// The inbox's panel is on screen beside the bar.
     var panelOpen = false
-    /// Whose workspaces: the app's.
+    /// The app's workspace: its tasks, for the agents' panes.
     weak var workspace: Workspace?
 
-    func showWorkspaces() {
-        guard !workspacesOpen else { return }
-        holdTop = false
-        switching = true
-        cut {
-            agentFilter = nil; newAgentOpen = false; workspacesOpen = true
-        }
-        requestScroll(animated: false)
-        DispatchQueue.main.async { self.switching = false }
-    }
     /// Set while the user opens something in place (a card's text, an Earlier row): the view keeps its top where it
     /// is, so the opening only grows downward. Cleared when the view or its cards change.
     var holdTop = false
@@ -77,7 +67,7 @@ final class InboxController {
         holdTop = false
         switching = true
         cut {
-            agentFilter = nil; workspacesOpen = false; newAgentOpen = true
+            agentFilter = nil; newAgentOpen = true
         }
         requestScroll(animated: false)
         DispatchQueue.main.async { self.switching = false }
@@ -91,9 +81,9 @@ final class InboxController {
     }
 
     func show(agent: String?) {
-        let wasNew = newAgentOpen || workspacesOpen
+        let wasNew = newAgentOpen
         cut {
-            newAgentOpen = false; workspacesOpen = false
+            newAgentOpen = false
         }
         // Hovering the control for the view already shown changes nothing: what the user opened stays open and
         // where it is.

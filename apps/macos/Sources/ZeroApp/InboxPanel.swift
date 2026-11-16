@@ -29,7 +29,10 @@ extension AppDelegate {
                         self?.pinnedDisplay = nil; self?.layout()
                     },
                     peek: { [weak self] agent in self?.peek(agent) },
-                    openWorkspaces: { [weak self] in self?.pinWorkspaces() })))
+                    openWorkspace: { [weak self] id in
+                        self?.workspace.current = id
+                        self?.openWorkspace()
+                    })))
         // Tall and transparent so the bar can morph inside it; the transparent rest is click-through.
         // Without clearing sizingOptions the hosting view shrinks the window to its content, top edge fixed.
         pillHosting.sizingOptions = []
@@ -133,8 +136,9 @@ extension AppDelegate {
     private func hoverBar(at mouse: NSPoint) {
         let local = pill.convertPoint(fromScreen: mouse)
         let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
-        // The bar sits centred in its tall panel; above or below it is off the bar.
-        let y = point.y - (pill.frame.height - inbox.barHeight) / 2
+        // The bar sits centred in its tall panel (moved down while a group opened by the pointer grows it); above or
+        // below it is off the bar.
+        let y = point.y - (pill.frame.height - inbox.barHeight) / 2 - inbox.barShift
         guard pill.isVisible, pill.frame.contains(mouse), (0...inbox.barHeight).contains(y) else {
             inbox.barHover = nil
             if inbox.barReach != .neither { inbox.barReach = .neither }
@@ -154,7 +158,7 @@ extension AppDelegate {
             : reach == .settings && UserDefaults.standard.bool(forKey: "barFoot") ? InboxController.settingsSlot : nil
         // Elsewhere, among the controls shown now, the one whose slot is nearest: slots meet, so a point on their seam
         // is in two.
-        let shown = Set([InboxController.newSlot, InboxController.workspacesSlot] + inbox.barOrder)
+        let shown = Set([InboxController.newSlot] + inbox.barOrder)
         let under =
             zone
             ?? inbox.barSlots.filter { shown.contains($0.key) && $0.value.insetBy(dx: -8, dy: -1).contains(point) }
@@ -164,24 +168,10 @@ extension AppDelegate {
         switch under {
         case InboxController.inboxSlot: peek(nil)
         case InboxController.newSlot: peekNewAgent()
-        case InboxController.workspacesSlot: peekWorkspaces()
         // Down to the bar's settings: a peeked pane goes (one opened by a click stays).
         case InboxController.settingsSlot: if !openedByIntent && inboxPanel.isVisible { hideInbox() }
         default: peek(under)
         }
-    }
-
-    /// The bar's workspace control: the workspaces, in the inbox's pane, pinned open; again closes it. Hovered, a peek.
-    private func pinWorkspaces() {
-        if openedByIntent && inboxPanel.isVisible && inbox.workspacesOpen { hideInbox(); return }
-        inbox.showWorkspaces()
-        open(byIntent: true)
-    }
-
-    private func peekWorkspaces() {
-        inbox.showWorkspaces()
-        if !inboxPanel.isVisible { open(byIntent: false) }
-        if !openedByIntent { syncKeyboard() }
     }
 
     /// The bar's + button: the new-agent composer, pinned open with the keyboard; again closes it.
@@ -256,7 +246,8 @@ extension AppDelegate {
     /// The pointer keeps the inbox: on the bar's drawn part or the cards' surface, or heading from `from` into it.
     private func inboxHolds(_ mouse: NSPoint, from: NSPoint?) -> Bool {
         guard inboxPanel.screen?.frame.contains(mouse) ?? false else { return false }
-        let bar = NSRect(x: pill.frame.minX, y: pill.frame.midY - inbox.barHeight / 2, width: pill.frame.width, height: inbox.barHeight)
+        let bar = NSRect(
+            x: pill.frame.minX, y: pill.frame.midY - inbox.barHeight / 2 - inbox.barShift, width: pill.frame.width, height: inbox.barHeight)
         return MenuAim.holds(mouse, from: from, bar: bar, panel: inboxSurface)
     }
 

@@ -1,6 +1,6 @@
 /// A part of the control bar, as Settings › Control bar › In the bar lists them.
 public enum BarPart: String, CaseIterable, Sendable {
-    case inbox, workspaces, agents
+    case inbox, agents
 
     /// The user's order, kept as names: parts it doesn't know are dropped, parts it lacks (new ones) follow in
     /// today's order, so a kept order never loses a part.
@@ -8,6 +8,69 @@ public enum BarPart: String, CaseIterable, Sendable {
         var parts: [BarPart] = []
         for part in stored.compactMap(BarPart.init) where !parts.contains(part) { parts.append(part) }
         return parts + allCases.filter { !parts.contains($0) }
+    }
+}
+
+/// Whose agents the bar shows: every workspace's, grouped, or only the window's workspace's.
+public enum BarAgentsFrom: String, CaseIterable, Sendable {
+    case all, window
+}
+
+/// The bar's agents by workspace, always in the rail's order (the window's workspace in its own place: switching the
+/// window changes which group is the window's, never the order). Another workspace than the window's folds to its
+/// mark unless something there waits on the user. A workspace with no agents has no group.
+public struct BarGroup: Equatable, Sendable {
+    public var workspace: String
+    /// Its dots' names, in the bar's order.
+    public var dots: [String]
+    /// How many of its agents are at work.
+    public var running: Int
+    /// Something there waits on the user.
+    public var waiting: Bool
+    /// The window's workspace: no mark, never folded.
+    public var window: Bool
+    /// Folded to its mark: another workspace with nothing waiting on the user.
+    public var folds: Bool { !window && !waiting }
+}
+
+public enum BarGroups {
+    /// A dot, and what the grouping reads of it. `workspace`: nil for an agent outside Zero (a terminal's), which
+    /// goes with the window's workspace.
+    public struct Dot: Sendable {
+        public var name: String
+        public var workspace: String?
+        public var running: Bool
+        public var waiting: Bool
+        public init(name: String, workspace: String?, running: Bool, waiting: Bool) {
+            self.name = name; self.workspace = workspace; self.running = running; self.waiting = waiting
+        }
+    }
+
+    /// The groups carry their workspace's mark: more than one shows, or the one that does isn't the window's.
+    public static func marked(_ groups: [BarGroup]) -> Bool { groups.count > 1 || groups.first?.window == false }
+
+    /// A group in words, for its mark's tip and VoiceOver: "Infra · 2 working", "Website · needs you · 1 working".
+    public static func summary(name: String, _ group: BarGroup) -> String {
+        var parts = [name]
+        if group.waiting { parts.append("needs you") }
+        if group.running > 0 { parts.append("\(group.running) working") }
+        if parts.count == 1 { parts.append("nothing working") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// `workspaces`: the rail's order; a workspace it doesn't list (not loaded yet) follows, in the dots' order.
+    public static func make(_ dots: [Dot], workspaces: [String], window: String, from: BarAgentsFrom) -> [BarGroup] {
+        let home = { (dot: Dot) in dot.workspace ?? window }
+        let shown = from == .all ? dots : dots.filter { home($0) == window }
+        let order = workspaces + [window] + shown.map(home)
+        var seen = Set<String>()
+        return order.filter { seen.insert($0).inserted }.compactMap { id in
+            let mine = shown.filter { home($0) == id }
+            guard !mine.isEmpty else { return nil }
+            return BarGroup(
+                workspace: id, dots: mine.map(\.name), running: mine.filter(\.running).count, waiting: mine.contains(where: \.waiting),
+                window: id == window)
+        }
     }
 }
 

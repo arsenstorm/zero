@@ -387,8 +387,14 @@ struct AskDock: View, Equatable {
 
     private var ids: [String] { questions.map(\.id) + asks.map(\.id) + approvals.map(\.id) }
 
-    /// How far a docked card runs on under the composer: its foot behind it, so it reads as coming out from under it.
-    static let tuck: CGFloat = 14
+    /// How far a docked card runs on under the composer, so it reads as coming out from under it: its foot ends
+    /// `tuck - 12` below the shell's top (DockSlot's room, the stack's spacing round StripRoom, which takes none
+    /// back at nothing, and the shell's 4 in its column). 10, past the shell's 26 pt corner where the card's side
+    /// meets it, 13 in: at 2 the page showed between them.
+    static let tuck: CGFloat = 22
+
+    /// The most a docked card takes: what shows of it above the composer, and its tuck.
+    private var most: CGFloat { max(146, page * 0.45 - 14) + Self.tuck }
 
     var body: some View {
         // Rising out from behind the composer (drawn over it), and fading where it is once answered.
@@ -412,7 +418,7 @@ struct AskDock: View, Equatable {
                 } action: {
                     if !stepping { shownHeight = $0 }
                 }
-                .environment(\.askDockMax, max(160, page * 0.45))
+                .environment(\.askDockMax, most)
                 .environment(
                     \.askPager,
                     AskPager(index: shown, count: ids.count) { step in
@@ -439,7 +445,7 @@ struct AskDock: View, Equatable {
     /// The new card's own height, known once it's laid out at the last one's: eased to.
     private func settle(_ own: CGFloat) {
         guard stepping, !easing else { return }
-        let to = min(own, max(160, page * 0.45))
+        let to = min(own, most)
         guard abs(to - held) > 0.5 else { stepping = false; return }
         easing = true
         // Its height measured as it eased isn't kept (it was the held one's): the one it ends at is.

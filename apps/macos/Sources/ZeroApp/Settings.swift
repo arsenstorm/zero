@@ -19,6 +19,8 @@ final class Settings {
     var barParts: [BarPart] { didSet { defaults.set(barParts.map(\.rawValue), forKey: "barParts") } }
     var barHidden: Set<BarPart> { didSet { defaults.set(barHidden.map(\.rawValue), forKey: "barHidden") } }
     var barAgents: BarAgents { didSet { defaults.set(barAgents.rawValue, forKey: "barAgents") } }
+    /// Whose agents: every workspace's, grouped, or the window's workspace's alone.
+    var barAgentsFrom: BarAgentsFrom { didSet { defaults.set(barAgentsFrom.rawValue, forKey: "barAgentsFrom") } }
     func shows(_ part: BarPart) -> Bool { part == .agents ? barAgents != .none : !barHidden.contains(part) }
     /// Agent names in the order the user dragged them into; agents not listed follow in first-seen order.
     var agentOrder: [String] { didSet { defaults.set(agentOrder, forKey: "agentOrder") } }
@@ -98,6 +100,7 @@ final class Settings {
         barParts = BarPart.order(defaults.stringArray(forKey: "barParts") ?? [])
         barHidden = Set((defaults.stringArray(forKey: "barHidden") ?? []).compactMap(BarPart.init))
         barAgents = defaults.string(forKey: "barAgents").flatMap(BarAgents.init) ?? .all
+        barAgentsFrom = defaults.string(forKey: "barAgentsFrom").flatMap(BarAgentsFrom.init) ?? .all
         defaultTTLMinutes = defaults.object(forKey: "defaultTTLMinutes") as? Int ?? 60
         takeBackSeconds = defaults.object(forKey: "takeBackSeconds") as? Double ?? 2
         hotKeyCode = defaults.object(forKey: "hotKeyCode") as? Int ?? kVK_Space

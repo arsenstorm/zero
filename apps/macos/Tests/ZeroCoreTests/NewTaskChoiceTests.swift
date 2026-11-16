@@ -19,6 +19,26 @@ import Testing
     #expect(NewTaskChoice.kept(for: .opencode, in: defaults) == ("", "", ""))
 }
 
+/// New task opens on the permissions last picked for the CLI, each its own; Auto at first, and for anything kept that
+/// isn't a permission Zero has (zerod maps both of Zero's onto each CLI's own: Claude's bypassPermissions, Codex's
+/// full access, OpenCode's asks allowed).
+@Test func newTaskKeepsEachCLIsLastPermissions() throws {
+    let defaults = try #require(UserDefaults(suiteName: "zero-tests-new-task-permissions"))
+    defaults.removePersistentDomain(forName: "zero-tests-new-task-permissions")
+    #expect(Provider.allCases.allSatisfy { NewTaskChoice.permissions(for: $0, in: defaults) == .auto }, "nothing kept: Auto")
+    NewTaskChoice.keep(.claude, permissions: .unrestricted, in: defaults)
+    #expect(NewTaskChoice.permissions(for: .claude, in: defaults) == .unrestricted, "the last pick")
+    #expect(NewTaskChoice.permissions(for: .codex, in: defaults) == .auto, "each CLI its own")
+    NewTaskChoice.keep(.codex, permissions: .unrestricted, in: defaults)
+    NewTaskChoice.keep(.claude, permissions: .auto, in: defaults)
+    #expect(NewTaskChoice.permissions(for: .claude, in: defaults) == .auto)
+    #expect(NewTaskChoice.permissions(for: .codex, in: defaults) == .unrestricted)
+    NewTaskChoice.keep(.claude, model: "opus", effort: "high", in: defaults)
+    #expect(NewTaskChoice.permissions(for: .codex, in: defaults) == .unrestricted, "kept apart from the model")
+    defaults.set(["opencode": "bypassPermissions"], forKey: "newTaskPermissions")
+    #expect(NewTaskChoice.permissions(for: .opencode, in: defaults) == .auto, "one Zero doesn't have: Auto")
+}
+
 /// The advisors a Claude model can have: Claude Code's (`/advisor`), each at least as capable as the model.
 @Test func aClaudeModelsAdvisorsAreAtLeastAsCapable() {
     let ids = { (model: String) in ClaudeModels.advisors(for: model).map(\.id) }
