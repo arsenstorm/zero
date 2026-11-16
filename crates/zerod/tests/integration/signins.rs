@@ -216,6 +216,38 @@ fn a_read_of_the_plan_drops_the_windows_it_no_longer_has() {
     assert_eq!(store.usage(&account.id).unwrap().windows, vec![week], "kept");
 }
 
+#[test]
+fn an_old_task_report_cannot_restore_a_limit_a_newer_plan_read_removed() {
+    let home = temp_dir("signins-stale-limit");
+    let store = SignIns::open(&home);
+    let account = store.save(signin(Provider::Claude, Kind::ClaudeHome, "a@example.com")).unwrap();
+    let mut old = usage(1.0, 0.03, NOW + DAY);
+    for window in &mut old.windows {
+        window.read_at = Some(NOW);
+    }
+    store.record_usage(&account.id, &old);
+    let plan = zerod::model::Usage {
+        windows: vec![zerod::model::UsageWindow { name: "7 days".into(), used: 0.03, resets_at: Some(NOW + DAY), read_at: Some(NOW + 60) }],
+        ..Default::default()
+    };
+    store.replace_usage(&account.id, &plan);
+    let store = SignIns::open(&home);
+    store.record_usage(&account.id, &old);
+    assert_eq!(store.usage(&account.id), Some(plan), "an unrelated task event must not restore its old rejection");
+    assert_eq!(store.choose(Provider::Claude, NOW + 61, None).map(|s| s.id), Some(account.id));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_new_reported_limit_wakes_a_plan_read_once() {
+    let store = SignIns::open(&temp_dir("signins-read-limit"));
+    let account = store.save(signin(Provider::Claude, Kind::ClaudeHome, "a@example.com")).unwrap();
+    let report = usage(1.0, 0.03, NOW + DAY);
+    store.record_usage(&account.id, &report);
+    assert!(tokio::time::timeout(std::time::Duration::ZERO, store.read_now.notified()).await.is_ok(), "verify the rejection now");
+    store.record_usage(&account.id, &report);
+    assert!(tokio::time::timeout(std::time::Duration::ZERO, store.read_now.notified()).await.is_err(), "the same report is not new");
+}
+
 /// When a turn last ended on each account, to the second: what the app shows the most recently used account by. Kept
 /// across a restart; a later turn moves it on, an earlier one (counted late) doesn't move it back.
 #[test]

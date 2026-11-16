@@ -342,31 +342,44 @@ impl SignIns {
 
     /// A sign-in's usage, as a task running as it was told by its CLI.
     pub fn record_usage(&self, id: &str, usage: &crate::model::Usage) {
-        // Added to what's known: a report that has no figure for a window (a limit said in an error, an account just
-        // switched to) leaves the one read before, which it used to wipe, the account's usage then shown as nothing.
-        let mut merged = usage.clone();
-        if let Some(before) = self.usage(id) {
-            for window in before.windows {
-                if !merged.windows.iter().any(|w| w.name == window.name) {
-                    merged.windows.push(window)
-                }
-            }
-        }
-        self.replace_usage(id, &merged)
+        self.keep_usage(id, usage, true)
     }
 
     /// A sign-in's usage as a read of its plan gave it: every window it has, so one it no longer reports goes. A read
     /// with no window at all (its CLI answered without its limits) read nothing, so what's known stays, unless it said
     /// the plan has none.
     pub fn replace_usage(&self, id: &str, usage: &crate::model::Usage) {
+        self.keep_usage(id, usage, false)
+    }
+
+    fn keep_usage(&self, id: &str, usage: &crate::model::Usage, report: bool) {
         let mut kept = self.kept.lock().unwrap();
+        let mut merged = usage.clone();
+        if report && let Some(before) = kept.usage.get(id) {
+            let read_at = |u: &crate::model::Usage| u.windows.iter().filter_map(|w| w.read_at).max();
+            // A task's old usage is heard again on unrelated events, even after a plan read removed its limit.
+            if read_at(usage).zip(read_at(before)).is_some_and(|(new, old)| new < old) {
+                return;
+            }
+            for window in &before.windows {
+                if !merged.windows.iter().any(|w| w.name == window.name) {
+                    merged.windows.push(window.clone())
+                }
+            }
+        }
+        let usage = &merged;
         let known = kept.usage.get(id).is_some_and(|u| !u.windows.is_empty());
         let read_nothing = usage.windows.is_empty() && !usage.no_limits && !usage.limited;
         if !kept.signins.iter().any(|s| s.id == id) || kept.usage.get(id) == Some(usage) || (read_nothing && known) {
             return;
         }
+        let verify_limit =
+            report && usage.limited && kept.usage.get(id).is_none_or(|before| !before.limited || before.resets_at != usage.resets_at);
         kept.usage.insert(id.into(), usage.clone());
         let _ = self.persist(&kept);
+        if verify_limit {
+            self.read_now.notify_one();
+        }
     }
 
     /// Its usage, now known to be at a limit its CLI said in an error (no figures, no reset): kept as limited (an hour,
