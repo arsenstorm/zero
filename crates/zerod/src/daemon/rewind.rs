@@ -16,10 +16,7 @@ impl Daemon {
     pub fn rewind_preview(&self, id: &str, item: &str) -> Result<serde_json::Value, String> {
         let conversation = self.session(id)?.snapshot();
         let (at, _, _) = yours(&conversation, item)?;
-        let messages = conversation.items[at..]
-            .iter()
-            .filter(|i| matches!(i.kind, ItemKind::User { .. } | ItemKind::Agent { final_answer: true, .. }))
-            .count();
+        let messages = going(&conversation, at);
         let since = conversation.snapshots.get(item).and_then(|commit| crate::snapshots::preview(Path::new(&conversation.cwd), commit));
         Ok(match since {
             Some(diff) => serde_json::json!({
@@ -32,11 +29,15 @@ impl Daemon {
 
     /// Back to just before `item`, a message of yours: the conversation (its provider going on from Zero's record up to
     /// there), the folder as it was when the message went, or both. Gives the message back, to send again or change, and
-    /// with the folder restored, `undo`: the folder as it was just before, for `unrewind`.
-    pub async fn rewind(&self, id: &str, item: &str, what: Rewind) -> Result<serde_json::Value, String> {
+    /// with the folder restored, `undo`: the folder as it was just before, for `unrewind`. `seen`, the messages its
+    /// preview said would go: refused if more were said since, so nothing goes that the user wasn't shown.
+    pub async fn rewind(&self, id: &str, item: &str, what: Rewind, seen: Option<u64>) -> Result<serde_json::Value, String> {
         let session = self.session(id)?;
         let current = session.snapshot();
-        let (_, text, images) = yours(&current, item)?;
+        let (at, text, images) = yours(&current, item)?;
+        if seen.is_some_and(|seen| seen != going(&current, at) as u64) {
+            return Err("The conversation went on since: look at what rewinding removes again".into());
+        }
         if current.terminal.is_some() {
             return Err(format!("{} is open in Terminal; bring it back to Zero first", current.provider.title()));
         }
@@ -132,6 +133,11 @@ pub enum Rewind {
     Conversation,
     Code,
     Both,
+}
+
+/// The messages going back to the item at `at` takes: yours and the answers, from it on.
+fn going(conversation: &Conversation, at: usize) -> usize {
+    conversation.items[at..].iter().filter(|i| matches!(i.kind, ItemKind::User { .. } | ItemKind::Agent { final_answer: true, .. })).count()
 }
 
 /// A message of yours in the conversation: where it is, its words and its images.

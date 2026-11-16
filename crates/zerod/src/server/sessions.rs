@@ -14,9 +14,12 @@ pub(super) async fn lifecycle(zerod: &Zerod, request: Request) -> Result<Value, 
         "start" => start(zerod, &request),
         "spawn" => spawn(zerod, &request),
         // From a session: the task or Claude Code session becomes its worker.
-        "adopt" if request.session.is_some() => daemon
-            .adopt_into(&request.session()?, request.thread.as_deref().ok_or("Which task or session?")?)
-            .map(|id| json!({"session": id})),
+        // By the task running it (args.by), else the lead itself.
+        "adopt" if request.session.is_some() => {
+            let lead = request.session()?;
+            let by = request.args.as_ref().and_then(|a| a["by"].as_str()).unwrap_or(&lead).to_string();
+            daemon.adopt_into(&lead, request.thread.as_deref().ok_or("Which task or session?")?, &by).map(|id| json!({"session": id}))
+        }
         "adopt" => {
             let options = crate::daemon::Options {
                 workspace: None,
@@ -34,8 +37,20 @@ pub(super) async fn lifecycle(zerod: &Zerod, request: Request) -> Result<Value, 
                 )
                 .map(|id| json!({"session": id}))
         }
+        // The user's move from the task menu: under another task (args.parent), or with none a task of its own.
+        "setParent" => {
+            let parent = request.args.as_ref().and_then(|a| a["parent"].as_str());
+            daemon.set_parent(&request.session()?, parent, None).map(|_| Value::Null)
+        }
         // A worker let go of its lead: a task of its own.
-        "detach" => daemon.detach(request.thread.as_deref().ok_or("Which worker? Its task's id")?).map(|_| Value::Null),
+        // By the task running `zero detach`, when it says (its session).
+        "detach" => {
+            let by = request
+                .session
+                .as_deref()
+                .ok_or("zero detach runs inside a task, for its own workers; the user detaches any task from its menu")?;
+            daemon.detach(request.thread.as_deref().ok_or("Which worker? Its task's id")?, Some(by)).map(|_| Value::Null)
+        }
         // A Claude Code, Codex or OpenCode session from outside Zero, by its id: a task, offline, not opened.
         "migrate" => {
             let options = crate::daemon::Options {
@@ -89,7 +104,7 @@ pub(super) async fn control(zerod: &Zerod, request: Request) -> Result<Value, St
                 (true, true) => Rewind::Both,
                 (false, false) => return Err("Rewind what? The conversation, the code or both".into()),
             };
-            daemon.rewind(&request.session()?, request.message.as_deref().ok_or("Back to which message?")?, what).await
+            daemon.rewind(&request.session()?, request.message.as_deref().ok_or("Back to which message?")?, what, request.messages).await
         }
         "unrewind" => {
             daemon.unrewind(&request.session()?, request.undo.as_deref(), request.conversation.unwrap_or(false)).await.map(|_| Value::Null)

@@ -484,6 +484,7 @@ async fn only_zero_app_answers_asks_changes_settings_and_connects() {
         json!({"op": "connectSlack", "token": "xoxp-mine"}),
         json!({"op": "saveSignIn", "signin": {"cli": "claude", "kind": "token", "label": "x"}}),
         json!({"op": "message", "agent": "claude-1", "text": "The user says yes"}),
+        json!({"op": "setParent", "session": session, "args": {"parent": null}}),
     ] {
         let refused = call(&socket, request.clone()).await.unwrap_err();
         assert!(refused.contains("only Zero.app"), "{request}: {refused}");

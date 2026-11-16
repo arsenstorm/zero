@@ -13,11 +13,20 @@ use crate::model::{
 use crate::session::{Session, Transport};
 
 /// The approval policy and sandbox for a session's permissions. Auto is Codex's own "auto": edit and run in the
-/// project, ask for anything beyond it; unrestricted is its "full access".
+/// project, anything beyond it judged by Codex's reviewer (a subagent), not asked of the user command by command;
+/// unrestricted is its "full access".
 pub fn policy(permissions: Permissions) -> (&'static str, &'static str) {
     match permissions {
         Permissions::Auto => ("on-request", "workspace-write"),
         Permissions::Unrestricted => ("never", "danger-full-access"),
+    }
+}
+
+/// Who judges a request beyond the sandbox: Codex's auto reviewer under Auto; none is made under full access.
+fn reviewer(permissions: Permissions) -> &'static str {
+    match permissions {
+        Permissions::Auto => "auto_review",
+        Permissions::Unrestricted => "user",
     }
 }
 
@@ -518,7 +527,7 @@ pub async fn start(
     handshake(session, transport).await?;
     let conversation = session.snapshot();
     let (approvals, sandbox) = policy(conversation.permissions);
-    let mut params = json!({"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals, "sandbox": sandbox, "developerInstructions": instructions(conversation.plain_answers)});
+    let mut params = json!({"cwd": conversation.cwd, "model": model, "approvalPolicy": approvals, "approvalsReviewer": reviewer(conversation.permissions), "sandbox": sandbox, "developerInstructions": instructions(conversation.plain_answers)});
     if !conversation.mcp.is_empty() {
         params["config"] = mcp_config(&conversation.mcp)
     }
@@ -541,8 +550,8 @@ pub async fn resume(session: &Session, transport: Transport) -> Result<(), Strin
         None => take_over(session, &conversation).await?,
     };
     let (approvals, sandbox) = policy(conversation.permissions);
-    let mut params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "sandbox": sandbox,
-                            "developerInstructions": instructions(conversation.plain_answers), "excludeTurns": true});
+    let mut params = json!({"threadId": thread, "cwd": conversation.cwd, "approvalPolicy": approvals, "approvalsReviewer": reviewer(conversation.permissions),
+                            "sandbox": sandbox, "developerInstructions": instructions(conversation.plain_answers), "excludeTurns": true});
     if let Some(model) = &conversation.model {
         params["model"] = json!(model)
     }

@@ -50,6 +50,8 @@ struct QueueStrip: View {
             .foregroundStyle(.secondary)
             // As a docked card's heading sits (its shell's 2 and 14), so "Queued" and "Question" line up, sunk or not.
             .padding(.horizontal, 16).frame(height: Self.heading)
+            // With no rows under it, the room the composer's card covers, so the heading shows whole.
+            .padding(.bottom, queued.isEmpty && (paused ?? 0) == 0 ? 12 : 0)
             VStack(spacing: 0) {
                 // Paused: how much came in meanwhile (it goes to the agent first on Resume), a quiet row over the queue.
                 if let count = paused, count > 0 {
@@ -129,7 +131,8 @@ struct QueueStrip: View {
         // the last row's 12 exactly, leaving the same 4 under its pill as over the first row's.
         .background(Theme.fieldTab, in: UnevenRoundedRectangle(topLeadingRadius: 18, topTrailingRadius: 18, style: .continuous))
         .onHover(perform: hover)
-        .padding(.horizontal, 13).padding(.bottom, -16)
+        // -24: the 16 plus the 8 the composer's stack puts between them (ConversationView.composerOverlay).
+        .padding(.horizontal, 13).padding(.bottom, -24)
     }
 
     private var title: String {

@@ -47,6 +47,24 @@ async fn an_accounts_usage_is_asked_of_claude_code_without_a_turn() {
     assert_eq!(usage.resets_at, Some(1793973600));
 }
 
+#[tokio::test]
+async fn a_weekly_only_plan_has_no_five_hour_limit() {
+    let answer = serde_json::json!({
+        "type": "control_response", "response": {
+            "subtype": "success", "request_id": "usage", "response": {
+                "subscription_type": "max", "rate_limits_available": true,
+                "rate_limits": {"five_hour": null, "seven_day": {"utilization": 3, "resets_at": "2026-11-23T10:00:00+00:00"}}
+            }
+        }
+    });
+    let script = format!("read request; echo '{answer}'; sleep 5");
+    let usage = usage(&sh(&script), &[]).await.unwrap();
+    assert!(!usage.limited);
+    assert_eq!(usage.resets_at, None);
+    assert_eq!(usage.windows.len(), 1);
+    assert_eq!((usage.windows[0].name.as_str(), usage.windows[0].used), ("7 days", 0.03));
+}
+
 /// An account whose plan has no windows (an API-billed one) says so through `get_usage`: no plan limits, rather than
 /// nothing known.
 #[tokio::test]

@@ -17,6 +17,8 @@ struct BarKnob<Label: View>: View {
     var waiting = false
     /// Bumped as something new comes in: the arc brightens once.
     var pulse = 0
+    /// Its border, 0 to 1: drawn only while the bar joins a window's page (`InboxController.barJoin`).
+    var outline: CGFloat = 0
     @ViewBuilder var label: (_ hovered: Bool) -> Label
     @State private var hovered = false
     /// How far out it is, eased by the button itself (see `.onChange` below).
@@ -56,12 +58,40 @@ struct BarKnob<Label: View>: View {
         .onHover { hovered = $0 }
     }
 
-    /// The arc (or ring, or button) in the bar's colours, the waiting colour laid over it by `tint`, all of it on the
-    /// arc and none of it on the button.
+    /// The arc (or ring, or button) on the bar's surface, the waiting colour laid over it by `tint`, all of it on the
+    /// arc and none of it on the button. No outline (the surface alone is its shape) but while the bar joins a window's
+    /// page, when it has the page's hairline (`outline`).
     private func seed(_ open: CGFloat, tint: CGFloat) -> some View {
         let shape = BarSeed(open: open, top: top), blue = AgentStatus.needsYou.color.opacity(tint * (1 - open))
-        return shape.fill(Theme.pill).overlay(shape.fill(blue))
-            .overlay(shape.stroke(Theme.stroke, lineWidth: 1)).overlay(shape.stroke(blue, lineWidth: 1))
+        // The blue inside the surface's own cut, not a shape filled over it: a filled shape draws as a vector shape
+        // layer, its edges harder and thinner on screen than the masked surface's; in the same cut it's the settings
+        // arc exactly, in blue. Its border (only while the bar joins a window's page) the same way, a colour cut to the
+        // outline: the page's grey, or blue while waiting, fading with it. Unjoined there's none, as on the settings
+        // arc: a blue edge there made the waiting arc a point heavier than it.
+        let waiting = tint * (1 - open)
+        return BarSurface(shape: shape, colour: blue)
+            .overlay(Outline.drawn(Theme.stroke.opacity(outline * (1 - waiting)), round: shape))
+            .overlay(Outline.drawn(AgentStatus.needsYou.color.opacity(outline * waiting), round: shape))
+    }
+}
+
+/// A shape's 1 pt outline as a shape of its own, so a colour cut to it draws as the surfaces do (a stroke would be a
+/// vector shape layer, harder on screen). The colour runs a point past the shape's frame, as the outline does there;
+/// the shape is drawn in the frame itself (`margin`).
+struct Outline<S: Shape>: Shape {
+    var base: S
+    var margin: CGFloat = 1
+    var animatableData: S.AnimatableData {
+        get { base.animatableData }
+        set { base.animatableData = newValue }
+    }
+    func path(in rect: CGRect) -> Path {
+        base.path(in: rect.insetBy(dx: margin, dy: margin)).strokedPath(StrokeStyle(lineWidth: 1))
+    }
+
+    static func drawn(_ colour: Color, round shape: S) -> some View {
+        // Cut in the colour's own frame (a point past the shape's on each side), then let out by that point.
+        colour.clipShape(Outline(base: shape)).padding(-1)
     }
 }
 
@@ -141,6 +171,8 @@ struct BarPeak: Shape {
     /// The bump's rounding, a circle touching both hollows on the screen's side of the buttons' axis. Its height comes
     /// from this alone (the hollows keep their gap): 2.5 pt stands it about 13.7 pt off the edge, 6 pt only 10.7.
     var tip: CGFloat = 2.5
+    /// Its outline alone, open at its base, as the bar's border when it joins a window's page.
+    var open = false
 
     func path(in rect: CGRect) -> Path {
         let hollow = barKnob / 2 + 6, edge = rect.maxX, axis = rect.midX
@@ -150,13 +182,80 @@ struct BarPeak: Shape {
         let peak = CGPoint(x: axis + max(0, (hollow + tip) * (hollow + tip) - half * half).squareRoot(), y: top.y + half)
         func angle(_ from: CGPoint, _ to: CGPoint) -> Angle { .radians(atan2(to.y - from.y, to.x - from.x)) }
         var path = Path()
-        path.move(to: CGPoint(x: edge + 1, y: top.y))
+        path.move(to: CGPoint(x: edge + (open ? 0 : 1), y: top.y))
         path.addLine(to: CGPoint(x: edge, y: top.y))
         path.addArc(center: top, radius: hollow, startAngle: .degrees(0), endAngle: angle(top, peak), clockwise: false)
         path.addArc(center: peak, radius: tip, startAngle: angle(peak, top), endAngle: angle(peak, bottom), clockwise: true)
         path.addArc(center: bottom, radius: hollow, startAngle: angle(bottom, peak), endAngle: .degrees(0), clockwise: false)
+        guard !open else { return path }
         path.addLine(to: CGPoint(x: edge + 1, y: bottom.y))
         path.closeSubpath()
         return path
+    }
+}
+
+/// The bar's surface, made as the window's outer rail's: the sidebar's material blurring what's behind, under a tint
+/// (`Theme.barTint`) that keeps the rail's grey on a plain desktop but lets more of the wallpaper's colour through.
+/// The material is shaped by its own mask image (`BarBlur`), never cut by a layer mask: cut that way
+/// (SwiftUI's clip on it), it stops blurring what's behind and falls back to a flat grey, darker than the rail's.
+/// Always active: the bar's panel is never the key window, and with the rail's follow-the-window state its blur would
+/// always be the inactive one.
+struct BarSurface<S: Shape>: View {
+    let shape: S
+    /// A colour over the surface, in the same cut (the waiting arc's blue).
+    var colour: Color = .clear
+
+    var body: some View {
+        ZStack {
+            BarBlur(shape: shape)
+            Theme.barTint.clipShape(shape)
+            colour.clipShape(shape)
+        }
+    }
+}
+
+/// The sidebar's material behind the window, shaped to `shape` by its mask image, redrawn as the view's size changes
+/// and as the shape animates (a knob coming out), frame by frame.
+private struct BarBlur<S: Shape>: NSViewRepresentable, Animatable {
+    var shape: S
+
+    var animatableData: S.AnimatableData {
+        get { shape.animatableData }
+        set { shape.animatableData = newValue }
+    }
+
+    func makeNSView(context: Context) -> ShapedBlur {
+        let view = ShapedBlur()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: ShapedBlur, context: Context) {
+        let shape = shape
+        view.outline = { shape.path(in: $0) }
+        view.reshape()
+    }
+}
+
+/// An effect view shaped by a mask image of its outline at its current size (top-left origin, as SwiftUI's).
+final class ShapedBlur: NSVisualEffectView {
+    var outline: (CGRect) -> Path = { Path($0) }
+
+    override func layout() {
+        super.layout()
+        reshape()
+    }
+
+    func reshape() {
+        let size = bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        let path = outline(CGRect(origin: .zero, size: size)).cgPath
+        maskImage = NSImage(size: size, flipped: true) { _ in
+            NSColor.black.setFill()
+            NSBezierPath(cgPath: path).fill()
+            return true
+        }
     }
 }

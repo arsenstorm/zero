@@ -162,6 +162,19 @@ private func step(_ id: String) -> ConversationItem { item(id, .tool(name: "Read
     #expect(player.shown == ["u1", "a1", "s1", "u2"])
 }
 
+@MainActor @Test func aSteeredMessageShowsAtOnceUnderItsQueueId() {
+    // Steered from the strip: Zero's own copy goes under the queue row's id (Sending.merge marks it its own `sent`), and
+    // zerod's item keeps it. Both show at once; neither waits its turn as Next.
+    let player = Player([yours("u1")])
+    player.give([words("a1", 2000), step("s1")])
+    player.play(0.3)
+    player.give([yours("queuing-1", sent: "queuing-1")])
+    #expect(player.shown == ["u1", "a1", "s1", "queuing-1"], "Zero's own copy at once")
+    player.items.removeLast()
+    player.give([yours("u2", sent: "queuing-1"), step("s2")])
+    #expect(player.shown.contains("u2"), "zerod's copy in its place, at once")
+}
+
 @MainActor @Test func aQueuedMessageWaitsForTheAnswerBeforeIt() {
     // Queued while it worked (in the strip, not just sent): when the turn ends and zerod sends it on, it comes after
     // the answer is read out, not cutting it short.

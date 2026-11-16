@@ -196,6 +196,9 @@ async fn write(out: &mut Out, message: &Value) {
     let _ = out.write_all(&line).await;
 }
 
+/// The compact window is zerod-wide (adapter::set_compact_window): the tests that set it take turns.
+pub static COMPACT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Waits up to five seconds for the session's conversation to satisfy `test`.
 pub async fn until(session: &Session, test: impl Fn(&Conversation) -> bool) -> Conversation {
     for _ in 0..500 {

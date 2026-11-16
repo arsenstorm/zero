@@ -72,7 +72,7 @@ public final class Workspace {
     public private(set) var followed: [ZerodLink.Followed] = []
     /// The user's workspaces (zerod's workspaces.rs), Zero first, and the one the window shows. Every workspace's
     /// tasks run alike; this only says which are shown.
-    public private(set) var workspaces: [ZerodLink.Workspace] = [ZerodLink.Workspace(id: "zero", name: "Zero")]
+    public internal(set) var workspaces: [ZerodLink.Workspace] = [ZerodLink.Workspace(id: "zero", name: "Zero")]
     public private(set) var workspacesVersion = 0
     public var current: String = UserDefaults.standard.string(forKey: "currentWorkspace") ?? "zero" {
         didSet {
@@ -273,7 +273,7 @@ public final class Workspace {
                             self.rawBoard = rows
                             // What zerod now shows needs no echo.
                             for row in rows where self.queuing[row.session]?.isEmpty == false {
-                                self.queuing[row.session]?.removeAll { echo in (row.queued ?? []).contains { $0.text == echo.text } }
+                                self.queuing[row.session]?.removeAll { echo in (row.queued ?? []).contains { $0.id == echo.id } }
                             }
                             self.resettle()
                         case .pads: self?.padsVersion += 1
@@ -485,8 +485,10 @@ public final class Workspace {
         try? await link?.rewindPreview(session: session, message: message)
     }
 
-    public func rewind(_ session: String, message: String, conversation: Bool, code: Bool) async -> Rewound? {
-        await attempt { try await $0.rewind(session: session, message: message, conversation: conversation, code: code) }
+    public func rewind(_ session: String, message: String, conversation: Bool, code: Bool, messages: Int?) async -> Rewound? {
+        await attempt {
+            try await $0.rewind(session: session, message: message, conversation: conversation, code: code, messages: messages)
+        }
     }
 
     public func unrewind(_ session: String, undo: String?, conversation: Bool) async -> Bool {
@@ -630,6 +632,31 @@ public final class Workspace {
     /// Puts a task in a workspace (nil: Zero).
     public func place(_ session: String, in workspace: String?) async {
         _ = await attempt { try await $0.placeInWorkspace(session: session, workspace: workspace) }
+    }
+
+    /// The user's move: a task put under `lead` as its worker, or (nil) detached from its lead. zerod tells both sides.
+    public func setParent(_ session: String, _ lead: String?) async {
+        _ = await attempt { try await $0.setParent(session: session, parent: lead) }
+        await refreshBoard()
+    }
+
+    /// The tasks `id` could be moved under: the other leads (top-level tasks) of its workspace, not put away. Not its
+    /// own workers (a loop), nor another lead's: a task joins a tree at its lead.
+    public func possibleLeads(of id: String) -> [Conversation] {
+        let here = roster[id].map { shownIn($0) } ?? current
+        let saved = savedForLater
+        return conversations.filter {
+            $0.parent == nil && $0.id != id && !putAway.contains($0.id) && !saved.contains($0.id) && shownIn($0) == here
+        }
+    }
+
+    /// The workspace a task shows in: its top lead's, as the board puts a lead's whole tree in its row (a worker's own
+    /// workspace may never have been set).
+    public func shownIn(_ conversation: Conversation) -> String {
+        var top = conversation
+        var seen: Set<String> = [conversation.id]
+        while let up = top.parent.flatMap({ roster[$0] }), seen.insert(up.id).inserted { top = up }
+        return workspace(of: top)
     }
 
     /// Marks a task done, waiting or blocked: the user's word, where its agent can't know (the last of it was theirs).
@@ -840,7 +867,9 @@ public final class Workspace {
     /// off zerod's queue and sent. Back in the queue, and out of the conversation, if it can't be.
     @discardableResult
     public func steer(_ session: String, item: Queued) async -> Bool {
-        let echo = Sending(text: item.text, images: item.images ?? [])
+        // Under the row's own id, which zerod's item keeps: the strip knows it's in the conversation (Sending.carried).
+        // Under a new one, the strip took the row for one zerod had sent on, and kept it as Next as it showed above.
+        let echo = Sending(id: item.id, text: item.text, images: item.images ?? [])
         sending[session, default: []].append(echo)
         steering.insert(item.id)
         guard await unqueue(session, item: item.id) else {

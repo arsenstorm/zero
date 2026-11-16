@@ -65,10 +65,21 @@ impl Daemon {
         if self.naming.load(Ordering::Relaxed) && provider == Provider::Claude && options.label.is_none() && options.parent.is_none() {
             let (prompt, cwd, id) = (prompt.to_string(), conversation.cwd.clone(), id.clone());
             tokio::spawn(async move {
-                if let Some(name) = crate::naming::name(&prompt, &cwd, &id).await
-                    && session.summary().title.is_none()
-                {
-                    session.change(Change::Title { title: Some(name) });
+                // A busy Mac (a Gatekeeper scan once held every process start) can keep the small model past its
+                // minute, and the task kept its first five words for a name: asked again, three times in all.
+                for attempt in 0..3 {
+                    if attempt > 0 {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await
+                    }
+                    if session.summary().title.is_some() {
+                        return;
+                    }
+                    if let Some(name) = crate::naming::name(&prompt, &cwd, &id).await {
+                        if session.summary().title.is_none() {
+                            session.change(Change::Title { title: Some(name) });
+                        }
+                        return;
+                    }
                 }
             });
         }
@@ -88,12 +99,16 @@ impl Daemon {
         if !folder.is_absolute() || !folder.is_dir() {
             return Err(format!("{cwd} isn't a folder"));
         }
+        // The limit a task last reported is its own account's: with another account free (or one asked for), the
+        // new task starts as that one (new_conversation), so only a CLI with none free is refused.
+        let free = options.signin.is_some() || self.signins.choose_for(provider, now(), None, options.model.as_deref()).is_some();
         if !options.force
+            && !free
             && let Some((_, usage)) =
                 self.usage().into_iter().find(|(p, u)| *p == provider && u.limited && u.resets_at.is_none_or(|at| at > now()))
         {
-            let until = usage.resets_at.map(|at| format!(" until {}", at)).unwrap_or_default();
-            return Err(format!("{} is at its usage limit{until}; start it anyway with force", provider.title()));
+            let left = usage.resets_at.map(|at| format!(" for {}", span(at - now()))).unwrap_or_default();
+            return Err(format!("{} is at its usage limit{left}", provider.title()));
         }
         if prompt.trim().is_empty() && options.images.is_empty() {
             return Err("A session starts with something to do".into());
@@ -214,4 +229,16 @@ fn start_first_turn(session: Session, transport: Transport, prompt: &str, option
             Err(error) => session.report(&error),
         }
     });
+}
+
+/// A wait as people say it: "3 h 20 min", "12 min", "under a minute".
+fn span(seconds: i64) -> String {
+    let total = (seconds.max(0) + 59) / 60;
+    let (hours, minutes) = (total / 60, total % 60);
+    match (hours, minutes) {
+        (0, 0) => "under a minute".into(),
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
 }

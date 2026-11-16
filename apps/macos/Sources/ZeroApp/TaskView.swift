@@ -130,6 +130,13 @@ private struct TaskView: View {
         return false
     }
 
+    /// A link from the issues' board: in its app when Zero opens it in one, else in a tab of the side panel, shown.
+    private func openLink(_ url: String) {
+        guard let link = URL(string: url), !SidePanel.outside(link) else { return }
+        Panels.shared.change(lead) { $0.open(url) }
+        navigation.pane = true
+    }
+
     /// Another task, from this one (a branch): a worker of the same lead shows under it.
     private func open(_ id: String) {
         if let parent = workspace.conversation(id)?.parent, workspace.conversation(parent)?.parent == nil {
@@ -159,6 +166,14 @@ private struct TaskView: View {
                         paused: workspace.isPaused(conversation.id) ? row?.pausedHeld ?? 0 : nil, next: row?.next,
                         live: live, open: open
                     ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
+                        .environment(\.boardRoom, live.conversation.issues?.isEmpty == false ? IssueStrip.room : 0)
+                    // Its issues' board, over the page's top.
+                    if live.conversation.issues?.isEmpty == false {
+                        IssueStrip(
+                            workspace: workspace, inbox: inbox, navigation: navigation, conversation: live.conversation, row: row,
+                            open: openLink
+                        ).id(conversation.id)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -38,7 +38,7 @@ fn zero_tools() -> Vec<Value> {
         json!({"name": "zero_run", "description": "Asks the user to run a command on their Mac (their credentials, their access); its output comes back to you as a message. End your turn with [zero: asked <id>].",
                "inputSchema": {"type": "object", "required": ["command", "why"], "properties": {
                    "command": string("The command."), "why": string("What you need its output for."), "cwd": string("Where to run it; left out, the task's folder.")}}}),
-        json!({"name": "zero_issue", "description": "Sets the row of one of the issues you lead, which the user reads coming back: who has it now, and what it needs. Set it whenever the issue's state changes.",
+        json!({"name": "zero_issue", "description": "Sets the row of one of the issues you lead, which the user reads coming back: who has it now, and what it needs. Set it whenever the issue's state changes. Zero shows the rows as one live board at the top of your conversation, with each issue's states over time: don't repost them as a table; say only what changed and what you decided.",
                "inputSchema": {"type": "object", "required": ["ticket", "state"], "properties": {
                    "ticket": string("The issue's ticket."), "state": string("you (on the user: a decision, access), over (done on your side, the user's step to take: a review, a merge), working, waiting (on someone else), parked or done."),
                    "text": string("On the user: what you need from them. Waiting: on whom. Parked: why. Else where it stands.")}}}),

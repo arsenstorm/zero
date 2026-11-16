@@ -684,6 +684,43 @@ fn a_lead_keeps_a_row_per_issue_and_the_one_on_the_user_comes_first() {
 }
 
 #[test]
+fn an_issue_keeps_its_steps_for_the_conversation_but_not_for_the_board() {
+    // The lead's board in its conversation shows, per issue, the states it went through: a step each time its state or
+    // its words change, none for setting it again as it was, the latest few only. The board's rows, sent whole on every
+    // change to every client, carry none of them.
+    use zerod::model::{Issue, IssueState};
+    let at = |s: i64| s * 1000;
+    let working = Issue::set(None, "ENG-1", IssueState::Working, "writing the test", at(100));
+    let again = Issue::set(Some(&working), "ENG-1", IssueState::Working, "writing the test", at(150));
+    let waiting = Issue::set(Some(&again), "ENG-1", IssueState::Waiting, "CI on app#12", at(200));
+    let reworded = Issue::set(Some(&waiting), "ENG-1", IssueState::Waiting, "CI on app#12, 3 minutes left", at(250));
+    let steps = |i: &Issue| i.history.iter().map(|s| (s.state, s.text.clone(), s.at)).collect::<Vec<_>>();
+    assert_eq!(
+        steps(&reworded),
+        [
+            (IssueState::Working, "writing the test".to_string(), at(100)),
+            (IssueState::Waiting, "CI on app#12".to_string(), at(200)),
+            (IssueState::Waiting, "CI on app#12, 3 minutes left".to_string(), at(250)),
+        ],
+        "a step for each change, none for the same row set again"
+    );
+    let mut many = reworded.clone();
+    for n in 0..40 {
+        many = Issue::set(Some(&many), "ENG-1", IssueState::Working, &format!("step {n}"), at(300 + n));
+    }
+    assert_eq!(many.history.len(), zerod::model::ISSUE_STEPS, "the latest few only");
+    assert_eq!(many.history.last().map(|s| s.text.as_str()), Some("step 39"));
+
+    let mut lead = session("a", "/work/app", Status::Idle);
+    lead.apply(Change::Issue { issue: reworded });
+    assert_eq!(lead.issues[0].history.len(), 3, "the conversation keeps them");
+    let row = &board(std::slice::from_ref(&lead), &[])[0];
+    assert!(row.issues[0].history.is_empty(), "the board's row doesn't");
+    let sent = serde_json::to_value(&row.issues[0]).unwrap();
+    assert!(sent.get("history").is_none(), "nor sends an empty one: {sent}");
+}
+
+#[test]
 fn a_done_lead_can_be_put_away_once_the_user_has_read_it() {
     // Settings › Archive done tasks: once read (-1), after a while (seconds), or never (0). Unset, a day.
     let settings = |value| zerod::server::Settings { archive_completed: value, ..Default::default() };

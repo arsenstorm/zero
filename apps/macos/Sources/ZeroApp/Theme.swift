@@ -67,6 +67,12 @@ enum Theme {
     static let row = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.94, alpha: 1))
     /// The rail's grey as a tint over the window's blur: the desktop shows through, softly.
     static let railTint = dynamic(dark: NSColor(white: 0.07, alpha: 0.55), light: NSColor(white: 0.925, alpha: 0.6))
+    /// The bar's tint: the rail's, but in light mode a fifth as strong as the rail's 0.6, so the wallpaper's colour
+    /// shows through the thin bar as through the inbox panel's frame. The sidebar's material alone already comes out at
+    /// the rail's grey on a plain desktop (the rail measured 237 there: 0.4 × the material + 0.6 × 0.925 = 0.929, so
+    /// the material is ≈ 0.935), so the lighter tint keeps that grey within a level. Dark keeps the rail's: its
+    /// near-black tint darkens without washing the colour out.
+    static let barTint = dynamic(dark: NSColor(white: 0.07, alpha: 0.55), light: NSColor(white: 0.925, alpha: 0.2))
     /// The composer's well: in light mode only a breath under the card, so it reads as a field, not a slab.
     static let composer = dynamic(dark: NSColor(white: 0.16, alpha: 1), light: NSColor(white: 0.975, alpha: 1))
     /// The composer's pills: one step under its light well rather than the key caps' heavier grey.
@@ -127,7 +133,6 @@ enum Theme {
         panel: dynamic(dark: rgb(0.40, 0.22, 0.04), light: rgb(1.0, 0.957, 0.902)),
         ink: dynamic(dark: rgb(1.0, 0.925, 0.835), light: rgb(0.36, 0.18, 0.0))
     )
-    static let pill = dynamic(dark: NSColor(white: 0, alpha: 0.9), light: NSColor(white: 1, alpha: 0.96))
     // Opaque, so a border is one colour along its length whatever sits behind each segment.
     // Light strokes sit a step above the key-cap grey (L 0.92 against 0.91): an outline, not a frame.
     static let strokeColor = dynamicColor(dark: NSColor(white: 0.24, alpha: 1), light: NSColor(white: 0.89, alpha: 1))

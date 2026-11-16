@@ -12,7 +12,7 @@ struct TaskDetails: View {
     let navigation: Navigation
     let row: BoardRow?
     let conversation: Conversation
-    /// Opens a link in a tab of the panel.
+    /// Opens a link: in its app when Zero opens it in one, else in a tab of the panel (SidePanel.open).
     let open: (String) -> Void
     /// Every worker listed, not only the ones that need attention.
     @State private var allWorkers = false
@@ -87,32 +87,22 @@ struct TaskDetails: View {
 
     // MARK: Issues and workers
 
+    /// Its issues are the board at the top of its conversation (IssueStrip): here, how many, and a way to it.
     @ViewBuilder private var issues: some View {
-        let issues = (row?.issues ?? []).sorted { $0.boardState.urgency < $1.boardState.urgency }
+        let issues = row?.issues ?? []
         if !issues.isEmpty {
+            let you = issues.filter { $0.state == "you" }.count
             section("Issues") {
-                TimelineView(.everyMinute) { now in
-                    VStack(alignment: .leading, spacing: 8) { ForEach(issues) { issue in issueRow(issue, now: now.date) } }
+                Button {
+                    NotificationCenter.default.post(name: IssueStrip.show, object: conversation.id)
+                } label: {
+                    Self.linked(
+                        "\(issues.count) \(issues.count == 1 ? "issue" : "issues")"
+                            + (you == 0 ? "" : " · \(you) \(you == 1 ? "needs" : "need") you"))
                 }
+                .buttonStyle(.plain)
             }
         }
-    }
-
-    private func issueRow(_ issue: BoardRow.Issue, now: Date) -> some View {
-        let own = (row?.team ?? []).first { member in workspace.conversations.first { $0.id == member.session }?.ticket == issue.ticket }
-        return HStack(alignment: .top, spacing: 8) {
-            TaskStateIcon(state: issue.boardState).frame(width: 14, height: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    link(issue.ticket, to: ticketURL(issue.ticket))
-                    if let waiting = issue.waiting(at: now) { Text(waiting).monospacedDigit().foregroundStyle(.secondary) }
-                    Spacer(minLength: 0)
-                    if let own { Button("Open") { navigation.worker = own.session }.buttonStyle(.plain).foregroundStyle(.secondary) }
-                }
-                if !issue.text.isEmpty { Text(issue.text).foregroundStyle(.secondary).lineLimit(3) }
-            }
-        }
-        .opacity(["done", "parked"].contains(issue.state) ? 0.6 : 1)
     }
 
     /// The few that matter (needing you, in trouble, at work) first, the rest behind their count; a click shows one.
@@ -293,9 +283,10 @@ struct TaskDetails: View {
     }
 
     /// The ticket's page: Linear's link for its team's workspace.
-    private func ticketURL(_ ticket: String) -> URL? {
+    static func ticketURL(_ ticket: String) -> URL? {
         guard let team = ticket.split(separator: "-").first, let space = LinearTeams.known[String(team)] else { return nil }
-        return LinearLinks.url("https://linear.app/\(space)/issue/\(ticket)")
+        // The web link: the panel's opener turns it into the app's when the user has Linear links open there.
+        return URL(string: "https://linear.app/\(space)/issue/\(ticket)")
     }
 
     /// Its value as a link (opened in the panel) when it is one, plain words otherwise.
@@ -392,7 +383,7 @@ struct TaskLinksList: Identifiable, Equatable {
         }
         if let ticket = conversation.ticket {
             let team = String(ticket.split(separator: "-").first ?? "")
-            let url = LinearTeams.known[team].flatMap { LinearLinks.url("https://linear.app/\($0)/issue/\(ticket)")?.absoluteString } ?? ""
+            let url = LinearTeams.known[team].map { "https://linear.app/\($0)/issue/\(ticket)" } ?? ""
             let follow = follows.first { $0.topic.hasSuffix(ticket) }
             links.append(TaskLinksList(icon: "ticket", title: ticket, url: url, detail: follow?.title, followed: follow))
         }

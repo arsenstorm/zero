@@ -97,3 +97,21 @@ import Testing
     #expect(PanelWidth.compactTabs(strip: 280, tabs: 2))
     #expect(!PanelWidth.compactTabs(strip: 280, tabs: 1))
 }
+
+/// Links clicked in the panel: an app's link (Linear's app on or off, Slack's, Zero's own) goes to the app, as the
+/// conversation's do; a web page opens in a tab.
+@MainActor @Test func panelLinksGoToTheirAppsAndOnlyWebPagesToATab() {
+    let acme = Slack.State(team: .init(id: "T0AB", name: "Acme", domain: "acme"), channels: [:])
+    func app(_ link: String, linear: Bool = true) -> String? {
+        LinkRoute.app(URL(string: link)!, linearApp: linear, slack: [acme])?.absoluteString
+    }
+    #expect(app("https://linear.app/acme/issue/SHOP-142") == "linear://acme/issue/SHOP-142")
+    #expect(app("https://linear.app/acme/issue/SHOP-142", linear: false) == nil)
+    #expect(
+        app("https://acme.slack.com/archives/C0123/p1700000000123456") == "slack://channel?team=T0AB&id=C0123&message=1700000000.123456")
+    #expect(app("https://other.slack.com/archives/C0123") == nil)
+    #expect(app("zero://task/01aa") == "zero://task/01aa")
+    #expect(app("mailto:a@example.com") == "mailto:a@example.com")
+    #expect(app("https://github.com/acme/shop/pull/412") == nil)
+    #expect(app("https://example.com") == nil)
+}

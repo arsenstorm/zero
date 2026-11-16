@@ -202,12 +202,12 @@ struct TaskStateIcon: View {
         build(inside ? session : nil)
         if inside {
             // None while a menu is open, as tips.
-            guard WorkspaceSelector.shared.open == nil else { return }
+            guard !Floating.shared.menuOpen else { return }
             // Open already: on to this row at once. Else after a rest, so passing over the list shows nothing.
             if self.session != nil { self.session = session; self.top = top; return }
             pending = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(450))
-                guard !Task.isCancelled, WorkspaceSelector.shared.open == nil else { return }
+                guard !Task.isCancelled, !Floating.shared.menuOpen else { return }
                 self?.session = session; self?.top = top
             }
         } else {
@@ -329,7 +329,9 @@ struct StateLabel: View {
     var body: some View {
         let look = TaskStateIcon.look(state)
         let tint: Color = look.color == .secondary ? .secondary : look.color
-        HStack(spacing: 5) {
+        // 4, not the leading 5: the icon's scaled frame leaves 1 either side, and the word's own bearing adds 1 more
+        // after it; measured, 6 before the icon and 6 after.
+        HStack(spacing: 4) {
             TaskStateIcon(state: state).scaleEffect(0.86)
             Text(look.name).font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(

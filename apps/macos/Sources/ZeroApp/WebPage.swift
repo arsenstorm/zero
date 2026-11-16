@@ -15,6 +15,9 @@ final class WebPage {
     private(set) var canGoForward = false
     /// Told whenever the address or title changes, so the tab keeps them.
     @ObservationIgnored var changed: (_ url: String, _ title: String) -> Void = { _, _ in }
+    /// Asked about a link clicked in the page: true when it opened outside (in an app), and the page stays put.
+    @ObservationIgnored var outside: (URL) -> Bool = { _ in false }
+    @ObservationIgnored private let delegate = Delegate()
 
     @ObservationIgnored let view: NSView
     @ObservationIgnored private let web: WKWebView
@@ -26,6 +29,9 @@ final class WebPage {
         web = WKWebView(frame: .zero, configuration: configuration)
         web.allowsBackForwardNavigationGestures = true
         view = web
+        delegate.page = self
+        web.navigationDelegate = delegate
+        web.uiDelegate = delegate
         watching = [
             web.observe(\.url, options: .new) { [weak self] web, _ in MainActor.assumeIsolated { self?.read(web) } },
             web.observe(\.title, options: .new) { [weak self] web, _ in MainActor.assumeIsolated { self?.read(web) } },
@@ -56,6 +62,27 @@ final class WebPage {
     }
 }
 
+/// A click in the page: an app's link goes to its app; a link meant for a new window opens in this tab.
+private final class Delegate: NSObject, WKNavigationDelegate, WKUIDelegate {
+    weak var page: WebPage?
+
+    func webView(
+        _ web: WKWebView, decidePolicyFor action: WKNavigationAction,
+        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
+        let outside = action.navigationType == .linkActivated && action.request.url.map { url in page?.outside(url) ?? false } == true
+        decisionHandler(outside ? .cancel : .allow)
+    }
+
+    func webView(
+        _ web: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let url = action.request.url, page?.outside(url) != true { web.load(URLRequest(url: url)) }
+        return nil
+    }
+}
+
 /// Every open tab's page by tab, made the first time it's shown and kept until it's closed, so going back to a tab
 /// finds its page as it was (scroll, form and all) rather than loading it again.
 @MainActor
@@ -63,9 +90,10 @@ enum WebPages {
     // ponytail: every shown tab's page stays alive until closed; evict the least recent if memory says so.
     private static var pages: [String: WebPage] = [:]
 
-    static func page(for tab: PanelTab) -> WebPage {
+    static func page(for tab: PanelTab, outside: @escaping (URL) -> Bool) -> WebPage {
         if let page = pages[tab.id] { return page }
         let page = WebPage()
+        page.outside = outside
         pages[tab.id] = page
         page.load(tab.url)
         return page

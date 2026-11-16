@@ -783,7 +783,8 @@ struct MessageRail: View, Equatable {
             }
             .onTapGesture { if let scrubbed, scrubbed < marks.count { go(marks[scrubbed].id) } }
             .overlay {
-                if let hovered, hovered < shown.count, let scrubbed, scrubbed < marks.count {
+                // Not while a menu is open (Floating.menuOpen): back as it closes, the pointer still on it.
+                if !Floating.shared.menuOpen, let hovered, hovered < shown.count, let scrubbed, scrubbed < marks.count {
                     // Centred on its tick, kept inside the view near its ends.
                     let y = min(max(top + pitch * (CGFloat(hovered) + 0.5), 60), space.size.height - 60)
                     let mark = marks[scrubbed]

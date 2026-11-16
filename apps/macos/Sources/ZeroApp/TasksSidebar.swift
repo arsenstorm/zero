@@ -448,6 +448,20 @@ struct PairSheet: View {
                     if busy { Asked.shared.restarting = task } else { Task { await workspace.restartAgent(id) } }
                 },
             ]
+        // Its lead: a worker let go of it, a task of its own put under another (not one of its own workers).
+        let leads = worker ? [] : workspace.possibleLeads(of: id)
+        let lead =
+            worker
+            ? [MenuItem("Detach from lead", "link-slash") { Task { await workspace.setParent(id, nil) } }]
+            : leads.isEmpty
+                ? []
+                : [
+                    MenuItem(
+                        "Move under…", "unordered-list",
+                        children: leads.map { other in
+                            MenuItem(Workspace.label(of: other)) { Task { await workspace.setParent(id, other.id) } }
+                        })
+                ]
         let later =
             worker
             ? []
@@ -460,7 +474,7 @@ struct PairSheet: View {
         // As Linear's: the task itself first, then what its agent does, then copying and opening it elsewhere, then
         // putting it away.
         return [
-            [MenuItem("Rename task", "pen") { Asked.shared.renaming = task }] + statusItems(id, in: workspace) + moves + [
+            [MenuItem("Rename task", "pen") { Asked.shared.renaming = task }] + statusItems(id, in: workspace) + moves + lead + [
                 MenuItem("Work with…", "link") { Asked.shared.pairing = task }
             ],
             [MenuItem("Ask for a status update", "message-check") { Task { await workspace.notify(id, text: statusCheck) } }] + session,

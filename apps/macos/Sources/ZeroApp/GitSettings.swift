@@ -52,10 +52,7 @@ struct GitPage: View {
         Sections {
             SettingsSection(title: "Agents' commits") {
                 Rows {
-                    SettingRow(
-                        title: "Agents commit as their own account",
-                        detail: "Their commits are signed and verified; your terminal keeps your key."
-                    ) {
+                    SettingRow(.commitAsAgent) {
                         Switch(isOn: model.binding(\.enabled))
                     }
                     if git.enabled {
@@ -66,7 +63,7 @@ struct GitPage: View {
                             RowButton(title: git.login.isEmpty ? "Choose…" : "Change…") { choosing = true }
                         }
                         SettingRow(
-                            title: "Signing key",
+                            .signingKey,
                             detail: problem ?? keyTitle ?? model.publicKey.map(Self.short)
                                 ?? "None yet: a private key without a passphrase."
                         ) {
@@ -83,13 +80,10 @@ struct GitPage: View {
                                 RowButton(title: model.publicKey == nil ? "Choose…" : "Replace…", action: chooseKey)
                             }
                         }
-                        SettingRow(
-                            title: "Credit you as co-author",
-                            detail: "Agents become the author and add you as Co-authored-by. Off: you stay the author."
-                        ) { Switch(isOn: model.binding(\.agentsAuthor)) }
+                        SettingRow(.coauthor) { Switch(isOn: model.binding(\.agentsAuthor)) }
                         if git.agentsAuthor {
                             SettingRow(
-                                title: "Your name and email",
+                                .coauthorName,
                                 detail: git.coauthorName.isEmpty || git.coauthorEmail.isEmpty
                                     ? "From each repository's Git config."
                                     : "\(git.coauthorName) · \(git.coauthorEmail)"
@@ -195,10 +189,7 @@ struct AgentsGitHubAccess: View {
     var body: some View {
         SettingsSection(title: "Agents' access") {
             Rows {
-                SettingRow(
-                    title: "Give agents their own GitHub token",
-                    detail: "Limits what their gh commands and pushes can reach. Only in the folders Settings › Git keeps it to."
-                ) {
+                SettingRow(.githubToken) {
                     Switch(
                         isOn: Binding(
                             get: { git.scopedToken },
@@ -223,7 +214,7 @@ struct AgentsGitHubAccess: View {
                         }
                     }
                 }
-                SettingRow(title: "Push with the GitHub CLI's sign-in", detail: "Rather than SSH, which may wait on your own key.") {
+                SettingRow(.githubPush) {
                     // The token pushes over HTTPS itself: on and locked while agents have it.
                     Switch(
                         isOn: Binding(

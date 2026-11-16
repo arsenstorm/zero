@@ -36,9 +36,21 @@ final class InboxController {
     @ObservationIgnored var barSlots: [String: CGRect] = [:]
     /// Which view set each slot (PillView's `BarSlot`), so only that one clears it.
     @ObservationIgnored var barSlotOwners: [String: UUID] = [:]
-    /// How far down the bar is drawn from its place centred in its panel: a group opened by the pointer grows it
-    /// downward only (PillView). The pointer's zones and the inbox's hold go by where it's drawn.
-    @ObservationIgnored var barShift: CGFloat = 0
+    /// The bar's panel: the screen's height at its edge, the bar's top held 100 pt above the middle (`barTop`), so
+    /// whatever the bar shows, it grows and shrinks at its foot. The pointer's zones, the inbox's hold and the inbox's
+    /// cards (centred on the bar's middle, `barMiddle`) go by it.
+    var barPanel: CGFloat = 600
+    var barTop: CGFloat { max(0, barPanel / 2 - 100) }
+    /// How far the bar's middle is below its panel's middle (above, negative): the inbox's cards line up with it.
+    var barMiddle: CGFloat { barTop + barHeight / 2 - barPanel / 2 }
+    /// The bar's join: how far in from the screen's edge its base sits. 0 at the screen's edge; with Zero's window's
+    /// right edge at the bar's, 4 (the window's right rail strip, between its page and its edge: the bar grows out of
+    /// it); during a drag away, riding on the strip up to 12 pt more, then letting go. The bar's panel is moved there
+    /// (AppDelegate's `trackBarJoin`); the bar draws its border by it.
+    var barJoin: CGFloat = 0
+    /// The bar's panel's width: the bar's 44 and room for its join to ride in (`barJoin`); the rest lets the pointer
+    /// through.
+    static let pillWidth: CGFloat = 64
     /// The agents the bar shows now, top to bottom: a slot of one gone from the bar is not under the pointer.
     @ObservationIgnored var barOrder: [String] = []
     static let inboxSlot = "\u{0}inbox", newSlot = "\u{0}new", settingsSlot = "\u{0}settings"

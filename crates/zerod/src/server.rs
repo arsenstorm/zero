@@ -94,6 +94,8 @@ struct Request {
     code: Option<bool>,
     /// unrewind: the folder as it was before the rewind (its `undo`).
     undo: Option<String>,
+    /// rewind: how many messages its preview said would go.
+    messages: Option<u64>,
     /// adopt: the provider's own session id, to take in as a task.
     thread: Option<String>,
     /// send: images with the words, by their files.
@@ -297,6 +299,7 @@ pub type Peers = Arc<dyn Fn(Option<[u32; 8]>) -> bool + Send + Sync>;
 /// other process they're refused, so an agent can't approve itself or let itself write.
 pub(crate) const APP_ONLY: &[&str] = &[
     "choose",
+    "setParent",
     "answerAsk",
     "reply",
     "takeBack",
@@ -499,8 +502,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         "pad" | "later" | "loops" | "loop" | "saveLoop" | "deleteLoop" => notes::handle(zerod, request),
         "watch" | "watchFile" | "watches" | "unwatch" | "remind" | "schedule" | "schedules" | "unschedule" | "follow" | "unfollow"
         | "following" => watches::handle(zerod, request).await,
-        "start" | "spawn" | "adopt" | "detach" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater" | "resumeLater"
-        | "restartStatus" | "restart" | "stopLeft" => sessions::lifecycle(zerod, request).await,
+        "start" | "spawn" | "adopt" | "detach" | "setParent" | "migrate" | "archive" | "unarchive" | "archived" | "saveForLater"
+        | "resumeLater" | "restartStatus" | "restart" | "stopLeft" => sessions::lifecycle(zerod, request).await,
         "release" | "resume" | "openTerminal" | "closeTerminal" | "rewindPreview" | "rewind" | "unrewind" | "branch" | "switch"
         | "interrupt" | "stop" | "restartAgent" | "pause" | "unpause" => sessions::control(zerod, request).await,
         "send" | "queue" | "unqueue" | "notify" | "decide" | "answer" | "seen" | "introduce" => sessions::messages(zerod, request).await,
@@ -642,6 +645,9 @@ fn configure(zerod: &Zerod, given: Settings) -> Result<Value, String> {
     settings.plain_answers = given.plain_answers.or(settings.plain_answers);
     settings.apply_git(daemon.home());
     settings.apply(&zerod.inbox);
+    // Running agents read the window only as they start: those started with another start again with it.
+    let restarting = daemon.clone();
+    tokio::spawn(async move { restarting.compact_window_changed().await });
     let _ = std::fs::write(daemon.home().join("settings.json"), serde_json::to_vec_pretty(&settings).unwrap_or_default());
     Ok(Value::Null)
 }

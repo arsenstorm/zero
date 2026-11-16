@@ -21,6 +21,9 @@ impl Daemon {
     /// With what it answered before the limit (its lead has that): a turn it ended there isn't carried on, and one it
     /// went on from is told not to say it again.
     fn switch_account(&self, conversation: &Conversation, answered: Option<&str>) -> bool {
+        if self.switching.lock().unwrap().contains(&conversation.id) {
+            return true;
+        }
         let reported = conversation.usage.as_ref().is_some_and(|u| u.limited);
         // Or said only in its CLI's error, without figures for the account's windows (a worker's process ending on it).
         let said = conversation.failure.as_ref().is_some_and(|f| f.kind == crate::model::FailureKind::Limit);
@@ -31,16 +34,7 @@ impl Daemon {
             self.signins.limit_said(signin, now());
         }
         let Some(next) = self.signins.choose(conversation.provider, now(), conversation.signin.as_deref()) else { return false };
-        let Ok(session) = self.session(&conversation.id) else { return false };
-        session.change(Change::SignedIn { signin: Some(next.id.clone()) });
-        // The limit was the last account's: this one starts clear.
-        session.change(Change::Usage { usage: crate::model::Usage::default() });
-        // As is the error that said so (the failure is worked out from it).
-        session.change(Change::Status { status: conversation.status, turn: conversation.turn.clone(), error: None });
-        session.change(Change::Failed { failure: None });
-        if session.is_attached() {
-            self.switching.lock().unwrap().insert(conversation.id.clone());
-        }
+        self.switching.lock().unwrap().insert(conversation.id.clone());
         let carry_on = match answered {
             Some(answer) if crate::board::ending(answer).is_some_and(|e| e != "working") => None,
             Some(_) => Some(
@@ -54,7 +48,16 @@ impl Daemon {
         tokio::spawn(async move {
             let Some(daemon) = me.upgrade() else { return };
             if let Ok(session) = daemon.session(&id) {
-                daemon.take_offline(&session).await
+                // Its last rejection still belongs to the old account while its output drains.
+                daemon.take_offline(&session).await;
+                if session.is_attached() {
+                    daemon.switching.lock().unwrap().remove(&id);
+                    return;
+                }
+                session.change(Change::Usage { usage: crate::model::Usage::default() });
+                session.change(Change::SignedIn { signin: Some(next.id) });
+                session.change(Change::Status { status: Status::Offline, turn: None, error: None });
+                session.change(Change::Failed { failure: None });
             }
             if let Some(words) = carry_on {
                 daemon.tell(&id, crate::model::from_line("zero", words));
@@ -66,24 +69,29 @@ impl Daemon {
     /// Refused its model by its account's provider (no access): that's kept of the account, and the task carries on as
     /// one not refused it, as at a limit. False when there's none.
     fn switch_for_model(&self, conversation: &Conversation) -> bool {
+        if self.switching.lock().unwrap().contains(&conversation.id) {
+            return true;
+        }
         let (Some(model), Some(signin)) = (conversation.model.as_deref(), conversation.signin.as_deref()) else { return false };
         if !conversation.failure.as_ref().is_some_and(|f| crate::signins::refuses_model(&f.message)) {
             return false;
         }
         self.signins.refuse(signin, model);
         let Some(next) = self.signins.choose_for(conversation.provider, now(), Some(signin), Some(model)) else { return false };
-        let Ok(session) = self.session(&conversation.id) else { return false };
-        session.change(Change::SignedIn { signin: Some(next.id.clone()) });
-        session.change(Change::Status { status: conversation.status, turn: conversation.turn.clone(), error: None });
-        session.change(Change::Failed { failure: None });
-        if session.is_attached() {
-            self.switching.lock().unwrap().insert(conversation.id.clone());
-        }
+        self.switching.lock().unwrap().insert(conversation.id.clone());
         let (me, id, model) = (self.me.clone(), conversation.id.clone(), model.to_string());
         tokio::spawn(async move {
             let Some(daemon) = me.upgrade() else { return };
             if let Ok(session) = daemon.session(&id) {
-                daemon.take_offline(&session).await
+                daemon.take_offline(&session).await;
+                if session.is_attached() {
+                    daemon.switching.lock().unwrap().remove(&id);
+                    return;
+                }
+                session.change(Change::Usage { usage: crate::model::Usage::default() });
+                session.change(Change::SignedIn { signin: Some(next.id) });
+                session.change(Change::Status { status: Status::Offline, turn: None, error: None });
+                session.change(Change::Failed { failure: None });
             }
             daemon.tell(&id, crate::model::from_line("zero", &format!("Your account can't use {model}, so Zero carries this task on as another account that can: carry on with what you were doing.")));
         });

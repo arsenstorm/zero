@@ -118,6 +118,19 @@ public enum PanelAddress {
     }
 }
 
+/// Where a link clicked in the panel goes: to an app when Zero would open it in one (Linear's when the user has it
+/// open Linear links, Slack's for a connected workspace, Zero's own zero://, mailto: and any other app's scheme), as
+/// the conversation's links do; only a web page that would go to the web browser opens in a panel tab instead.
+public enum LinkRoute {
+    /// The app's link to open, or nil for a web page.
+    public static func app(_ url: URL, linearApp: Bool, slack: [Slack.State]) -> URL? {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return url }
+        let linear = "https://linear.app/"
+        if linearApp, url.absoluteString.hasPrefix(linear) { return URL(string: "linear://" + url.absoluteString.dropFirst(linear.count)) }
+        return SlackLinks.url(url, in: slack)
+    }
+}
+
 /// Every task's panel tabs, kept in the app's defaults by task, and the panel's width.
 @MainActor @Observable
 public final class Panels {

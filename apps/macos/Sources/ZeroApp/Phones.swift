@@ -583,7 +583,7 @@ struct DevicesPage: View {
             SettingsSection(title: "Relay") {
                 Rows {
                     // Which relay and how it's doing, in one row: Zero's own chip on the right, not a text box.
-                    SettingRow(title: "Relay server", detail: statusDetail) {
+                    SettingRow(.relay, detail: statusDetail) {
                         SettingChoice(
                             id: "phones.relay", choices: relayChoices,
                             selection: Binding(

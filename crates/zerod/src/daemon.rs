@@ -182,6 +182,14 @@ whose next turn ending wakes you), [zero: blocked] (you can't go on without a de
 access you don't have, your lead's or the user's: mark it first with `zero blocked \"what you need\"`, confirmed with its \
 token, and say exactly what would unblock you; your lead takes it to the user), or [zero: working] (pausing between steps). \
 Don't repeat your answer; do what's missing and end.";
+/// What a task the user moved under a lead is told, after who its lead is: a spawned worker's terms.
+pub const WORKER_NOW: &str = "You're a worker: your lead hears how you end, not the user. Your final answer is your report \
+to it; anything you need from the user goes through your lead, except a command only their Mac can run (`zero run --why`). \
+A worker's done is its lead's to judge: `zero done` marks it at once.";
+/// What a worker the user detached from its lead is told: it's a task of its own, its endings a lead's.
+pub const ON_YOUR_OWN: &str = "You answer to the user directly now: reach them through zero ask, zero run or zero note, and \
+end your turns as a task's (a [zero: done] only once `zero done` has confirmed it with its token). Your own workers stay \
+under you.";
 /// What a turn paused for a restart is told once the new zerod is up. Zero's own words, not the user's: never shown as
 /// a message (core.rs leaves its item out).
 /// What a task is told when its turn ends waiting with nothing to wake it: once, its reply taken as it is.

@@ -18,6 +18,7 @@ mod cli;
 mod codex;
 mod codex_login;
 mod common;
+mod compact;
 mod compare;
 mod coordination;
 mod e2e;

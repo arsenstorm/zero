@@ -17,8 +17,8 @@ public enum BarAgentsFrom: String, CaseIterable, Sendable {
 }
 
 /// The bar's agents by workspace, always in the rail's order (the window's workspace in its own place: switching the
-/// window changes which group is the window's, never the order). Another workspace than the window's folds to its
-/// mark unless something there waits on the user. A workspace with no agents has no group.
+/// window changes which group is the window's, never the order). Only the window's workspace is open: every other folds
+/// to its mark (which shows when something there waits on the user). A workspace with no agents has no group.
 public struct BarGroup: Equatable, Sendable {
     public var workspace: String
     /// Its dots' names, in the bar's order.
@@ -29,8 +29,8 @@ public struct BarGroup: Equatable, Sendable {
     public var waiting: Bool
     /// The window's workspace: no mark, never folded.
     public var window: Bool
-    /// Folded to its mark: another workspace with nothing waiting on the user.
-    public var folds: Bool { !window && !waiting }
+    /// Folded to its mark: any workspace but the window's.
+    public var folds: Bool { !window }
 }
 
 public enum BarGroups {
@@ -43,6 +43,29 @@ public enum BarGroups {
         public var waiting: Bool
         public init(name: String, workspace: String?, running: Bool, waiting: Bool) {
             self.name = name; self.workspace = workspace; self.running = running; self.waiting = waiting
+        }
+    }
+
+    /// Both states at once, for a change to be drawn through: every group and dot of either, in the rail's order, and
+    /// in a group, now's dots in their order with any gone kept after the one they followed. So what leaves can close
+    /// its own slot before it goes, and nothing has to cross anything. A group's fields (window, folded, what waits)
+    /// come from `fieldsFrom`: the state the drawing is easing from, or to; a group that state lacks isn't its window.
+    public static func union(_ was: [BarGroup], _ now: [BarGroup], workspaces: [String], fieldsFrom fields: [BarGroup]) -> [BarGroup] {
+        let ids = workspaces + (now + was).map(\.workspace)
+        var seen = Set<String>()
+        return ids.filter { seen.insert($0).inserted }.compactMap { id in
+            let before = was.first { $0.workspace == id }, after = now.first { $0.workspace == id }
+            guard var group = fields.first(where: { $0.workspace == id }) ?? after ?? before else { return nil }
+            // Not in the state drawn, it isn't that state's window either (its slot is shut then anyway).
+            if !fields.contains(where: { $0.workspace == id }) { group.window = false }
+            var dots = after?.dots ?? []
+            let gone = before?.dots ?? []
+            for (index, name) in gone.enumerated() where !dots.contains(name) {
+                let anchor = gone[..<index].last { dots.contains($0) }
+                dots.insert(name, at: anchor.flatMap { dots.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
+            }
+            group.dots = dots
+            return group
         }
     }
 
@@ -118,5 +141,19 @@ public enum BarReach: Sendable {
         let nearSettings = foot - y <= near + (was == .settings ? slack : 0)
         if nearInbox, !nearSettings || y < split { return .inbox }
         return nearSettings ? .settings : .neither
+    }
+}
+
+/// The bar's base against Zero's window: how far in from the screen's edge it sits (`InboxController.barJoin`).
+public enum BarEdge {
+    /// The window's right rail strip, between its page and its edge (WorkspaceView's): the bar grows out of it.
+    public static let strip = 4.0
+    /// How far a window dragged away carries the bar with it before it lets go.
+    public static let ride = 12.0
+
+    /// `away`: how far the window's right edge is in from the screen's (negative: past it). At the edge, the strip; up
+    /// to `ride` away, the strip and the distance; further, or past the edge, none.
+    public static func join(away: Double) -> Double {
+        away < -0.5 || away > ride ? 0 : strip + max(0, away)
     }
 }

@@ -97,34 +97,24 @@ struct IntegrationPage: View {
             case .github:
                 SettingsSection(title: "Links") {
                     Rows {
-                        SettingRow(
-                            title: "Link pull requests and commits", detail: "repo#123, #123 and commit hashes in messages open on GitHub."
-                        ) { Switch(isOn: $github) }
+                        SettingRow(.githubLinks) { Switch(isOn: $github) }
                     }
                 }
                 AgentsGitHubAccess()
             case .linear:
                 SettingsSection(title: "Links") {
                     Rows {
-                        SettingRow(title: "Link issues", detail: "ABC-123 in messages opens the issue.") { Switch(isOn: $linear) }
-                        SettingRow(title: "Open issues in the Linear app", detail: "Rather than the browser.") {
+                        SettingRow(.linearLinks) { Switch(isOn: $linear) }
+                        SettingRow(.linearApp) {
                             Switch(isOn: Binding(get: { linear && LinearLinks.installed && linearInApp }, set: { linearInApp = $0 }))
                                 .disabled(!linear || !LinearLinks.installed)
                                 .tip(!LinearLinks.installed ? "Linear's app isn't installed" : linear ? "" : "Issue links are off")
                         }
                     }
                 }
-                AgentWrites(
-                    title: "Let agents make changes", key: "linearChanges",
-                    detail:
-                        "Agents read Linear through Zero. On, they can change it too, each change approved by you. Zero asks Linear for write access only while this is on: after changing it, disconnect and connect Linear again."
-                )
+                AgentWrites(setting: .linearWrites, key: "linearChanges")
             case .slack:
-                AgentWrites(
-                    title: "Let agents post", key: "slackPosts",
-                    detail:
-                        "Agents read Slack through Zero. On, they can post too, each post approved by you. Zero's Slack app has chat:write only while this is on: after changing it, add or remove chat:write in the app's User Token Scopes in Slack, reinstall it, and connect Slack again with the new token."
-                )
+                AgentWrites(setting: .slackPosts, key: "slackPosts")
             }
             if let workspace, integration.account(in: workspace.integrations) != nil {
                 SettingsSection(title: "Following") {
@@ -181,16 +171,15 @@ struct IntegrationPage: View {
 /// Whether agents may write through a connection (`zero slack`, `zero linear`): zerod's setting, off unless turned on,
 /// and every write still the user's to approve.
 private struct AgentWrites: View {
-    let title: String
+    let setting: Setting
     let key: String
-    let detail: String
     @State private var on = false
     @State private var link = try? ZerodLink()
 
     var body: some View {
         SettingsSection(title: "Agents") {
             Rows {
-                SettingRow(title: title, detail: detail) {
+                SettingRow(setting) {
                     Switch(
                         isOn: Binding(
                             get: { on },

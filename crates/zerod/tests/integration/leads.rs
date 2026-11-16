@@ -467,11 +467,24 @@ async fn a_task_at_its_accounts_limit_carries_on_as_another_account() {
     let seen = lead_runtime(&w).await;
     seen.said("user", 1).await;
     let resets = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64 + 3_600;
+    let mut changes = w.daemon.subscribe();
     seen.say(json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets,
                     "unifiedWindows": {"five_hour": {"utilization": 1.0, "resetsAt": resets}, "seven_day": {"utilization": 0.6, "resetsAt": resets + 86_400}}}}));
     seen.say(json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "You've hit your limit"}));
     until(&w.daemon, &lead, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
     assert!(w.daemon.signins.usage(&first.id).is_some_and(|u| u.limited), "the first account's limit is known, for choosing later");
+    let mut stopped = false;
+    while let Ok(event) = changes.try_recv() {
+        if event.session != lead {
+            continue;
+        }
+        match event.change {
+            Change::Status { status: Status::Offline, .. } => stopped = true,
+            Change::SignedIn { .. } => assert!(stopped, "the old process stops before its account changes"),
+            _ => {}
+        }
+    }
+    assert!(w.daemon.signins.usage(&second.id).is_none_or(|u| !u.limited), "the rejection belongs only to the first account");
     // Its agent started again as the second account, and told to carry on.
     for _ in 0..200 {
         if w.claude.lock().unwrap().len() > 1 {
@@ -1039,4 +1052,259 @@ async fn a_worker_sent_back_for_its_ending_keeps_its_report() {
     assert!(!text.contains("[zero: done]"), "{text}");
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(users(&led), 2, "once: {:?}", led.all());
+}
+
+/// The `n`th Claude session's runtime, once it has started.
+async fn claude_runtime(w: &World, n: usize) -> Seen {
+    for _ in 0..500 {
+        if let Some(seen) = w.claude.lock().unwrap().get(n).cloned() {
+            return seen;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("Claude session {n} never started");
+}
+
+/// A Claude turn ending on `text`.
+fn answers(seen: &Seen, text: &str) {
+    seen.say(json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}));
+    seen.say(json!({"type": "result", "subtype": "success", "is_error": false, "result": text}));
+}
+
+fn told(said: &[serde_json::Value], n: usize) -> String {
+    said[n]["message"]["content"].as_str().unwrap_or_default().to_string()
+}
+
+fn noticed(c: &Conversation, words: &str) -> bool {
+    c.items.iter().any(|i| matches!(&i.kind, zerod::model::ItemKind::Notice { text, .. } if text.contains(words)))
+}
+
+/// The user detaches a worker: a task of its own, told it answers to them; its lead hears no more of it, a quiet line
+/// in its conversation saying so, unless it was waiting on that worker, which wakes it.
+#[tokio::test]
+async fn a_worker_the_user_detaches_answers_to_them_and_its_lead_hears_no_more() {
+    let w = world("leads-detach");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let lead_seen = claude_runtime(&w, 0).await;
+    lead_seen.said("user", 1).await;
+    answers(&lead_seen, "Started it.");
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Answered).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "list the files", named("Listing", None)).unwrap();
+    let worker_seen = claude_runtime(&w, 1).await;
+    worker_seen.said("user", 1).await;
+
+    w.daemon.set_parent(&worker, None, None).unwrap();
+    assert_eq!(w.daemon.get(&worker).unwrap().parent, None);
+    until(&w.daemon, &lead, |c| noticed(c, "Listing was detached by the user; it no longer reports to you")).await;
+    answers(&worker_seen, "Listed: none.");
+    let said = worker_seen.said("user", 2).await;
+    assert!(told(&said, 1).contains("You answer to the user directly now"), "{}", told(&said, 1));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(lead_seen.all().iter().filter(|m| m["type"] == "user").count(), 1, "its lead heard nothing more");
+    assert!(w.daemon.set_parent(&worker, None, None).is_ok(), "a task of its own already: nothing to do");
+}
+
+#[tokio::test]
+async fn a_lead_waiting_on_the_worker_the_user_detaches_is_told() {
+    let w = world("leads-detach-waiting");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let lead_seen = claude_runtime(&w, 0).await;
+    lead_seen.said("user", 1).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "list the files", named("Listing", None)).unwrap();
+    claude_runtime(&w, 1).await.said("user", 1).await;
+    answers(&lead_seen, "Waiting on Listing.\n\n[zero: waiting]");
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Blocked).await;
+
+    w.daemon.set_parent(&worker, None, None).unwrap();
+    let said = lead_seen.said("user", 2).await;
+    assert!(told(&said, 1).contains("Listing was detached by the user; it no longer reports to you"), "{}", told(&said, 1));
+}
+
+/// The user moves a task under a lead: its worker, in the lead's workspace with its own workers. The lead is told it
+/// has a new worker and where it stands; the worker who its lead is; the lead hears its reports from then on.
+#[tokio::test]
+async fn a_task_the_user_moves_under_a_lead_reports_to_it() {
+    let w = world("leads-move");
+    let team = w
+        .daemon
+        .workspaces
+        .save(zerod::workspaces::Workspace {
+            id: String::new(),
+            name: "Team".into(),
+            glyph: "briefcase".into(),
+            color: "teal".into(),
+            plain_answers: None,
+        })
+        .unwrap()
+        .id;
+    let options = Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some(team.clone()), ..Default::default() };
+    let lead = w.daemon.start(Provider::Claude, "lead the work", options).unwrap();
+    let lead_seen = claude_runtime(&w, 0).await;
+    lead_seen.said("user", 1).await;
+    answers(&lead_seen, "Leading.");
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Answered).await;
+    let task = start(&w.daemon, Provider::Claude, &w.project, "fix the footer");
+    w.daemon.label(&task, Some("Footer"), None).unwrap();
+    let task_seen = claude_runtime(&w, 1).await;
+    task_seen.said("user", 1).await;
+    answers(&task_seen, "Fixed the footer's margin.\nIt needs a review.");
+    until(&w.daemon, &task, |c| c.attention() == Attention::Answered).await;
+    let helper = w.daemon.spawn(&task, Provider::Claude, "check the header", named("Header", None)).unwrap();
+    assert_ne!(w.daemon.workspace_of(&w.daemon.get(&task).unwrap()), team);
+
+    w.daemon.set_parent(&task, Some(&lead), None).unwrap();
+    assert_eq!(w.daemon.get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
+    assert_eq!(w.daemon.workspace_of(&w.daemon.get(&task).unwrap()), team, "in its lead's workspace");
+    assert_eq!(w.daemon.workspace_of(&w.daemon.get(&helper).unwrap()), team, "its own workers with it");
+    assert_eq!(w.daemon.get(&helper).unwrap().parent.as_deref(), Some(task.as_str()), "and still under it");
+    let said = lead_seen.said("user", 2).await;
+    let words = told(&said, 1);
+    assert!(words.contains("The user gave you a worker: Footer") && words.contains("Fixed the footer's margin."), "{words}");
+    assert!(!words.contains("It needs a review"), "its last answer in a line: {words}");
+    let said = task_seen.said("user", 2).await;
+    let words = told(&said, 1);
+    assert!(words.contains("The user moved this task under") && words.contains("your lead hears how you end"), "{words}");
+
+    answers(&lead_seen, "Noted.");
+    answers(&task_seen, "Reviewed.");
+    let said = lead_seen.said("user", 3).await;
+    assert!(told(&said, 2).contains("Reviewed."), "its report reaches its lead: {}", told(&said, 2));
+}
+
+#[tokio::test]
+async fn a_move_that_would_make_a_loop_is_refused() {
+    let w = world("leads-move-loop");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "a part", named("Part", None)).unwrap();
+    let below = w.daemon.spawn(&worker, Provider::Claude, "a smaller part", named("Smaller", None)).unwrap();
+    assert!(w.daemon.set_parent(&lead, Some(&lead), None).is_err(), "not its own worker");
+    assert!(w.daemon.set_parent(&lead, Some(&below), None).is_err(), "nor its worker's worker's");
+    assert!(w.daemon.set_parent(&lead, Some("nope"), None).is_err());
+    assert!(w.daemon.set_parent("nope", None, None).is_err());
+    assert_eq!(w.daemon.get(&lead).unwrap().parent, None);
+}
+
+/// A lead's own `zero adopt` and `zero detach` take the user's path: the worker is told who did it; the lead, which did
+/// it, isn't told again, its conversation keeping the quiet line.
+#[tokio::test]
+async fn a_lead_adopting_and_detaching_its_worker_tells_the_worker() {
+    let w = world("leads-agent-move");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    w.daemon.label(&lead, Some("Release"), None).unwrap();
+    let lead_seen = claude_runtime(&w, 0).await;
+    lead_seen.said("user", 1).await;
+    answers(&lead_seen, "Leading.");
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Answered).await;
+    let task = start(&w.daemon, Provider::Claude, &w.project, "fix the footer");
+    w.daemon.label(&task, Some("Footer"), None).unwrap();
+    let task_seen = claude_runtime(&w, 1).await;
+    task_seen.said("user", 1).await;
+    answers(&task_seen, "Fixed the footer.");
+    until(&w.daemon, &task, |c| c.attention() == Attention::Answered).await;
+
+    assert_eq!(w.daemon.adopt_into(&lead, &task, &lead).unwrap(), task);
+    let said = task_seen.said("user", 2).await;
+    let words = told(&said, 1);
+    assert!(
+        words.contains("Release (")
+            && words.contains("took this task on: you're its worker now")
+            && words.contains("your lead hears how you end"),
+        "{words}"
+    );
+    answers(&task_seen, "Reviewed.");
+    let said = lead_seen.said("user", 2).await;
+    assert!(told(&said, 1).contains("Reviewed."), "its report, and nothing of the adopting: {}", told(&said, 1));
+    answers(&lead_seen, "Noted.");
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Answered).await;
+
+    w.daemon.detach(&task, Some(&lead)).unwrap();
+    assert_eq!(w.daemon.get(&task).unwrap().parent, None);
+    let said = task_seen.said("user", 3).await;
+    let words = told(&said, 2);
+    assert!(words.contains("Release let this task go") && words.contains("You answer to the user directly now"), "{words}");
+    until(&w.daemon, &lead, |c| noticed(c, "Footer was detached by Release")).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(lead_seen.all().iter().filter(|m| m["type"] == "user").count(), 2, "the lead isn't told what it did");
+}
+
+/// An agent moves only within its own tree: it detaches its own workers, and adopts a task of its own (no lead) into
+/// itself or one of its workers. The user, from the task menu, moves any task.
+#[tokio::test]
+async fn an_agent_moves_only_tasks_of_its_own_tree() {
+    let w = world("leads-agent-limits");
+    let a = start(&w.daemon, Provider::Claude, &w.project, "lead A");
+    let a_worker = w.daemon.spawn(&a, Provider::Claude, "a part", named("A part", None)).unwrap();
+    let b = start(&w.daemon, Provider::Claude, &w.project, "lead B");
+    let b_worker = w.daemon.spawn(&b, Provider::Claude, "b part", named("B part", None)).unwrap();
+    let loose = start(&w.daemon, Provider::Claude, &w.project, "a loose task");
+    let refused = |result: Result<(), String>, why: &str| {
+        let error = result.unwrap_err();
+        assert!(error.contains(why), "{error}");
+    };
+
+    refused(w.daemon.detach(&b_worker, Some(&a)), "isn't your worker");
+    refused(w.daemon.detach(&a_worker, Some(&a_worker)), "isn't your worker");
+    refused(w.daemon.set_parent(&b_worker, Some(&a), Some(&a)), "has a lead already");
+    refused(w.daemon.set_parent(&loose, Some(&b), Some(&a)), "isn't you or one of your workers");
+    refused(w.daemon.set_parent(&loose, Some(&b_worker), Some(&a)), "isn't you or one of your workers");
+    refused(w.daemon.adopt_into(&b, &loose, &b).and(w.daemon.set_parent(&loose, None, Some(&a))), "isn't your worker");
+    assert_eq!(w.daemon.get(&b_worker).unwrap().parent.as_deref(), Some(b.as_str()), "refused, nothing moved");
+
+    let loose = start(&w.daemon, Provider::Claude, &w.project, "another loose task");
+    w.daemon.set_parent(&loose, Some(&a_worker), Some(&a)).unwrap();
+    assert_eq!(w.daemon.get(&loose).unwrap().parent.as_deref(), Some(a_worker.as_str()), "into one of its workers");
+    w.daemon.detach(&a_worker, Some(&a)).unwrap();
+    w.daemon.set_parent(&b_worker, Some(&a), None).unwrap();
+    assert_eq!(w.daemon.get(&b_worker).unwrap().parent.as_deref(), Some(a.as_str()), "the user's move");
+}
+
+/// A task moved under a worker whose own workspace was never set joins the workspace its tree shows in: its top
+/// lead's, as the board and the app have it.
+#[tokio::test]
+async fn a_task_moved_under_a_worker_joins_its_top_leads_workspace() {
+    let w = world("leads-move-top-workspace");
+    let team = w
+        .daemon
+        .workspaces
+        .save(zerod::workspaces::Workspace {
+            id: String::new(),
+            name: "Team".into(),
+            glyph: "briefcase".into(),
+            color: "teal".into(),
+            plain_answers: None,
+        })
+        .unwrap()
+        .id;
+    let options = Options { cwd: Some(w.project.to_str().unwrap().into()), workspace: Some(team.clone()), ..Default::default() };
+    let lead = w.daemon.start(Provider::Claude, "lead the work", options).unwrap();
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "a part", named("Part", None)).unwrap();
+    w.daemon.session(&worker).unwrap().change(Change::Placed { workspace: None });
+    let task = start(&w.daemon, Provider::Claude, &w.project, "a loose task");
+
+    w.daemon.set_parent(&task, Some(&worker), None).unwrap();
+    assert_eq!(w.daemon.workspace_of(&w.daemon.get(&task).unwrap()), team, "its top lead's, not its worker's own");
+}
+
+/// One account at its limit isn't the CLI's: a new task starts as another account that's free, without force, even
+/// while a task still reports the first one's limit. Only with every account limited is a start refused, and then with
+/// the time it resets, not a count of seconds.
+#[tokio::test]
+async fn a_new_task_starts_as_a_free_account_while_another_is_at_its_limit() {
+    let w = world("signin-start-free");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let first = claude_account(&w, "a@example.com");
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    limited(&seen, zerod::now() + 3_600);
+    until(&w.daemon, &lead, |c| c.usage.as_ref().is_some_and(|u| u.limited)).await;
+    let options = || Options { cwd: Some(w.project.to_str().unwrap().into()), ..Default::default() };
+    let refused = w.daemon.start(Provider::Claude, "another job", options()).unwrap_err();
+    assert!(refused.ends_with("usage limit for 1 h"), "{refused}");
+    let second = claude_account(&w, "b@example.com");
+    let next = w.daemon.start(Provider::Claude, "another job", options()).expect("a free account to start on");
+    assert_eq!(w.daemon.get(&next).unwrap().signin.as_deref(), Some(second.id.as_str()));
+    assert_ne!(Some(first.id.as_str()), w.daemon.get(&next).unwrap().signin.as_deref());
 }

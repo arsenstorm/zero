@@ -121,7 +121,9 @@ fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
             std::process::exit(1);
         }
     };
-    // After a restart: the turns it paused carry on.
+    // After a restart: the turns it paused carry on. Their processes started with the window the settings give, as
+    // each process taken over records it (Daemon::compact_window_changed).
+    zerod::adapter::set_compact_window(zerod::server::Settings::load(home).compact_window());
     daemon.take_over();
     daemon.carry_on();
     // Every task's turns end on Zero's ending, whichever agent runs it: one that doesn't is sent back once.

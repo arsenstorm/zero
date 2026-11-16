@@ -245,6 +245,12 @@ extension AppDelegate {
     /// Counted up each time they're put away: a view's own card goes on a change (closesWithFloating).
     private(set) var closings = 0
 
+    /// A menu or selector of Zero's is open (a chip's, a right click's, the inbox's): hover peeks (the timeline rail's
+    /// cards, the sidebar rows' cards, the rail's usage and tasks cards) don't show until it closes.
+    var menuOpen: Bool {
+        WorkspaceSelector.shared.open != nil || (NSApp.delegate as? AppDelegate)?.inbox.selector != nil
+    }
+
     func closeAll() {
         closings += 1
         WorkspaceSelector.shared.close()

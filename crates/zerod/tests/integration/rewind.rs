@@ -76,7 +76,7 @@ async fn rewinding_takes_the_conversation_back_and_can_bring_the_folder_back() {
     let preview = daemon.rewind_preview(&id, &second).unwrap();
     assert_eq!((preview["snapshot"].as_bool(), preview["files"].as_u64()), (Some(true), Some(2)));
 
-    let rewound = daemon.rewind(&id, &second, zerod::daemon::Rewind::Both).await.unwrap();
+    let rewound = daemon.rewind(&id, &second, zerod::daemon::Rewind::Both, None).await.unwrap();
     assert_eq!(rewound["text"], "second", "the message, to send again or change");
     assert_eq!(texts(&daemon.get(&id).unwrap()), ["first", "done one"]);
     assert_eq!(std::fs::read_to_string(project.join("a.txt")).unwrap(), "one\n");
@@ -119,7 +119,7 @@ async fn a_rewind_can_be_undone_conversation_and_files() {
     std::fs::write(project.join("a.txt"), "one\nchanged\n").unwrap();
     std::fs::write(project.join("b.txt"), "new\n").unwrap();
 
-    let rewound = daemon.rewind(&id, &second, zerod::daemon::Rewind::Both).await.unwrap();
+    let rewound = daemon.rewind(&id, &second, zerod::daemon::Rewind::Both, None).await.unwrap();
     let undo = rewound["undo"].as_str().expect("the folder as it was before the rewind");
     assert_eq!(texts(&daemon.get(&id).unwrap()).len(), 2);
 
@@ -137,11 +137,39 @@ async fn a_rewind_can_be_undone_conversation_and_files() {
     assert_eq!(texts(&again.get(&id).unwrap()).len(), 4);
 }
 
+/// The bar under a message stays open while the conversation goes on: a rewind confirmed against its preview ("Removes
+/// 2 messages") must not take more than that, nor the folder back past what was said since.
+#[tokio::test]
+async fn a_rewind_is_refused_when_more_was_said_since_its_preview() {
+    let (daemon, id, project, _) = task("rewind-stale");
+    let second = message(&daemon, &id, "second");
+    daemon.snapshot_for(&id, &second).unwrap();
+    std::fs::write(project.join("a.txt"), "one\nchanged\n").unwrap();
+    let seen = daemon.rewind_preview(&id, &second).unwrap()["messages"].as_u64();
+    assert_eq!(seen, Some(2));
+    let session = daemon.sessions().into_iter().find(|s| s.id() == id).unwrap();
+    for (item, kind) in [
+        ("later", ItemKind::User { text: "something else".into(), images: vec![], sent: None }),
+        ("later-answer", ItemKind::Agent { text: "done three".into(), final_answer: true }),
+    ] {
+        session.change(Change::Item { item: Item { at: None, id: item.into(), turn: None, kind, status: ItemStatus::Done } });
+    }
+
+    let refused = daemon.rewind(&id, &second, zerod::daemon::Rewind::Both, seen).await;
+    assert!(refused.is_err(), "it would take 4 messages, not the 2 shown");
+    assert_eq!(texts(&daemon.get(&id).unwrap()), ["first", "done one", "second", "done two", "something else", "done three"]);
+    assert_eq!(std::fs::read_to_string(project.join("a.txt")).unwrap(), "one\nchanged\n", "the folder stays as it is");
+
+    let seen = daemon.rewind_preview(&id, &second).unwrap()["messages"].as_u64();
+    daemon.rewind(&id, &second, zerod::daemon::Rewind::Both, seen).await.expect("looked at again, it goes");
+    assert_eq!(texts(&daemon.get(&id).unwrap()), ["first", "done one"]);
+}
+
 #[tokio::test]
 async fn a_rewind_said_over_since_isnt_undone() {
     let (daemon, id, _, _) = task("rewind-undo-late");
     let second = message(&daemon, &id, "second");
-    daemon.rewind(&id, &second, zerod::daemon::Rewind::Conversation).await.unwrap();
+    daemon.rewind(&id, &second, zerod::daemon::Rewind::Conversation, None).await.unwrap();
     daemon.sessions().into_iter().find(|s| s.id() == id).unwrap().change(Change::Item {
         item: Item {
             at: None,
@@ -160,8 +188,8 @@ async fn rewinding_only_the_conversation_leaves_the_folder_and_the_first_message
     let (daemon, id, project, _) = task("rewind-first");
     let first = message(&daemon, &id, "first");
     std::fs::write(project.join("a.txt"), "agent's\n").unwrap();
-    assert!(daemon.rewind(&id, &first, zerod::daemon::Rewind::Code).await.is_err(), "no snapshot of the folder for it");
-    daemon.rewind(&id, &first, zerod::daemon::Rewind::Conversation).await.unwrap();
+    assert!(daemon.rewind(&id, &first, zerod::daemon::Rewind::Code, None).await.is_err(), "no snapshot of the folder for it");
+    daemon.rewind(&id, &first, zerod::daemon::Rewind::Conversation, None).await.unwrap();
     let task = daemon.get(&id).unwrap();
     assert!(task.items.is_empty());
     assert_eq!(task.thread, None, "nothing to resume: the next message starts a new thread");
@@ -172,7 +200,7 @@ async fn rewinding_only_the_conversation_leaves_the_folder_and_the_first_message
 async fn only_a_message_of_yours_can_be_gone_back_to() {
     let (daemon, id, _, _) = task("rewind-answer");
     let answer = daemon.get(&id).unwrap().items.iter().find(|i| matches!(i.kind, ItemKind::Agent { .. })).unwrap().id.clone();
-    assert!(daemon.rewind(&id, &answer, zerod::daemon::Rewind::Conversation).await.is_err());
+    assert!(daemon.rewind(&id, &answer, zerod::daemon::Rewind::Conversation, None).await.is_err());
     assert!(daemon.branch(&id, &answer).is_err());
 }
 

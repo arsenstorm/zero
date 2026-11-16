@@ -13,6 +13,8 @@ struct InboxView: View {
     /// The stack's top within the bar's frame, kept while an opening grows it downward.
     @State private var heldTop: CGFloat = 0
     private var bar: CGFloat { controller.barHeight }
+    /// The panel's height, for the bar's middle line as a point of it.
+    @State private var viewHeight: CGFloat = 600
     /// An agent's conversation stays at its end, its composer on the bar's centre line; the inbox and the
     /// new-agent composer simply centre on the bar. So the composer, or the empty inbox, is always in one place.
     private var pinsBottom: Bool { controller.agentFilter != nil }
@@ -41,6 +43,11 @@ struct InboxView: View {
             }
         }
         .frame(width: 380)
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            viewHeight = $0
+        }
         .onChange(of: controller.focusedReply) { _, id in focus = id }
         // The composers are text views outside SwiftUI's focus system: its nil for them is not a blur.
         .onChange(of: focus) { _, id in
@@ -84,8 +91,10 @@ struct InboxView: View {
         .frame(minHeight: bar, alignment: controller.holdTop ? .top : (pinsBottom ? .bottom : .center))
         .coordinateSpace(name: "stack")
         // Padding equal to the gap between panel edge and bar edge: scrolled to either end, the list
-        // stops level with the bar's top or bottom, and a list no taller than the bar cannot scroll.
-        .padding(.vertical, max(0, (height - bar) / 2))
+        // stops level with the bar's top or bottom, and a list no taller than the bar cannot scroll. The bar's top is
+        // held (it grows at its foot), so its middle sits off the panel's by `barMiddle`.
+        .padding(.top, max(0, (height - bar) / 2 + controller.barMiddle))
+        .padding(.bottom, max(0, (height - bar) / 2 - controller.barMiddle))
         // Outermost on purpose: the stack and its surface grow together when a card joins.
         // A view switch is excluded: that is a cut.
         .animation(
@@ -157,6 +166,7 @@ struct InboxView: View {
             return
         }
         guard let id = controller.selected else { return }
-        proxy.scrollTo(id, anchor: .center)
+        // On the bar's middle line, which sits `barMiddle` off the panel's.
+        proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: 0.5 + controller.barMiddle / max(1, viewHeight)))
     }
 }

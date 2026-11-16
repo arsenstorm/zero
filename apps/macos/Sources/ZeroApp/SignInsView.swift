@@ -563,7 +563,8 @@ struct RailPeek<Mark: View, Card: View>: View {
     private static var gap: CGFloat { 8 + 8 }
 
     var body: some View {
-        let open = overMark || overCard
+        // Not while a menu is open (Floating.menuOpen): back as it closes, the pointer still on it.
+        let open = (overMark || overCard) && !Floating.shared.menuOpen
         mark()
             .frame(width: 32, height: 32)
             .background(open ? Theme.railHover : .clear, in: RoundedRectangle(cornerRadius: 8))

@@ -310,9 +310,12 @@ public struct Sending: Identifiable, Equatable, Sendable {
     /// When it was sent, in milliseconds since 1970, as items' times are.
     public let at: Int
     public init(text: String, images: [String], at: Int = Int(Date().timeIntervalSince1970 * 1000)) {
-        id = "sending-\(UUID().uuidString)"; self.text = text; self.images = images; self.at = at
+        self.init(id: "sending-\(UUID().uuidString)", text: text, images: images, at: at)
     }
-    private init(id: String, text: String, images: [String], at: Int) { self.id = id; self.text = text; self.images = images; self.at = at }
+    /// `id`: one the message has already, a queued one steered from the strip (its row's), which zerod's item keeps.
+    public init(id: String, text: String, images: [String], at: Int = Int(Date().timeIntervalSince1970 * 1000)) {
+        self.id = id; self.text = text; self.images = images; self.at = at
+    }
 
     /// The same message, what it shows filled in (a video's stills, cut after it was shown): the same bubble.
     public func with(text: String, images: [String]) -> Sending { Sending(id: id, text: text, images: images, at: at) }
@@ -324,8 +327,14 @@ public struct Sending: Identifiable, Equatable, Sendable {
         let waiting = sending.filter { latest < $0.at }
         return items
             + waiting.map {
-                ConversationItem(id: $0.id, turn: nil, kind: .user(text: $0.text, images: $0.images), status: .done, at: $0.at)
+                ConversationItem(id: $0.id, turn: nil, kind: .user(text: $0.text, images: $0.images), status: .done, at: $0.at, sent: $0.id)
             }
+    }
+
+    /// The ids of messages of yours the conversation shows: zerod's items (by the id they went with), and Zero's own
+    /// copies of those just sent. A queued row with one of them is in the conversation, not the strip.
+    public static func carried(_ items: [ConversationItem], _ sending: [Sending]) -> Set<String> {
+        Set(items.compactMap(\.sent)).union(sending.map(\.id))
     }
 }
 

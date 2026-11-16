@@ -554,6 +554,7 @@ fn the_clis_own_subagents_are_off_unless_the_user_allows_them() {
 /// (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which beats its own settings), Codex from its config; OpenCode keeps its own.
 #[test]
 fn agents_compact_their_context_at_the_size_the_user_chose() {
+    let _one = crate::common::COMPACT.blocking_lock();
     let window = |settings: serde_json::Value| serde_json::from_value::<zerod::server::Settings>(settings).unwrap().compact_window();
     assert_eq!(window(json!({})), None, "unset, the CLIs' own");
     assert_eq!(window(json!({"compactWindow": 0})), None, "0 turns it back off");

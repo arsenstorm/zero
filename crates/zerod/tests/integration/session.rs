@@ -22,6 +22,27 @@ fn answered(conversation: &Conversation) -> bool {
     conversation.status == Status::Idle && conversation.items.iter().any(|i| matches!(i.kind, ItemKind::Agent { final_answer: true, .. }))
 }
 
+#[tokio::test]
+async fn an_old_runtime_cannot_report_a_limit_after_the_session_starts_another() {
+    use tokio::io::AsyncWriteExt;
+    let (session, mut events) = session(Provider::Claude, None);
+    let (old_read, mut old_write) = tokio::io::duplex(1024);
+    session.attach(zerod::session::Transport::new(old_read, tokio::io::sink()));
+    session.stop();
+    let (new_read, _new_write) = tokio::io::duplex(1024);
+    session.attach(zerod::session::Transport::new(new_read, tokio::io::sink()));
+    while events.try_recv().is_ok() {}
+    let rejection = json!({"type": "rate_limit_event", "rate_limit_info": {
+        "status": "rejected", "rateLimitType": "five_hour", "resetsAt": zerod::now() + 3600
+    }});
+    old_write.write_all(format!("{rejection}\n").as_bytes()).await.unwrap();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), events.recv()).await.is_err(),
+        "the old process cannot change the new account"
+    );
+    assert!(session.snapshot().usage.is_none());
+}
+
 /// Answers every approval the session shows with its first choice of `kind`, until the turn has its answer.
 async fn allow_all(session: &Session, kind: ChoiceKind) -> Conversation {
     loop {
@@ -65,6 +86,8 @@ async fn codex_starts_by_initializing_then_a_thread_and_its_first_turn() {
         (&json!("on-request"), &json!("workspace-write")),
         "Codex's auto"
     );
+    // Auto hands what's beyond the sandbox to Codex's own reviewer, not to the user command by command.
+    assert_eq!(thread["params"]["approvalsReviewer"], "auto_review");
     assert_eq!(thread["params"]["developerInstructions"], zerod::adapter::INSTRUCTIONS);
     let turn = seen.first("turn/start").unwrap();
     assert_eq!(turn["params"]["threadId"], "01a177f4-5525-7141-bfb3-f350d91476d6");

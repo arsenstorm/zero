@@ -116,7 +116,7 @@ struct ScratchpadsPage: View {
                 }
             }
             .padding(.horizontal, 10).frame(height: 30)
-            .background(Theme.row, in: RoundedRectangle(cornerRadius: 8))
+            .searchField()
             // The whole bar is the field: a click on its padding focuses it too.
             .contentShape(Rectangle()).onTapGesture { searchFocused = true }
             if !searching {

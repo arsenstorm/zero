@@ -22,6 +22,8 @@ struct ConversationView: View {
     var next: BoardRow.Next?
     /// The task's whole conversation, observed on its own: its words redraw this view, not the window.
     let live: LiveConversation
+    /// Room for the issues' board over the page's top (IssueStrip).
+    @Environment(\.boardRoom) private var boardRoom
     /// Opens another task: a branch made from this one.
     var open: (String) -> Void = { _ in }
     private var conversation: Conversation { live.conversation }
@@ -188,8 +190,9 @@ struct ConversationView: View {
     private var shownQueue: [Queued] {
         let items = conversation.items
         let shown = min(playback.count, items.count)
-        // In the conversation already (the board's word that it went can come a moment after the message itself).
-        let carried = Set(items.compactMap(\.sent))
+        // In the conversation already (the board's word that it went can come a moment after the message itself), or
+        // steered into it from here (Zero's own copy, under the row's id).
+        let carried = Sending.carried(items, workspace.sending[conversation.id] ?? [])
         let unplayed = items.dropFirst(shown).compactMap { item -> Queued? in
             // Its images as they were in the strip ("· an image"): only its buttons go as zerod sends it on. By the id
             // it was queued with, so its row stays the same row as it goes from waiting to Next.
@@ -438,7 +441,11 @@ struct ConversationView: View {
                     .onDisappear {
                         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }; escapeMonitor = nil
                     }
-                    .onChange(of: active, initial: true) { isActive = active }
+                    .onChange(of: active, initial: true) {
+                        isActive = active
+                        // Kept behind another page, its rewind bar would still take Return there.
+                        if !active { rewinding = nil }
+                    }
                     .onChange(of: shown, initial: true) { _, on in
                         watching(on)
                         if on {
@@ -537,7 +544,7 @@ struct ConversationView: View {
         }
         .background { ScrollHandle(tracker: tracker) }
         .frame(minHeight: room, alignment: .top)
-        .padding(.top, 20)
+        .padding(.top, 20 + boardRoom)
         .centredColumn(760)
         .environment(\.askInbox, inbox)
         .environment(\.playback, playback)
@@ -927,7 +934,7 @@ struct ConversationView: View {
             queuing.removeAll { pending in now.contains { $0.id == pending.id } }
             // Gone from zerod's queue, not by the user's hand here: going to the agent. Kept as Next until its message
             // is in the conversation. ponytail: let go after 5 s, in case another client took it out of the queue.
-            let carried = Set(conversation.items.compactMap(\.sent))
+            let carried = Sending.carried(conversation.items, workspace.sending[conversation.id] ?? [])
             let gone = old.filter { row in
                 !now.contains { $0.id == row.id } && !unqueued.contains(row.id) && !carried.contains(row.id)
                     && !taking.contains { $0.id == row.id }
@@ -1103,8 +1110,11 @@ struct ConversationView: View {
             cancel: { rewinding = nil },
             rewound: { back, choice in
                 rewinding = nil
-                // The message back in the box, to send again or change.
-                if choice.conversation { draft = back.text; images = back.images.map { URL(fileURLWithPath: $0) } }
+                // The message back in the box, to send again or change, before what's being written there.
+                if choice.conversation {
+                    draft = draft.isEmpty ? back.text : back.text + "\n\n" + draft
+                    images = back.images.map { URL(fileURLWithPath: $0) } + images
+                }
                 let done = (undo: back.undo, conversation: choice.conversation, text: back.text)
                 undoable = done
                 Task {
@@ -1239,6 +1249,8 @@ struct ConversationView: View {
             let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
             draft = ""
             images = []
+            // A rewind bar left open would go on taking Return, and more than it says it removes.
+            rewinding = nil
             send(text, images: attached, with: provider ?? conversation.provider)
             lifted = true
             NotificationCenter.default.post(name: WorkBlock.fold, object: nil)
@@ -1338,6 +1350,7 @@ struct ConversationView: View {
         let (text, attached) = ImageToken.outgoing(draft, images: images.map(\.path))
         draft = ""
         images = []
+        rewinding = nil
         // In the strip at once, in the same frame the composer empties: waiting for zerod's word, the
         // composer shrank one frame and the strip came the next, the page dropping and jumping back.
         // One id from here on: zerod's queue entry takes it, and its item for the message once sent on.

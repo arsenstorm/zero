@@ -77,11 +77,13 @@ func usage(help: Bool = false) -> Never {
           zero table   "Title" --column NAME... --row "cell | cell | …"...   [--session ID]
                        (a table for the user, drawn by Zero in your conversation: a cell that is a state (working, waiting,
                        done) shows as its pill, and in a column named for a risk, a cell opening with low, medium
-                       or high shows that as a pill, the rest on hover; tickets and PRs as links; or JSON on stdin: {"title","columns","rows"})
+                       or high shows that as a pill, the rest on hover; tickets and PRs as links; or JSON on stdin: {"title","columns","rows"};
+                       not for the issues you lead: zero issue keeps their board)
           zero issue   TICKET you|over|working|waiting|parked|done ["text"] [--session ID]   (a row for one of the issues you
                        lead, which the user reads coming back: you, with what you need them to decide or give; over, done
                        on your side and the step theirs (review, merge, deploy); waiting, on whom; parked, why.
-                       Set it whenever the issue's state changes)
+                       Set it whenever the issue's state changes. Zero shows the rows as one live board at the top
+                       of your conversation, each issue's states over time: don't repost them as a table)
           zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                        zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
           zero expect  DURATION ["what"] [--session ID]   (before a command that may run long and quiet, such as a migration,

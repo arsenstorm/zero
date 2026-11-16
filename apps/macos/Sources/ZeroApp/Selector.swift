@@ -184,8 +184,10 @@ struct SelectorView: View {
             }.max() ?? 0
         let check: CGFloat = rows.contains(where: \.selected) ? 8 + 13 : 0
         let chevron: CGFloat = rows.contains { !$0.children.isEmpty } ? 8 + 12 : 0
-        // Edge and inset and the row's leading; the gap before the spacer, trailing, inset and edge (the row's HStack).
-        return (1 + 6 + 8 + min(400, widest + check + chevron) + 8 + 12 + 6 + 1).rounded(.up)
+        // The gap before the spacer only where something follows it: words alone end at the row's trailing.
+        let gap: CGFloat = check + chevron > 0 || rows.contains { $0.shortcut != nil } ? 8 : 0
+        // Edge and inset and the row's leading; the gap, trailing, inset and edge (the row's HStack).
+        return (1 + 6 + 8 + min(400, widest + check + chevron) + gap + 12 + 6 + 1).rounded(.up)
     }
     /// Room beside a menu for the widest of its rows' own menus (and the gap between), none without.
     static func submenuRoom(_ state: SelectorState) -> CGFloat {
@@ -412,10 +414,12 @@ struct SelectorView: View {
                             horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: linear ? 0 : 6)
+                let checks = (siblings ?? rows).contains(where: \.selected)
+                // No spacer (and so no gap) where nothing follows the words: the menu isn't sized for one (menuWidth).
+                if !linear || row.shortcut != nil || checks || parent { Spacer(minLength: linear ? 0 : 6) }
                 if let shortcut = row.shortcut { Text(shortcut).font(.system(size: 12)).foregroundStyle(Theme.menuIcon) }
                 // The check's place only where something can be checked: a menu of actions has none, and kept no gap.
-                if (siblings ?? rows).contains(where: \.selected) {
+                if checks {
                     NucleoIcon("check", size: 13).foregroundStyle(Theme.menuHot).opacity(row.selected ? 1 : 0)
                 }
                 if parent { NucleoIcon("chevron-right", size: 12).foregroundStyle(Theme.menuIcon) }

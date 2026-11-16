@@ -81,6 +81,7 @@ impl Session {
             inner.answered.clear();
             inner.heard = Instant::now();
             inner.spoke = false;
+            inner.compact = crate::adapter::compact_window();
             inner.generation
         };
         let watched = self.clone();
@@ -101,8 +102,15 @@ impl Session {
                 while let Some(end) = pending.iter().position(|b| *b == b'\n') {
                     let line: Vec<u8> = pending.drain(..=end).collect();
                     // Anything that isn't JSON (a shell's greeting before the runtime starts) is not the runtime speaking.
-                    if let Ok(message) = serde_json::from_slice::<Value>(&line) {
-                        session.receive(message)
+                    if let Ok(message) = serde_json::from_slice::<Value>(&line)
+                        && !session.receive(generation, message)
+                    {
+                        // A restart hands unread lines over; a replaced process's closed stop channel drops them.
+                        pending.splice(..0, line);
+                        if let Ok(give) = stopped.await {
+                            let _ = give.send(pending);
+                        }
+                        return;
                     }
                 }
                 tokio::select! {
@@ -110,7 +118,10 @@ impl Session {
                         Ok(0) | Err(_) => break,
                         Ok(n) => pending.extend_from_slice(&chunk[..n]),
                     },
-                    Ok(give) = &mut stopped => { let _ = give.send(pending); return }
+                    give = &mut stopped => {
+                        if let Ok(give) = give { let _ = give.send(pending); }
+                        return;
+                    }
                 }
             }
             session.ended(generation);
@@ -144,8 +155,11 @@ impl Session {
         Some(Handoff { session, pid, stdin, stdout, leftover, zerod: Some(std::process::id()) })
     }
 
-    fn receive(&self, message: Value) {
+    fn receive(&self, generation: u64, message: Value) -> bool {
         let mut inner = self.lock();
+        if inner.generation != generation || inner.out.is_none() {
+            return false;
+        }
         let at = now_ms();
         // Not each piece of streamed words: the finished message that follows has them all, and pieces were four in
         // ten lines of a long task's transcript (written one by one, under the lock). Replayed, the words are there.
@@ -215,6 +229,7 @@ impl Session {
         for reply in effects.replies {
             let _ = inner.send(reply);
         }
+        true
     }
 
     /// The runtime's output ended: its process is gone, and so is everything waiting on it.

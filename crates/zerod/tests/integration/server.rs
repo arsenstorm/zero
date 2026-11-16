@@ -1025,3 +1025,71 @@ async fn loops_and_pads_are_listed_by_workspace_and_an_agents_pad_is_made_in_its
     zeros.sort();
     assert_eq!(zeros, ["Agent's", "App's"]);
 }
+
+/// The user's move from the task menu, over the socket: under another task, then back to a task of its own.
+#[tokio::test]
+async fn the_app_moves_a_task_under_another_and_back() {
+    let h = harness("server-set-parent").await;
+    let mut client = Client::connect(&h.socket).await;
+    let start = |prompt: &str| json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": prompt});
+    let lead = client.call(start("lead")).await["result"]["session"].as_str().unwrap().to_string();
+    let task = client.call(start("a part")).await["result"]["session"].as_str().unwrap().to_string();
+    let moved = client.call(json!({"op": "setParent", "session": task, "args": {"parent": lead}})).await;
+    assert_eq!(moved["ok"], true, "{moved}");
+    assert_eq!(h.daemon.get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
+    let looped = client.call(json!({"op": "setParent", "session": lead, "args": {"parent": task}})).await;
+    assert_eq!(looped["ok"], false, "{looped}");
+    assert_eq!(client.call(json!({"op": "setParent", "session": task, "args": {"parent": null}})).await["ok"], true);
+    assert_eq!(h.daemon.get(&task).unwrap().parent, None);
+}
+
+/// An agent's `zero adopt` and `zero detach`, over the socket: its session is who did it.
+#[tokio::test]
+async fn an_agent_adopts_and_detaches_over_the_socket() {
+    let h = harness("server-adopt-detach").await;
+    let mut client = Client::connect(&h.socket).await;
+    let start = |prompt: &str| json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": prompt});
+    let lead = client.call(start("lead")).await["result"]["session"].as_str().unwrap().to_string();
+    let task = client.call(start("a part")).await["result"]["session"].as_str().unwrap().to_string();
+    let adopted = client.call(json!({"op": "adopt", "session": lead, "thread": task})).await;
+    assert_eq!(adopted["result"]["session"], task.as_str(), "{adopted}");
+    assert_eq!(h.daemon.get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
+    let detached = client.call(json!({"op": "detach", "session": lead, "thread": task})).await;
+    assert_eq!(detached["ok"], true, "{detached}");
+    assert_eq!(h.daemon.get(&task).unwrap().parent, None);
+    // Only inside a task, of its own workers; adopting into another's tree, by who runs it, is refused.
+    let anonymous = client.call(json!({"op": "detach", "thread": task})).await;
+    assert!(anonymous["error"].as_str().is_some_and(|e| e.contains("inside a task")), "{anonymous}");
+    let other = client.call(start("another lead")).await["result"]["session"].as_str().unwrap().to_string();
+    let theirs = client.call(json!({"op": "adopt", "session": other, "thread": task, "args": {"by": lead}})).await;
+    assert!(theirs["error"].as_str().is_some_and(|e| e.contains("isn't you or one of your workers")), "{theirs}");
+    assert_eq!(h.daemon.get(&task).unwrap().parent, None);
+    // Its lead's quiet line names who let it go: the session that ran it, not the user.
+    let line = h.daemon.session(&lead).unwrap().snapshot().items.iter().find_map(|i| match &i.kind {
+        zerod::model::ItemKind::Notice { text, .. } if text.contains("was detached by") => Some(text.clone()),
+        _ => None,
+    });
+    assert!(line.as_deref().is_some_and(|l| !l.contains("the user")), "{line:?}");
+}
+
+#[tokio::test]
+async fn a_rewind_over_the_socket_is_refused_when_its_preview_counted_fewer_messages() {
+    let h = harness("server-rewind-stale").await;
+    let user = h.home.join("user");
+    h.daemon.place(&user);
+    let cwd = h.project.to_str().unwrap();
+    let file = zerod::handoff::claude_folder(&user, cwd).join("t1.jsonl");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let said = |uuid: &str, role: &str, text: &str| json!({"type": role, "uuid": uuid, "message": {"role": role, "content": [{"type": "text", "text": text}]}});
+    let records = [said("u1", "user", "first"), said("a1", "assistant", "done one")];
+    std::fs::write(&file, records.iter().map(|r| r.to_string() + "\n").collect::<String>()).unwrap();
+    let id = h.daemon.adopt(Provider::Claude, "t1", cwd, Default::default()).unwrap();
+    let first = h.daemon.get(&id).unwrap().items[0].id.clone();
+    let mut client = Client::connect(&h.socket).await;
+
+    let stale = client.call(json!({"op": "rewind", "session": id, "message": first, "conversation": true, "messages": 1})).await;
+    assert_eq!(stale["ok"], false, "the preview's count reaches the guard: {stale}");
+    assert_eq!(h.daemon.get(&id).unwrap().items.len(), 2);
+    let rewound = client.call(json!({"op": "rewind", "session": id, "message": first, "conversation": true, "messages": 2})).await;
+    assert_eq!(rewound["result"]["text"], "first", "{rewound}");
+}

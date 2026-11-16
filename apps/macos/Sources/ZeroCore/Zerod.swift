@@ -440,7 +440,16 @@ public struct BoardRow: Decodable, Equatable, Sendable, Identifiable {
         public var text: String
         /// When it came to its state, in milliseconds since 1970.
         public var since: Int
+        /// The states it went through, oldest first: in the conversation's copy only, not the board's.
+        public var history: [Step]? = nil
         public var id: String { ticket }
+
+        public struct Step: Decodable, Equatable, Sendable {
+            public var state: String
+            public var text: String
+            /// In milliseconds since 1970.
+            public var at: Int
+        }
 
         /// In the sidebar's states: on the user is Needs you, over to them Over to you, parked is Paused.
         public var boardState: BoardRow.State {
@@ -642,6 +651,8 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
     public var terminal: Opened?
     /// What its agent says about it beyond its name and ticket, by name ("PR": a link): `zero attr`.
     public var attributes: [String: String]?
+    /// The issues it leads (`zero issue`), each with its steps: its board in the conversation.
+    public var issues: [BoardRow.Issue]?
     /// How many changes have been applied; the next change zerod sends for this session is `seq + 1`.
     public var seq: UInt64
 
@@ -738,6 +749,10 @@ public struct Conversation: Decodable, Equatable, Sendable, Identifiable {
             var all = attributes ?? [:]
             all[name] = value
             attributes = all.isEmpty ? nil : all
+        case let .issue(issue):
+            var all = issues ?? []
+            if let i = all.firstIndex(where: { $0.ticket == issue.ticket }) { all[i] = issue } else { all.append(issue) }
+            issues = all
         case .other:
             break
         case let .rewound(before):
@@ -796,6 +811,8 @@ public enum Change: Decodable, Equatable, Sendable {
     case snapshot
     /// Its agent said something about the task; nil takes it back.
     case attribute(String, String?)
+    /// One of the issues it leads set (`zero issue`): replaces that issue's row.
+    case issue(BoardRow.Issue)
     /// A change of a kind this app doesn't know (a newer zerod's): counted, so the changes after it still apply, and
     /// otherwise passed over. The board carries what the app shows of it (an issue's row, say).
     case other(String)
@@ -804,7 +821,7 @@ public enum Change: Decodable, Equatable, Sendable {
 
     private enum Keys: String, CodingKey {
         case type, thread, model, effort, title, status, turn, error, item, text, approval, diff, question, usage, failure, reason, label,
-            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command, advisor
+            ticket, provider, terminal, place, parent, before, name, value, workspace, permissions, signin, command, advisor, issue
     }
 
     public init(from decoder: Decoder) throws {
@@ -845,6 +862,7 @@ public enum Change: Decodable, Equatable, Sendable {
         case "snapshot": self = .snapshot
         case "attribute": self = .attribute(try c.decode(String.self, forKey: .name), try c.decodeIfPresent(String.self, forKey: .value))
         case "rewound": self = .rewound(try c.decode(String.self, forKey: .before))
+        case "issue": self = .issue(try c.decode(BoardRow.Issue.self, forKey: .issue))
         case "switched":
             self = .switched(
                 try c.decode(Provider.self, forKey: .provider), model: try c.decodeIfPresent(String.self, forKey: .model),
@@ -1149,9 +1167,12 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// Back to just before a message of yours: the conversation, the folder's code, or both; the message comes back.
-    public func rewind(session: String, message: String, conversation: Bool, code: Bool) async throws -> Rewound {
+    /// `messages`, how many its preview said would go: zerod refuses if more were said since.
+    public func rewind(session: String, message: String, conversation: Bool, code: Bool, messages: Int?) async throws -> Rewound {
         try decode(
-            Rewound.self, from: await call("rewind", ["session": session, "message": message, "conversation": conversation, "code": code]))
+            Rewound.self,
+            from: await call(
+                "rewind", ["session": session, "message": message, "conversation": conversation, "code": code, "messages": messages]))
     }
 
     /// A new task from just before a message of yours; this one stays. Its id comes back with the message.
@@ -1215,12 +1236,24 @@ public final class ZerodLink: @unchecked Sendable {
         return session
     }
 
-    /// A worker (by its task's id, or its session's) let go of its lead: a task of its own.
-    public func detach(_ target: String) async throws { _ = try await call("detach", ["thread": target]) }
+    /// The user's move: a task put under another as its worker, or (nil) made a task of its own. Zero.app's alone.
+    public func setParent(session: String, parent: String?) async throws {
+        _ = try await call("setParent", ["session": session, "args": ["parent": parent as Any? ?? NSNull()]])
+    }
+
+    /// A worker (by its task's id, or its session's) let go of its lead: a task of its own. `by`: the task doing it.
+    public func detach(_ target: String, by: String? = nil) async throws {
+        var params: [String: Any] = ["thread": target]
+        if let by { params["session"] = by }
+        _ = try await call("detach", params)
+    }
 
     /// A task (by its id, or its Claude Code session's) made a worker of `lead`, taken in first if Zero hasn't it.
-    public func adopt(lead: String, target: String) async throws -> String {
-        let result = try await call("adopt", ["session": lead, "thread": target])
+    /// `by`: the task running it (the lead, or one above it), when not the lead itself.
+    public func adopt(lead: String, target: String, by: String? = nil) async throws -> String {
+        var params: [String: Any] = ["session": lead, "thread": target]
+        if let by { params["args"] = ["by": by] }
+        let result = try await call("adopt", params)
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod adopted nothing") }
         return session
     }

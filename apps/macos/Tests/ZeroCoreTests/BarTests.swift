@@ -70,17 +70,19 @@ private func dot(_ name: String, in workspace: String?, running: Bool = false, w
     #expect(unknown.map(\.workspace) == ["zero", "new"])
 }
 
-@Test func anotherWorkspaceFoldsToItsRunningCountUnlessSomethingThereWaitsOnTheUser() {
+@Test func onlyTheWindowsWorkspaceIsOpenTheOthersFoldWhateverWaitsThere() {
     let dots = [
         dot("w", in: "zero"),
         dot("a", in: "infra", running: true), dot("b", in: "infra", running: true), dot("c", in: "infra"),
         dot("d", in: "site", running: true), dot("e", in: "site", waiting: true),
     ]
     let groups = BarGroups.make(dots, workspaces: ["zero", "site", "infra"], window: "zero", from: .all)
-    #expect(groups.map(\.folds) == [false, false, true])
+    #expect(groups.map(\.folds) == [false, true, true])
+    // Folded, a workspace still tells what waits on the user there (its mark's dot) and what runs (its tip).
+    #expect(groups.map(\.waiting) == [false, true, false])
     #expect(groups[2].running == 2)
     // The window's workspace never folds, whatever waits there.
-    #expect(!BarGroups.make([dot("w", in: "zero")], workspaces: ["zero"], window: "zero", from: .all)[0].folds)
+    #expect(!BarGroups.make([dot("w", in: "zero", waiting: true)], workspaces: ["zero"], window: "zero", from: .all)[0].folds)
 }
 
 @Test func aWorkspaceWithNoAgentsHasNoGroup() {
@@ -117,4 +119,33 @@ private func dot(_ name: String, in workspace: String?, running: Bool = false, w
     #expect(BarGroups.summary(name: "Website", groups[0]) == "Website · needs you · 1 working")
     #expect(BarGroups.summary(name: "Infra", groups[1]) == "Infra · 2 working")
     #expect(BarGroups.summary(name: "Notes", groups[2]) == "Notes · nothing working")
+}
+
+@Test func aChangeIsDrawnThroughBothStatesAtOnceNothingLeavingBeforeItsSlotCloses() {
+    let order = ["zero", "site", "notes"]
+    let was = BarGroups.make(
+        [dot("a", in: "zero"), dot("b", in: "zero"), dot("c", in: "zero"), dot("n", in: "notes")], workspaces: order, window: "zero",
+        from: .all)
+    // b moves to site (a new group), notes' last agent leaves, d arrives in zero, and the window switches to site.
+    let now = BarGroups.make(
+        [dot("a", in: "zero"), dot("d", in: "zero"), dot("c", in: "zero"), dot("b", in: "site")], workspaces: order, window: "site",
+        from: .all)
+    let both = BarGroups.union(was, now, workspaces: order, fieldsFrom: was)
+    #expect(both.map(\.workspace) == ["zero", "site", "notes"])
+    // Now's order, with what left kept after what it followed.
+    #expect(both.map(\.dots) == [["a", "b", "d", "c"], ["b"], ["n"]])
+    // The groups' own fields from the state asked for: the window as it was, then as it is.
+    #expect(both.map(\.window) == [true, false, false])
+    #expect(BarGroups.union(was, now, workspaces: order, fieldsFrom: now).map(\.window) == [false, true, false])
+}
+
+@Test func theBarJoinsTheWindowsRailStripWhenTheirEdgesMeetAndLetsGoPast12Points() {
+    // At the screen's edge: 4 pt in, onto the window's right rail strip.
+    #expect(BarEdge.join(away: 0) == 4)
+    // Dragged away, riding on the strip; let go past 12 pt.
+    #expect(BarEdge.join(away: 6) == 10)
+    #expect(BarEdge.join(away: 12) == 16)
+    #expect(BarEdge.join(away: 12.5) == 0)
+    // Past the screen's edge (partly off screen): no join.
+    #expect(BarEdge.join(away: -3) == 0)
 }

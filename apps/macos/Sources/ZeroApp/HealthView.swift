@@ -17,7 +17,7 @@ struct AboutSections: View {
                     if settings.zerodAgent != .on { ZerodAgentRow(state: settings.zerodAgent) }
                     // The one difference between an official build and one from source, shown so no one wonders.
                     SettingRow(
-                        title: Nucleo.set == "Nucleo" ? "Icons: Nucleo" : "Icons: Lucide (open-source build)",
+                        setting: .icons, title: Nucleo.set == "Nucleo" ? "Icons: Nucleo" : "Icons: Lucide (open-source build)",
                         detail: Nucleo.set == "Nucleo"
                             ? "Official builds draw Nucleo's licensed icons."
                             : "Built from source, Zero draws Lucide's icons in place of Nucleo's. Nothing else differs."
@@ -29,12 +29,13 @@ struct AboutSections: View {
             SettingsSection(title: "Help") {
                 Rows {
                     SettingRow(
-                        title: "Show log",
-                        detail: "What Zero did and when: " + Log.file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+                        .showLog,
+                        detail: String(Setting.showLog.detail.dropLast()) + ": "
+                            + Log.file.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
                     ) {
                         RowButton(title: "Show log") { NSWorkspace.shared.open(Log.file) }
                     }
-                    SettingRow(title: "Show welcome again", detail: "The welcome screens, as at first launch.") {
+                    SettingRow(.showWelcome) {
                         RowButton(title: "Open", action: showOnboarding)
                     }
                 }

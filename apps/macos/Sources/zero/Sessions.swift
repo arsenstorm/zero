@@ -100,12 +100,13 @@ func describe(_ session: [String: Any]) -> String {
     guard let target = positional.first, let lead = targetSession() else {
         fail("zero: adopt which task, into which session? (zero adopt ID, from inside a session or with --session ID)")
     }
-    print(await zerod { try await $0.adopt(lead: lead, target: target) })
+    let by = ProcessInfo.processInfo.environment["ZERO_SESSION"]
+    print(await zerod { try await $0.adopt(lead: lead, target: target, by: by) })
 }
 
 @MainActor func detachCommand() async {
     guard let target = positional.first else { fail("zero: detach which worker? (zero detach ID)") }
-    await zerod { try await $0.detach(target) }
+    await zerod { try await $0.detach(target, by: targetSession()) }
     print("zero: \(target) is a task of its own")
 }
 

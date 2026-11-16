@@ -186,13 +186,17 @@ import Observation
     /// the copy's id it keeps. Never by its words: one queued with the same words waits its turn.
     private func justSent(_ item: ConversationItem) -> Bool {
         guard item.isYours else { return false }
-        return item.id.hasPrefix("sending-") || item.sent.map(sent.contains) == true
+        return Self.ownCopy(item) || item.sent.map(sent.contains) == true
     }
+
+    /// Zero's own copy of a message just sent (Sending.merge marks it its own `sent`): one steered from the strip has
+    /// its queue row's id, not a `sending-` one.
+    private static func ownCopy(_ item: ConversationItem) -> Bool { item.id.hasPrefix("sending-") || item.sent == item.id }
 
     private func reveal(_ item: ConversationItem, now: Date, whole: Bool, fading: Bool = true) {
         shownCount += 1
         through = item.id
-        if item.id.hasPrefix("sending-") { sent.insert(item.id) }
+        if Self.ownCopy(item) { sent.insert(item.id) }
         // Opened, only the last answer can still grow, and be read out.
         guard Self.words(item) != nil, !whole || fading || item.id == items.last?.id else { reading = nil; return }
         let readout = readouts[item.id] ?? Readout(id: item.id, now: now)

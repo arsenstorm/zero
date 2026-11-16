@@ -292,6 +292,32 @@ impl Daemon {
         Ok(())
     }
 
+    /// The compact window changed (Settings › Compact context at): Claude Code and Codex read it only as they start, so
+    /// each agent started with another is stopped between turns, its next message resuming it with the new one, as
+    /// for permissions. One mid-turn, with work still running in the background, or with messages queued (held: their
+    /// release only delivers to a running agent), starts again as its next turn ends. OpenCode is given none (it keeps
+    /// its own), so it runs on.
+    pub async fn compact_window_changed(&self) {
+        let window = crate::adapter::compact_window();
+        for session in self.sessions() {
+            let conversation = session.summary();
+            if !session.is_attached() || conversation.provider == Provider::Opencode || conversation.terminal.is_some() {
+                continue;
+            }
+            let stale = session.compact_window() != window;
+            let queued = self.pending.lock().unwrap().get(&conversation.id).is_some_and(|list| !list.is_empty());
+            if busy_turn(&conversation) || has_background(&session) || queued {
+                let mut next = self.next(&conversation.id).unwrap_or_default();
+                if next.restart != stale {
+                    next.restart = stale;
+                    self.keep_next(&conversation.id, next);
+                }
+            } else if stale {
+                self.take_offline(&session).await;
+            }
+        }
+    }
+
     /// The provider given a thread made from Zero's record (handoff.rs): Claude Code a session file of its own; Codex,
     /// with no thread, imports the record when it next resumes; OpenCode, with none, starts afresh with it as context.
     pub(super) fn rethread(&self, session: &Session) -> Result<(), String> {
@@ -616,6 +642,11 @@ pub(super) fn kept_pending(dir: &Path) -> Vec<Queued> {
     })
 }
 
+/// Work of its own still running between turns (Session::background), which stopping its process would end.
+fn has_background(session: &Session) -> bool {
+    session.background().is_some_and(|runs| !runs.is_empty())
+}
+
 /// A turn under way: a change of model or permissions waits for it to end.
 fn busy_turn(conversation: &Conversation) -> bool {
     matches!(conversation.status, Status::Working | Status::Waiting | Status::Starting)
@@ -634,7 +665,8 @@ impl Daemon {
         let _ = self.queues.send(()); // the board, at once
     }
 
-    /// The turn ended: what was kept for the next one applied (the provider, the model and effort, the permissions),
+    /// The turn ended: what was kept for the next one applied (the provider, the model and effort, the permissions, a
+    /// restart),
     /// then what's queued goes, on it.
     pub(super) async fn apply_next(&self, id: &str) {
         let Some(next) = self.next(id) else { return };
@@ -651,6 +683,15 @@ impl Daemon {
             && let Err(error) = self.set_advisor(id, Some(advisor.as_str()).filter(|a| !a.is_empty())).await
         {
             session.report(&format!("Couldn't change its advisor: {error}"));
+        }
+        // A new compact window: started again for it, once nothing of its own runs in the background.
+        // Not one started again since it was kept (Restart agent): that has the window already.
+        if next.restart && session.compact_window() != crate::adapter::compact_window() {
+            if has_background(&session) {
+                self.keep_next(id, crate::model::Next { restart: true, ..Default::default() });
+            } else {
+                self.take_offline(&session).await;
+            }
         }
         let provider = next.provider.unwrap_or(session.summary().provider);
         if next.provider.is_some() || next.model.is_some() || next.effort.is_some() {

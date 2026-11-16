@@ -37,6 +37,8 @@ struct Inner {
     mcp: Vec<crate::mcp_servers::Resolved>,
     /// Whether its CLI is told the answer rules (Conversation::plain_answers), set with `mcp`.
     plain_answers: bool,
+    /// The compact window its process started with (adapter::compact_window), which the CLIs read only then.
+    compact: Option<u64>,
     /// The conversation, replayed; None while parked.
     core: Option<Core>,
     /// What's kept of a parked session: its summary and latest items, until something needs the rest.
@@ -143,6 +145,7 @@ impl Session {
             let session = Session(Arc::new(Mutex::new(Inner {
                 mcp: vec![],
                 plain_answers: false,
+                compact: None,
                 core: None,
                 parked: Some(parked),
                 summary: None,
@@ -240,6 +243,7 @@ impl Session {
         Session(Arc::new(Mutex::new(Inner {
             mcp: vec![],
             plain_answers: false,
+            compact: None,
             core: Some(core),
             parked: None,
             summary: None,
@@ -386,6 +390,11 @@ impl Session {
     /// What Stop sends to stop the provider's background work.
     pub fn stops(&self) -> Vec<Value> {
         self.lock().core.as_ref().map(|c| c.stops()).unwrap_or_default()
+    }
+
+    /// The compact window its process started with.
+    pub fn compact_window(&self) -> Option<u64> {
+        self.lock().compact
     }
 
     /// True while a runtime process is connected.

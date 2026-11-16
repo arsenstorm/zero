@@ -105,3 +105,11 @@ private let acme = Slack.State(team: .init(id: "T0AB", name: "Acme", domain: "ac
         References.find(in: "U-9918", repo: nil, linear: LinearTeams.known, linearApp: false).first?.url.absoluteString
             == "https://linear.app/acme/issue/U-9918")
 }
+
+@Test func anAddressIsOneLinkNotTheReferencesInIt() {
+    let text = "look at zero://task/01a1e4b4537c009e and https://github.com/acme/app/pull/7#ENG-12, then 064c6bb7b5"
+    let found = References.find(in: text, repo: "acme/app", linear: ["ENG": "acme"], linearApp: false)
+    let ns = text as NSString
+    #expect(found.map { ns.substring(with: $0.range) } == ["zero://task/01a1e4b4537c009e", "064c6bb7b5"])
+    #expect(found.first?.url.absoluteString == "zero://task/01a1e4b4537c009e")
+}

@@ -36,7 +36,7 @@ extension AppDelegate {
         // Tall and transparent so the bar can morph inside it; the transparent rest is click-through.
         // Without clearing sizingOptions the hosting view shrinks the window to its content, top edge fixed.
         pillHosting.sizingOptions = []
-        pill = makePanel(size: NSSize(width: 44, height: 600), content: pillHosting)
+        pill = makePanel(size: NSSize(width: InboxController.pillWidth, height: 600), content: pillHosting)
         pill.acceptsMouseMovedEvents = true
         let inboxView = NSHostingView(
             rootView: InboxView(controller: inbox)
@@ -74,11 +74,19 @@ extension AppDelegate {
         pinnedDisplay = screen.displayID
         let frame = screen.frame
         let visible = screen.visibleFrame
-        let pillFrame = NSRect(x: frame.maxX - 44, y: frame.midY - 300, width: 44, height: 600)
+        // The screen's height, so the bar (its top held, `barTop`) grows down as far as it needs.
+        // At the screen's edge, or where its join to Zero's window holds it (`trackBarJoin`).
+        let pillFrame = NSRect(
+            x: pill.parent == nil ? frame.maxX - InboxController.pillWidth : pill.frame.minX, y: frame.minY,
+            width: InboxController.pillWidth, height: frame.height)
         pill.setFrame(pillFrame, display: true)
+        if inbox.barPanel != frame.height { inbox.barPanel = frame.height }
+        trackBarJoin()
         // The inbox is centred on the pill: symmetric above and below it, within the visible screen.
         let half = min(pillFrame.midY - visible.minY, visible.maxY - pillFrame.midY) - 8
-        inboxPanel.setFrame(NSRect(x: frame.maxX - 380 - 56, y: pillFrame.midY - half, width: 380, height: half * 2), display: true)
+        // Its 12 pt from the bar kept when the bar's joined to Zero's window (moved in by its join).
+        inboxPanel.setFrame(
+            NSRect(x: frame.maxX - 380 - 56 - inbox.barJoin, y: pillFrame.midY - half, width: 380, height: half * 2), display: true)
     }
 
     /// Instant on purpose: the inbox is the most-used surface, and motion there would only slow it down.
@@ -136,10 +144,9 @@ extension AppDelegate {
     private func hoverBar(at mouse: NSPoint) {
         let local = pill.convertPoint(fromScreen: mouse)
         let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
-        // The bar sits centred in its tall panel (moved down while a group opened by the pointer grows it); above or
-        // below it is off the bar.
-        let y = point.y - (pill.frame.height - inbox.barHeight) / 2 - inbox.barShift
-        guard pill.isVisible, pill.frame.contains(mouse), (0...inbox.barHeight).contains(y) else {
+        // The bar's top is held in its panel (`barTop`); above or below the bar is off it.
+        let y = point.y - inbox.barTop
+        guard pill.isVisible, barRect.contains(mouse), (0...inbox.barHeight).contains(y) else {
             inbox.barHover = nil
             if inbox.barReach != .neither { inbox.barReach = .neither }
             return
@@ -246,9 +253,13 @@ extension AppDelegate {
     /// The pointer keeps the inbox: on the bar's drawn part or the cards' surface, or heading from `from` into it.
     private func inboxHolds(_ mouse: NSPoint, from: NSPoint?) -> Bool {
         guard inboxPanel.screen?.frame.contains(mouse) ?? false else { return false }
-        let bar = NSRect(
-            x: pill.frame.minX, y: pill.frame.midY - inbox.barHeight / 2 - inbox.barShift, width: pill.frame.width, height: inbox.barHeight)
-        return MenuAim.holds(mouse, from: from, bar: bar, panel: inboxSurface)
+        return MenuAim.holds(mouse, from: from, bar: barRect, panel: inboxSurface)
+    }
+
+    /// The bar on screen: its 44 pt column at its panel's right (wherever the panel is, joined or not), from its top
+    /// (`barTop`) to its foot. The pointer's zones, the inbox's hold and the aim into the panel all go by it.
+    var barRect: NSRect {
+        NSRect(x: pill.frame.maxX - 44, y: pill.frame.maxY - inbox.barTop - inbox.barHeight, width: 44, height: inbox.barHeight)
     }
 
     /// The cards' surface on screen.
@@ -261,7 +272,7 @@ extension AppDelegate {
     /// controls and buttons it crosses stay as they are (`barAiming`). Out of the triangle, or resting 150 ms (as
     /// Amazon's menus wait), the control under the pointer takes over.
     private func aimAtPanel(_ mouse: NSPoint, from: NSPoint?) {
-        let aiming = inboxPanel.isVisible && pill.frame.contains(mouse) && MenuAim.passing(mouse, from: from, panel: inboxSurface)
+        let aiming = inboxPanel.isVisible && barRect.contains(mouse) && MenuAim.passing(mouse, from: from, panel: inboxSurface)
         if inbox.barAiming != aiming { inbox.barAiming = aiming }
         guard aiming else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in

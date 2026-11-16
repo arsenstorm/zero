@@ -48,6 +48,21 @@ pub struct Issue {
     /// When its agent last set it, whatever changed (ms): a turn that heard of the issue and left its row alone shows.
     #[serde(default)]
     pub updated: i64,
+    /// The states it went through, oldest first, the latest `ISSUE_STEPS`: a step each time its state or words changed.
+    /// Kept in the conversation for its board there; the board's rows leave them out (board.rs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<IssueStep>,
+}
+
+/// How many of an issue's steps are kept.
+pub const ISSUE_STEPS: usize = 20;
+
+/// One of an issue's states as it was set: its state, its words, and when (ms).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct IssueStep {
+    pub state: IssueState,
+    pub text: String,
+    pub at: i64,
 }
 
 impl Issue {
@@ -55,6 +70,11 @@ impl Issue {
     pub fn set(previous: Option<&Issue>, ticket: &str, state: IssueState, text: &str, now: i64) -> Issue {
         let same = previous.is_some_and(|p| p.state == state);
         let left_you = previous.filter(|p| p.state == IssueState::You && state != IssueState::You).map_or(0, |p| now - p.since);
+        let mut history = previous.map_or_else(Vec::new, |p| p.history.clone());
+        if !(same && previous.is_some_and(|p| p.text == text)) {
+            history.push(IssueStep { state, text: text.into(), at: now });
+            history.drain(..history.len().saturating_sub(ISSUE_STEPS));
+        }
         Issue {
             ticket: ticket.into(),
             state,
@@ -62,6 +82,7 @@ impl Issue {
             since: if same { previous.map_or(now, |p| p.since) } else { now },
             on_you_ms: previous.map_or(0, |p| p.on_you_ms) + left_you,
             updated: now,
+            history,
         }
     }
 }
@@ -1071,6 +1092,9 @@ pub struct Next {
     pub advisor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permissions: Option<Permissions>,
+    /// Its process started again (a new compact window, which the CLIs read as they start).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restart: bool,
 }
 
 impl Next {

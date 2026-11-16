@@ -601,11 +601,12 @@ private struct AddMark: View {
 }
 
 /// Something waiting on the user, in the rail: a red dot, cut out of the rail as the Dock cuts out its badges.
+/// Whole points only (an 8 pt dot in a 2 pt ring, centred on whole points): at 1x a half point blurs it off its place.
 struct RailDot: View {
     var body: some View {
         Circle().fill(Color.red).frame(width: 8, height: 8)
-            .padding(1.5).background(Theme.rail, in: Circle())
-            .offset(x: 1, y: 0).allowsHitTesting(false)
+            .padding(2).background(Theme.rail, in: Circle())
+            .offset(x: 1, y: -1).allowsHitTesting(false)
     }
 }
 

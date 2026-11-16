@@ -14,6 +14,9 @@ struct PillShape: InsettableShape {
     var radius: CGFloat = 22
     var fillet: CGFloat = 22
     var inset: CGFloat = 0
+    /// Its outline alone, open at its base: from the top fillet's end round to the bottom one's, as the bar's border
+    /// when it joins a window's page (the page's own hairline carries on from each end).
+    var open = false
 
     func inset(by amount: CGFloat) -> PillShape {
         var shape = self
@@ -36,7 +39,7 @@ struct PillShape: InsettableShape {
         path.addArc(center: CGPoint(x: x0 + R, y: h - r - R), radius: R, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
         path.addLine(to: CGPoint(x: w - r, y: h - r))
         path.addArc(center: CGPoint(x: w - r, y: h), radius: r, startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
-        path.closeSubpath()
+        if !open { path.closeSubpath() }
         return path
     }
 }
@@ -60,14 +63,17 @@ struct PillView: View {
     /// pass-through down the bar opens nothing), closed after a short grace (an overshoot doesn't collapse it).
     @State private var openGroup: String?
     @State private var hoverGroup: Task<Void, Never>?
-    /// The groups as drawn (`follow`): they follow the board's, cutting when the window switched. A dot gone from the
-    /// board keeps its last look here. Nil until the first draw, which takes the board's as they are.
+    /// The groups as drawn (`follow`), which mid-change hold both states at once (`BarGroups.union`), and the board's
+    /// as last followed. Nil until the first draw, which takes the board's as they are. A dot gone from the board keeps
+    /// its last look here while its slot closes.
     @State private var drawn: [BarGroup]?
+    @State private var followed: [BarGroup]?
     @State private var drawnDots: [String: Dot] = [:]
-    /// The window's workspace as last drawn, so a switch is told from the bar changing on its own.
-    @State private var drawnWindow: String?
-    /// Set for the draw that follows the window switching: nothing comes or goes with a transition then.
-    @State private var cutting = false
+    /// The slots drawn shut ("g:" a group, "d:" a group's dot): what's arriving, until it opens, and what's leaving,
+    /// until it's gone. Whether the groups carry marks, as drawn.
+    @State private var shut: Set<String> = []
+    @State private var drawnMarked = false
+    @State private var settling: Task<Void, Never>?
     /// The settings button in the bar's foot (Settings › Control bar), and the pointer on the bar that brings it out.
     @AppStorage("barFoot") private var barFoot = false
     @State private var overBar = false
@@ -185,15 +191,12 @@ struct PillView: View {
         let groups = drawn ?? live
         let looks = drawnDots.merging(dots.map { ($0.0, $0.1) }, uniquingKeysWith: { _, now in now })
         // The dots on the bar now: a folded group's are not (nor are their slots).
-        let names = groups.flatMap { !$0.folds || openGroup == $0.workspace ? $0.dots : [] }
+        let names = groups.flatMap { group in
+            !group.folds || openGroup == group.workspace ? group.dots.filter { !shut.contains("d:\(group.workspace)/\($0)") } : []
+        }
         let parts = parts(groups: groups)
         let inbox = settings.shows(.inbox)
         let slim = parts.isEmpty
-        // A group opened by the pointer grows the bar downward only: the bar sits centred in its panel, so it's moved
-        // down by half of what it grew, and the mark under the pointer, the inbox and all above stay where they were.
-        let shift =
-            openGroup.flatMap { id in groups.first { $0.workspace == id && $0.folds } }
-            .map { CGFloat($0.dots.count) * (slot + 2) / 2 } ?? 0
         Group {
             if slim {
                 slimPair
@@ -206,8 +209,6 @@ struct PillView: View {
                 }
             }
         }
-        .offset(y: reduceMotion ? 0 : shift)
-        .onChange(of: reduceMotion ? 0 : shift, initial: true) { controller.barShift = $1 }
         .frame(width: 44)
         .onHover { overBar = $0 }
         .onChange(of: names, initial: true) { controller.barOrder = $1 }
@@ -242,65 +243,91 @@ struct PillView: View {
                 }
             }
         }
+        // Joined to Zero's window, the bar's panel sits on the window's right rail strip (AppDelegate's `trackBarJoin`
+        // moves it); here only its border fades in and out, on the bar's curve.
+        .animation(reduceMotion ? nil : barMotion(entering: controller.barJoin > 0), value: controller.barJoin)
+        // Its top held where it is (`barTop`), whatever it shows: every change grows or shrinks it at its foot, and the
+        // inbox's arc and all above stay put, rather than the bar re-centring in its panel. The rest of the panel is
+        // empty and lets the pointer through.
+        .padding(.top, controller.barTop)
+        .frame(height: controller.barPanel, alignment: .top)
+        .frame(width: InboxController.pillWidth, alignment: .trailing)
     }
 
-    /// The dots, between the bar's curves, grouped by workspace; at least a slot tall, so the curves always fit.
+    /// The bar's border, 0 to 1: only while it joins a window's page, the page's hairline carrying on round the bar.
+    private var joined: CGFloat { min(1, controller.barJoin / 4) }
+
+    /// The dots, between the bar's curves, grouped by workspace; at least a slot tall, so the curves always fit. Each
+    /// group opens with the 4 pt between groups (the first's taken off the bar's padding), so a group closing takes its
+    /// gap with it.
     private func barBody(groups: [BarGroup], dots: [String: Dot]) -> some View {
         // One group, the window's: the bar as it always was, no mark and no segment.
-        let marked = BarGroups.marked(groups)
-        return VStack(spacing: 4) {
-            ForEach(groups, id: \.workspace) { group in groupView(group, dots: dots, marked: marked) }
+        VStack(spacing: 0) {
+            ForEach(groups, id: \.workspace) { group in groupView(group, dots: dots, marked: drawnMarked) }
         }
         .frame(width: 32).frame(minHeight: 28)
-        .padding(.vertical, 8 + 22).padding(.horizontal, 6)
-        .background(PillShape().fill(Theme.pill))
-        .overlay(PillShape().strokeBorder(Theme.stroke, lineWidth: 1))
+        .padding(.top, 8 + 22 - 4).padding(.bottom, 8 + 22).padding(.horizontal, 6)
+        // The surface alone is its shape: no outline, but while the bar joins a window's page. Then the page's hairline
+        // runs on round it: open at its base, just outside its surface (as the page's is just inside the page), so at
+        // each fillet's end it lies on the page's hairline exactly, one line, the same 1 pt.
+        .background(BarSurface(shape: PillShape()))
+        // Cut to its outline, as the arcs' borders are (a stroke draws as a vector shape layer, harder on screen).
+        .overlay(Outline<PillShape>.drawn(Theme.stroke.opacity(joined), round: PillShape(open: true).inset(by: -0.5)))
     }
 
-    /// A workspace's agents under its mark (the window's too, when more than one group shows): another workspace's
-    /// folded to just the mark while nothing there waits on the user, and opened while the pointer rests on it. Open,
-    /// its dots have a segment beside them at the screen's edge, neutral (the window's a little stronger): on the bar
-    /// colour means state alone, the workspaces' own colours are the rail's and the window's. A click on the mark
-    /// opens the workspace in Zero's window.
+    /// A workspace's agents under its mark (the window's too, when more than one group shows). Only the window's is
+    /// open; every other is folded to its mark, with a needs-you dot on it while something there waits on the user,
+    /// and opens while the pointer rests on it. Open, its dots have a segment beside them at the screen's edge. The
+    /// window's mark and segment are its workspace's colour (or the strong neutral, without one); the others are
+    /// monochrome: on the bar, colour is the window's workspace and state. A click on a mark opens its workspace.
+    ///
+    /// Everything in it is a slot (`Slot`) that opens and closes on the bar's curve, its content fading inside it: a
+    /// fold closes the dots' slots, an arrival's slot opens, a departure's closes before it goes. So all of the bar
+    /// moves together, at one speed, and nothing passes through anything; the segment rides on its dots' slots.
     private func groupView(_ group: BarGroup, dots: [String: Dot], marked: Bool) -> some View {
         let open = !group.folds || openGroup == group.workspace
-        let byPointer = group.folds && openGroup == group.workspace
         let space =
             workspace?.workspaces.first { $0.id == group.workspace } ?? ZerodLink.Workspace(id: group.workspace, name: group.workspace)
         let summary = BarGroups.summary(name: space.name, group)
-        return VStack(spacing: 2) {
-            if marked {
-                BarMark(workspace: space)
-                    .frame(width: 32, height: slot)
-                    .contentShape(Rectangle())
-                    .onTapGesture { openWorkspace(group.workspace) }
-                    .tip(summary, side: .left)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(summary)
-                    .accessibilityHint("Opens the workspace in Zero's window")
-                    .accessibilityAddTraits(.isButton)
-                    .transition(arrival(byPointer: false))
+        let shownDots = group.dots.filter { open && !shut.contains("d:\(group.workspace)/\($0)") }
+        return VStack(spacing: 0) {
+            BarMark(workspace: space, active: group.window)
+                .overlay(alignment: .topTrailing) {
+                    // Something there waits on the user: the rail's dot, in the needs-you colour, cut out of the bar.
+                    Circle().fill(AgentStatus.needsYou.color).frame(width: 7, height: 7)
+                        // Cut out in the rail's grey, the colour the bar's surface comes to.
+                        .padding(1.5).background(Theme.rail, in: Circle())
+                        .offset(x: 4, y: -4)
+                        .opacity(!open && group.waiting ? 1 : 0)
+                }
+                .frame(width: 32, height: slot)
+                .contentShape(Rectangle())
+                .onTapGesture { openWorkspace(group.workspace) }
+                .tip(summary, side: .left)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summary)
+                .accessibilityHint("Opens the workspace in Zero's window")
+                .accessibilityAddTraits(.isButton)
+                .modifier(Slot(open: marked))
+            VStack(spacing: 0) {
+                ForEach(group.dots, id: \.self) { name in
+                    if let dot = dots[name] {
+                        agentDot(name, dot.mark, among: group.dots).accessibilityLabel(dot.label)
+                            .padding(.top, 2)
+                            .modifier(Slot(open: shownDots.contains(name)))
+                    }
+                }
             }
-            if open {
-                VStack(spacing: 2) {
-                    ForEach(group.dots, id: \.self) { name in
-                        if let dot = dots[name] {
-                            agentDot(name, dot.mark, among: group.dots, byPointer: byPointer).accessibilityLabel(dot.label)
-                        }
-                    }
-                }
-                .overlay(alignment: .trailing) {
-                    if marked {
-                        Capsule().fill(Color.secondary.opacity(group.window ? 0.7 : 0.35))
-                            .frame(width: 3).padding(.vertical, 6).offset(x: 3)
-                            .transition(arrival(byPointer: byPointer))
-                    }
-                }
+            .overlay(alignment: .trailing) {
+                Capsule().fill(group.window ? BarMark.tint(space) : Color.secondary.opacity(0.35))
+                    .frame(width: 3).padding(.vertical, 6).offset(x: 3)
+                    .opacity(marked && !shownDots.isEmpty ? 1 : 0)
             }
         }
+        .padding(.top, 4)
         // The whole group, mark and dots, keeps it open, so the pointer can go down to its dots.
         .onHover { on in hover(group, on) }
-        .transition(arrival(byPointer: false))
+        .modifier(Slot(open: !shut.contains("g:\(group.workspace)")))
     }
 
     /// The pointer on a folded group or off it: open after 120 ms at rest on it (a pass-through down the bar opens
@@ -327,43 +354,55 @@ struct PillView: View {
         }
     }
 
-    /// The board's groups drawn, by what changed them. The window switched (⌥N, the rail, a mark clicked): the bar
-    /// cuts in one frame, as the window does, with nothing easing open or shut. The bar changed on its own (an agent
-    /// came, went, moved workspace or changed state): its layout snaps and what came fades in (`arrival`); nothing
-    /// travels or scales. Only the pointer opening a group eases (`openGroup`'s animation).
+    /// The board's groups drawn, whatever changed them (an agent coming, going, changing state or workspace, the window
+    /// switching), in three steps. First both states at once (`BarGroups.union`), as things were, what's arriving in
+    /// with its slot shut; then, on the bar's curve, everything as it is now: arrivals' slots open, departures' close,
+    /// folds close and unfolds open, the marks' colours and the segments change, all in the one animation; then, once
+    /// it has run, the new state alone. Reduce Motion: no curve, the slots' content only fades.
     private func follow(_ now: [BarGroup], dots: [String: Dot]) {
-        let window = workspace?.current
-        guard let was = drawn else { drawn = now; drawnDots = dots; drawnWindow = window; return }
-        guard now != was else { return }
-        drawnDots = dots
-        guard window == drawnWindow else {
-            drawnWindow = window
-            // Transitions read `cutting` as the views come and go, so it's set a draw ahead of the groups, then put back.
-            cutting = true
-            DispatchQueue.main.async {
-                drawn = now
-                DispatchQueue.main.async { cutting = false }
-            }
+        guard let was = followed else {
+            followed = now; drawn = now; drawnDots = dots; drawnMarked = BarGroups.marked(now)
             return
         }
-        drawn = now
+        guard now != was else { return }
+        followed = now
+        settling?.cancel()
+        drawnDots.merge(dots) { _, new in new }
+        let order = workspace?.workspaces.map(\.id) ?? []
+        let before = slotKeys(was), after = slotKeys(now)
+        let still = Transaction(animation: nil)
+        withTransaction(still) {
+            drawn = BarGroups.union(was, now, workspaces: order, fieldsFrom: was)
+            shut = after.subtracting(before)
+        }
+        // 150 ms when the bar only loses something; 220 when anything arrives or opens (a switch opens a group).
+        let window = { (groups: [BarGroup]) in groups.first(where: \.window)?.workspace }
+        let shrinks = after.isSubset(of: before) && window(now) == window(was)
+        DispatchQueue.main.async {
+            withAnimation(reduceMotion ? nil : barMotion(entering: !shrinks)) {
+                drawn = BarGroups.union(was, now, workspaces: order, fieldsFrom: now)
+                shut = before.subtracting(after)
+                drawnMarked = BarGroups.marked(now)
+            }
+            settling = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(260))
+                guard !Task.isCancelled else { return }
+                withTransaction(still) {
+                    drawn = now
+                    shut = []
+                    drawnDots = dots
+                }
+            }
+        }
+    }
+
+    /// The slots a state draws: a group's, and each of its dots'.
+    private func slotKeys(_ groups: [BarGroup]) -> Set<String> {
+        Set(groups.flatMap { group in ["g:\(group.workspace)"] + group.dots.map { "d:\(group.workspace)/\($0)" } })
     }
 
     /// The bar's one curve, the knobs' ease-out cubic: 220 ms in, 150 ms out.
     private func barMotion(entering: Bool) -> Animation { .timingCurve(0.33, 1, 0.68, 1, duration: entering ? 0.22 : 0.15) }
-
-    /// How a dot, a mark or a segment comes and goes. Opened by the pointer: in from 0.9 with a fade, out by fading.
-    /// The bar changing on its own: a fade in, gone at once (fading out, it would sit over the neighbour that snapped
-    /// into its place). The window switching: nothing, a cut. Reduce Motion: the fades alone.
-    private func arrival(byPointer: Bool) -> AnyTransition {
-        if cutting { return .identity }
-        let fadeIn = AnyTransition.opacity.animation(.easeOut(duration: reduceMotion ? 0.15 : 0.2))
-        guard byPointer else { return .asymmetric(insertion: fadeIn, removal: .identity) }
-        return .asymmetric(
-            insertion: reduceMotion
-                ? fadeIn : AnyTransition.opacity.combined(with: .scale(scale: 0.9)).animation(barMotion(entering: true)),
-            removal: AnyTransition.opacity.animation(.easeOut(duration: 0.15)))
-    }
 
     /// The inbox, in the top hollow: out while its pane is open or with the pointer in its zone at the bar's top;
     /// otherwise folded to its arc, blue while asks wait. The pointer on it opens the inbox, as the other slots do.
@@ -372,10 +411,13 @@ struct PillView: View {
     private var slimPair: some View {
         VStack(spacing: BarPeak.gap) {
             inboxKnob
-            if barFoot { settingsKnob } else { BarKnob(out: false) { _ in EmptyView() }.allowsHitTesting(false) }
+            if barFoot { settingsKnob } else { BarKnob(out: false, outline: joined) { _ in EmptyView() }.allowsHitTesting(false) }
         }
         .frame(width: 44)
-        .background { BarPeak().fill(Theme.pill).overlay(BarPeak().stroke(Theme.stroke, lineWidth: 1)) }
+        .background {
+            BarSurface(shape: BarPeak())
+                .overlay(Outline<BarPeak>.drawn(Theme.stroke.opacity(joined), round: BarPeak(open: true)).offset(x: -0.5))
+        }
     }
 
     /// The inbox is out while its pane (the asks) is open, or with the pointer in its zone at the bar's top
@@ -393,7 +435,8 @@ struct PillView: View {
     private var inboxKnob: some View {
         let selected = controller.agentFilter
         return BarKnob(
-            top: true, out: inboxOut, passing: controller.barAiming, waiting: !controller.store.open.isEmpty, pulse: inboxPulse
+            top: true, out: inboxOut, passing: controller.barAiming, waiting: !controller.store.open.isEmpty, pulse: inboxPulse,
+            outline: joined
         ) { _ in
             // 16 pt, on whole points in the 32 pt disc; half a point up, as the tray's ink sits low in its box. Out is
             // the only time it shows, so always the text's colour (one solid white in dark).
@@ -415,7 +458,7 @@ struct PillView: View {
     /// The settings button, in the bottom hollow: out with the pointer in its zone at the bar's foot, in while the
     /// inbox's panel is open.
     private var settingsKnob: some View {
-        BarKnob(out: settingsOut, passing: controller.barAiming) { _ in
+        BarKnob(out: settingsOut, passing: controller.barAiming, outline: joined) { _ in
             NucleoIcon("gear", size: 16).foregroundStyle(.primary)
         }
         .onTapGesture(perform: customiseBar)
@@ -424,13 +467,13 @@ struct PillView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func agentDot(_ name: String, _ mark: Mark, among names: [String], byPointer: Bool) -> some View {
+    private func agentDot(_ name: String, _ mark: Mark, among names: [String]) -> some View {
         ZStack {
             switch mark {
             // The sidebar's own icon for the task's state, at its size; a new state crossfades in place.
             case .task(let state, _):
                 TaskStateIcon(state: state).font(.system(size: 12)).id(state)
-                    .transition(.opacity.animation(.easeOut(duration: cutting ? 0 : 0.2)))
+                    .transition(.opacity.animation(.easeOut(duration: 0.2)))
             case .agent(let status):
                 Group { if status == .working { Spinner() } else { Circle().fill(status.color) } }.frame(width: 11, height: 11)
             }
@@ -466,7 +509,6 @@ struct PillView: View {
                     drop(name, among: names)
                 }
         )
-        .transition(arrival(byPointer: byPointer))
     }
 
     /// A dot's menu, in Zero's selector by the dot: a task's own actions (open it, pause or resume it, move it to Later,
@@ -589,15 +631,44 @@ private struct BarSlot: ViewModifier {
     }
 }
 
-/// A workspace's mark at the bar's size: its glyph on a faint tile of its own, 18 pt, monochrome whatever the
-/// workspace's colour (on the bar colour means state alone; bare, the glyph read as one more dot).
+/// A workspace's mark at the bar's size, an 18 pt tile. The window's (`active`): its glyph in white on a tile of its
+/// colour, as the rail's, or without a colour the glyph in the text's colour on a stronger neutral tile. Any other:
+/// monochrome, the glyph in grey on a faint tile (bare, it read as one more dot). A switch crossfades the two.
 private struct BarMark: View {
     let workspace: ZerodLink.Workspace
+    let active: Bool
+
+    /// The window's workspace's colour on the bar (its mark, its segment): its own, or the text's colour.
+    static func tint(_ workspace: ZerodLink.Workspace) -> Color { WorkspaceColors.color(workspace.color) ?? Color.primary.opacity(0.75) }
 
     var body: some View {
+        let colour = WorkspaceColors.color(workspace.color)
         WorkspaceGlyph(glyph: workspace.glyph, size: 11)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(active ? (colour != nil ? Color.white : Color.primary) : Color.secondary)
             .frame(width: 18, height: 18)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.1)))
+            .background(RoundedRectangle(cornerRadius: 5).fill(active ? colour ?? Color.primary.opacity(0.16) : Color.primary.opacity(0.1)))
+    }
+}
+
+/// A slot of the bar's: its full height open, none shut, its content clipped to its height and fading with it, and out of reach
+/// of the pointer and VoiceOver while shut. Opening and closing ride whatever animation changed it (the bar's curve).
+/// Reduce Motion: the height doesn't ease; the content still fades.
+private struct Slot: ViewModifier {
+    let open: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let slot =
+            content
+            .frame(height: open ? nil : 0, alignment: .top)
+            // Clipped top and bottom only: the segment sits past the column's edge, at the screen's.
+            .mask { Rectangle().padding(.horizontal, -12) }
+            .allowsHitTesting(open)
+            .accessibilityHidden(!open)
+        if reduceMotion {
+            slot.opacity(open ? 1 : 0).animation(.easeOut(duration: 0.15), value: open)
+        } else {
+            slot.opacity(open ? 1 : 0)
+        }
     }
 }

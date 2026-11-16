@@ -123,10 +123,10 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
         .start(Provider::Claude, "one of yesterday's", zerod::daemon::Options { cwd: Some(cwd.into()), ..Default::default() })
         .unwrap();
 
-    assert_eq!(daemon.adopt_into(&lead, &task).unwrap(), task, "a task Zero has, by its id");
+    assert_eq!(daemon.adopt_into(&lead, &task, &lead).unwrap(), task, "a task Zero has, by its id");
     assert_eq!(daemon.get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
-    assert!(daemon.adopt_into(&task, &lead).is_err(), "not its own worker's worker");
-    assert!(daemon.adopt_into(&lead, &lead).is_err());
+    assert!(daemon.adopt_into(&task, &lead, &task).is_err(), "not its own worker's worker");
+    assert!(daemon.adopt_into(&lead, &lead, &lead).is_err());
 
     // A Claude Code session Zero doesn't have, by its id alone: its folder is in its file.
     let file = zerod::handoff::claude_folder(&user, cwd).join("9f00.jsonl");
@@ -136,20 +136,20 @@ async fn a_lead_adopts_tasks_and_claude_code_sessions_as_its_workers() {
         json!({"type": "user", "cwd": cwd, "uuid": "u1", "message": {"role": "user", "content": "Fix ENG-1"}}).to_string() + "\n",
     )
     .unwrap();
-    let adopted = daemon.adopt_into(&lead, "9f00").unwrap();
+    let adopted = daemon.adopt_into(&lead, "9f00", &lead).unwrap();
     let worker = daemon.get(&adopted).unwrap();
     assert_eq!((worker.parent.as_deref(), worker.thread.as_deref(), worker.cwd.as_str()), (Some(lead.as_str()), Some("9f00"), cwd));
-    assert_eq!(daemon.adopt_into(&lead, "9f00").unwrap(), adopted, "by its thread, once Zero has it");
-    assert!(daemon.adopt_into(&lead, "nope").is_err());
+    assert_eq!(daemon.adopt_into(&lead, "9f00", &lead).unwrap(), adopted, "by its thread, once Zero has it");
+    assert!(daemon.adopt_into(&lead, "nope", &lead).is_err());
 
     // Kept: another start of zerod has it under its lead.
     assert_eq!(Daemon::open(&home.join("zerod"), quiet()).unwrap().get(&task).unwrap().parent.as_deref(), Some(lead.as_str()));
 
     // And let go again: a task of its own, a lead itself, by its id or its session's.
-    daemon.detach("9f00").unwrap();
+    daemon.detach("9f00", None).unwrap();
     assert_eq!(daemon.get(&adopted).unwrap().parent, None);
-    daemon.detach(&adopted).unwrap();
-    assert!(daemon.detach("nope").is_err());
+    daemon.detach(&adopted, None).unwrap();
+    assert!(daemon.detach("nope", None).is_err());
     assert_eq!(Daemon::open(&home.join("zerod"), quiet()).unwrap().get(&adopted).unwrap().parent, None, "kept");
 }
 

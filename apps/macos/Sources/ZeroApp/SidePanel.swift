@@ -126,7 +126,7 @@ struct SidePanel: View {
                     if tab.isNew {
                         NewTabPage(workspace: workspace, row: row, conversation: conversation, closed: tabs.closed) { open($0) }
                     } else {
-                        let page = WebPages.page(for: tab)
+                        let page = WebPages.page(for: tab, outside: Self.outside)
                         WebPageView(page: page).id(tab.id)
                             .onAppear {
                                 page.changed = { [task, id = tab.id] url, title in
@@ -150,7 +150,20 @@ struct SidePanel: View {
         }
     }
 
-    private func open(_ url: String) { Panels.shared.change(task) { $0.open(url) } }
+    /// A link clicked in the panel: in its app when Zero would open it in one (as the conversation's links open),
+    /// else in a tab.
+    private func open(_ url: String) {
+        guard let link = URL(string: url), !Self.outside(link) else { return }
+        Panels.shared.change(task) { $0.open(url) }
+    }
+
+    /// Opened in its app (Linear's, Slack's, Zero's own, another app's scheme), through the conversation's opener;
+    /// false for a web page, which stays in the panel.
+    static func outside(_ url: URL) -> Bool {
+        guard let app = LinkRoute.app(url, linearApp: LinearLinks.inApp, slack: SlackLinks.teams) else { return false }
+        LinearLinks.open(app)
+        return true
+    }
 
     static func close(_ id: String, in task: String) {
         Panels.shared.change(task) { $0.close(id) }

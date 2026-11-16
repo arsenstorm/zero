@@ -132,3 +132,50 @@ private func session(_ id: String, _ provider: Provider = .claude) -> Conversati
     #expect(changed)
     #expect(entry.row?.task == "This")
 }
+
+/// Move under…: the other leads in its workspace (top-level tasks), never itself, its own workers (a loop) or another
+/// lead's workers.
+@MainActor @Test func aTaskMovesUnderAnotherLead() {
+    let w = Workspace()
+    let (task, worker, below, other) = ("01a1aaaa00000001", "01a1aaaa00000002", "01a1aaaa00000003", "01a1aaaa00000004")
+    w.receive(.session(session(task)))
+    w.receive(
+        .session(
+            {
+                var c = session(worker); c.parent = task; return c
+            }()))
+    w.receive(
+        .session(
+            {
+                var c = session(below); c.parent = worker; return c
+            }()))
+    w.receive(.session(session(other)))
+    #expect(w.possibleLeads(of: task).map(\.id) == [other])
+    #expect(w.possibleLeads(of: other).map(\.id) == [task])
+}
+
+/// Move under… lists only the tasks shown in the moved task's workspace: a worker shows in its top lead's, whatever
+/// its own says.
+@MainActor @Test func aTaskMovesOnlyUnderTasksOfItsWorkspace() {
+    let w = Workspace()
+    w.workspaces.append(ZerodLink.Workspace(id: "acme", name: "Acme", glyph: "", color: ""))
+    let (lead, worker, here, loose) = ("01a1aaaa00000001", "01a1aaaa00000002", "01a1aaaa00000003", "01a1aaaa00000004")
+    w.receive(
+        .session(
+            {
+                var c = session(lead); c.workspace = "acme"; return c
+            }()))
+    w.receive(
+        .session(
+            {
+                var c = session(worker); c.parent = lead; return c
+            }()))
+    w.receive(
+        .session(
+            {
+                var c = session(here); c.workspace = "acme"; return c
+            }()))
+    w.receive(.session(session(loose)))
+    #expect(w.possibleLeads(of: loose).isEmpty)
+    #expect(w.possibleLeads(of: here).map(\.id) == [lead])
+}

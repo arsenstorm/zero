@@ -23,7 +23,15 @@ public enum References {
         func group(_ match: NSTextCheckingResult, _ i: Int) -> String? {
             match.range(at: i).location == NSNotFound ? nil : ns.substring(with: match.range(at: i))
         }
-        return pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
+        // An address written out is one thing: nothing in it is a commit, issue or channel of its own ("01a1e4b4537c"
+        // in zero://task/01a1e4b4537c009e). Zero's own open in Zero; others are left to whatever links them.
+        let addresses = address.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range)
+        let own = addresses.compactMap { range in
+            ns.substring(with: range).hasPrefix("zero://") ? URL(string: ns.substring(with: range)).map { (range, $0) } : nil
+        }
+        let found: [(range: NSRange, url: URL)] = pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap {
+            match in
+            guard !addresses.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { return nil }
             let link: String?
             if let team = group(match, 1)?.uppercased(), let number = group(match, 2) {
                 guard let workspace = linear[team] else { return nil }
@@ -50,7 +58,9 @@ public enum References {
             }
             return link.flatMap(URL.init(string:)).map { (match.range, $0) }
         }
+        return (own + found).sorted { $0.range.location < $1.range.location }
     }
+    private static let address = try! NSRegularExpression(pattern: #"\b[a-z][a-z0-9+.-]*://[^\s<>()\[\]"'`]+"#)
 
     /// "owner/name" of the GitHub repository holding `cwd`, from its origin remote. Cached; nil when there is none.
     public static func repo(of cwd: String) -> String? {
