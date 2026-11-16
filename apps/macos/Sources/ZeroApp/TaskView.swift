@@ -3,8 +3,7 @@ import SwiftUI
 import ZeroCore
 
 // A task, laid out as Codex lays one out: its name and actions in the window's title bar (TitleBar), the conversation
-// in a column centred in the page, and a pane floating on the right with what's known about it (its workers a click
-// away).
+// in a column centred in the page, and the side panel on the right (SidePanel.swift): its details, and its tabs.
 
 /// The task pages, the last few kept mounted behind the one shown: a switch back to one shows it as it was, scroll,
 /// draft and all, with nothing to build. Hidden pages take no clicks, keys or focus.
@@ -98,6 +97,8 @@ private struct TaskView: View {
     var active = true
     /// And on screen: the window open and not covered.
     var shown = true
+    /// The page's width, for the panel's.
+    @State private var page: Double = 1100
     /// Other tasks by id, for a message from one: its name, and opening it (a worker on its lead's page). Made with the
     /// page, not in its body: a new one each body run went down through the whole conversation.
     private let taskLink: TaskLink
@@ -147,25 +148,10 @@ private struct TaskView: View {
         // The lead's row, or the worker's own when a worker is shown: its status, place and asks are its own.
         let leadRow = entry.row
         let row = worker.flatMap { leadRow?.member($0) } ?? leadRow
-        if let conversation, conversation.terminal != nil {
-            // A terminal runs edge to edge; the pane sits beside it as a column of its own.
-            HStack(spacing: 0) {
-                if let live = workspace.live(conversation.id) {
-                    ConversationView(
-                        workspace: workspace, inbox: inbox, active: active, shown: shown,
-                        queued: workspace.queued(conversation.id, board: row?.queued ?? []), held: row?.held ?? false,
-                        paused: workspace.isPaused(conversation.id) ? row?.pausedHeld ?? 0 : nil, next: row?.next,
-                        live: live, open: open
-                    ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
-                }
-                if navigation.pane {
-                    Rectangle().fill(Theme.stroke).frame(width: 1)
-                    TaskDetails(
-                        workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation, docked: true)
-                }
-            }
-        } else {
-            ZStack(alignment: .topTrailing) {
+        // The conversation, and beside it the panel (its details and tabs) when it's open.
+        let width = PanelWidth.width(page: page, wanted: Panels.shared.wanted)
+        HStack(spacing: 0) {
+            ZStack {
                 if let conversation, let live = workspace.live(conversation.id) {
                     ConversationView(
                         workspace: workspace, inbox: inbox, active: active, shown: shown,
@@ -174,12 +160,17 @@ private struct TaskView: View {
                         live: live, open: open
                     ).equatable().id(conversation.id).environment(\.taskLink, taskLink)
                 }
-                if navigation.pane, let conversation {
-                    TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation).padding(
-                        TaskDetails.inset)
-                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if navigation.pane, let conversation {
+                PanelDivider(page: page)
+                SidePanel(workspace: workspace, inbox: inbox, navigation: navigation, task: lead, row: row, conversation: conversation)
+                    .frame(width: width)
             }
         }
+        .onGeometryChange(for: Double.self, of: { $0.size.width }) { page = $0 }
+        // The title bar's tabs sit over the shown page's panel.
+        .onChange(of: active ? width : nil, initial: true) { if active, Panels.shared.shown != width { Panels.shared.shown = width } }
     }
 }
 
@@ -215,7 +206,14 @@ struct TitleBar: View {
                     .onTapGesture(count: 2, perform: Self.doubleClicked)
                 drag
                 actions(conversation)
-                BarButton(symbol: "sidebar-right", help: navigation.pane ? "Hide details" : "Show details", selected: navigation.pane) {
+                if navigation.pane {
+                    // From the panel's left edge to the toggle: the panel's width less the toggle, its gap and the
+                    // bar's end.
+                    PanelTabStrip(task: lead).frame(width: max(0, Panels.shared.shown - 40))
+                }
+                BarButton(
+                    symbol: "sidebar-right", help: navigation.pane ? "Hide panel" : "Show panel", shortcut: "⌥⌘B", selected: navigation.pane
+                ) {
                     navigation.pane.toggle()
                 }
             } else if navigation.ready, navigation.place == .board || navigation.place == .inbox {
@@ -278,6 +276,7 @@ private struct BarButton: View {
     /// An app's own icon in place of the symbol (the terminal app's).
     var image: Image? = nil
     let help: String
+    var shortcut: String? = nil
     var selected = false
     let action: () -> Void
 
@@ -288,6 +287,6 @@ private struct BarButton: View {
             }
             .foregroundStyle(selected ? .primary : .secondary).frame(width: 28, height: 28)
         }
-        .buttonStyle(Hovering(selected: selected, radius: 7, fill: Theme.chip)).tip(help)
+        .buttonStyle(Hovering(selected: selected, radius: 7, fill: Theme.chip)).tip(help, shortcut: shortcut)
     }
 }

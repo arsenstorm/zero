@@ -19,7 +19,9 @@ struct WorkspaceView: View {
             if !navigation.ready { LoadingMark().frame(width: 64, height: 64).transition(.opacity) }
             DialogHost()
         }
-        .frame(minWidth: 980, minHeight: 600)
+        .frame(minWidth: least, minHeight: 600)
+        // With the side panel open the window keeps room for both it and the conversation: wider if it must be.
+        .onChange(of: [least, navigation.ready ? 1 : 0], initial: true) { fit(least) }
         // Loops named in messages read as pills: the names, for the renderer.
         .task { await workspace.loadLoops() }
         .task { await workspace.loadLater() }
@@ -86,6 +88,27 @@ struct WorkspaceView: View {
             try? await Task.sleep(for: .seconds(35))
             show()
         }
+    }
+
+    @AppStorage(SidebarWidth.key) private var sidebarWidth = SidebarWidth.standard
+
+    /// The narrowest the window may be: wider with the side panel open on a task.
+    private var least: CGFloat {
+        guard navigation.pane, case .task = navigation.place else { return 980 }
+        return PanelWidth.windowLeast(sidebar: sidebarWidth)
+    }
+
+    private func fit(_ least: CGFloat) {
+        guard let window = NSApp.windows.first(where: { $0.toolbar?.identifier == "Workspace" }) else { return }
+        window.contentMinSize.width = least
+        guard window.contentLayoutRect.width < least, !window.styleMask.contains(.fullScreen) else { return }
+        var frame = window.frame
+        frame.size.width += least - window.contentLayoutRect.width
+        // Grown to the right, or to the left where the screen ends.
+        if let screen = window.screen?.visibleFrame, frame.maxX > screen.maxX {
+            frame.origin.x = max(screen.minX, screen.maxX - frame.width)
+        }
+        window.setFrame(frame, display: true)
     }
 
     /// A task's lead, however deep: what decides a worker's workspace, as zerod has it.

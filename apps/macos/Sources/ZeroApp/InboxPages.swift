@@ -245,38 +245,6 @@ enum Drafts {
     }
 }
 
-/// A task's status in words, beside the details pane: what it's blocked on or where it is and, blocked on an ask, the
-/// inbox's own card for it, to answer right there. Zero's own card, drawn at once.
-struct StatusCard: View {
-    static let width: CGFloat = 380
-    let row: BoardRow
-    let inbox: InboxController
-    @FocusState private var focus: String?
-
-    var body: some View {
-        let asks = row.asks.compactMap { waiting in inbox.store.asks.first { $0.id == waiting.id } }
-        VStack(alignment: .leading, spacing: 10) {
-            StateLabel(state: row.state)
-            // Blocked on an ask, the ask says it all: no words of the status beside it.
-            if asks.isEmpty, let needs = row.needs { Text(needs).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true) }
-            if asks.isEmpty, let now = row.now, row.needs == nil {
-                Text(
-                    (try? AttributedString(markdown: now, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-                        ?? AttributedString(now)
-                )
-                .font(.system(size: 13)).foregroundStyle(.secondary).tint(Theme.link).fixedSize(horizontal: false, vertical: true)
-            }
-            // The inbox's card without its own frame (a card in a card), lined up with this one's padding.
-            ForEach(asks) { ask in
-                CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false).padding(.horizontal, -16)
-            }
-        }
-        .padding(14)
-        .frame(width: Self.width, alignment: .leading)
-        .modifier(MenuCard(radius: 12, linear: true))
-    }
-}
-
 /// Zero restarting for an update, said while it happens: what it's letting finish first (a task's command, for at most
 /// a couple of minutes, counted down), then that the new version is starting. The tasks it paused say so themselves.
 struct UpdatingBar: View {

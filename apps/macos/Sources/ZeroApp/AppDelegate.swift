@@ -371,6 +371,9 @@ import ZeroCore
 
     @objc func goForward() { navigation.goForward() }
 
+    /// The task's side panel, opened or closed (⌥⌘B), as the title bar's right button does.
+    @objc func togglePanel() { navigation.pane.toggle() }
+
     /// Settings live in the workspace window.
     @objc func openSettings() {
         navigation.place = .settings
@@ -408,6 +411,11 @@ import ZeroCore
         go.submenu?.addItem(withTitle: "Back", action: #selector(AppDelegate.goBack), keyEquivalent: "[")
         go.submenu?.addItem(withTitle: "Forward", action: #selector(AppDelegate.goForward), keyEquivalent: "]")
         main.addItem(go)
+        let view = NSMenuItem()
+        view.submenu = NSMenu(title: "View")
+        view.submenu?.addItem(withTitle: "Side Panel", action: #selector(AppDelegate.togglePanel), keyEquivalent: "b")
+            .keyEquivalentModifierMask = [.command, .option]
+        main.addItem(view)
         return main
     }
 

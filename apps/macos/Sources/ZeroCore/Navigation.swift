@@ -74,7 +74,7 @@ public final class Navigation {
     }
     /// Past the splash: the window shows its places, and the toolbar its arrows.
     public var ready = false
-    /// The pane on a task's right, open or not, as it was last left.
+    /// The side panel on a task's right (its details and tabs), open or not, as it was last left.
     public var pane = UserDefaults.standard.object(forKey: "taskPane") as? Bool ?? true {
         didSet { UserDefaults.standard.set(pane, forKey: "taskPane") }
     }
