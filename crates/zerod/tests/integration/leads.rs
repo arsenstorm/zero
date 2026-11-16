@@ -956,6 +956,59 @@ async fn a_worker_at_its_only_accounts_limit_tells_its_lead() {
     assert!(text.contains("Worker Fix hit a usage limit (it resets at 2026-11-17T19:00:00Z)"), "{text}");
 }
 
+/// A worker at its limit when no other account was free waits for its reset; once another account is free, words for
+/// it (or a read of the accounts' usage) carry it on as that account, the words with it.
+async fn limited_with_none_free(w: &World) -> (String, zerod::signins::SignIn) {
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let (_, second) = (claude_account(w, "a@example.com"), claude_account(w, "b@example.com"));
+    let busy = zerod::model::Usage { limited: true, resets_at: Some(zerod::now() + 7_200), ..Default::default() };
+    w.daemon.signins.record_usage(&second.id, &busy);
+    let lead = start(&w.daemon, Provider::Claude, &w.project, "lead the work");
+    let led = lead_runtime(w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "fix it", named("Fix", None)).unwrap();
+    let fixing = nth_runtime(w, 1).await;
+    fixing.said("user", 1).await;
+    limited(&fixing, zerod::now() + 3_600);
+    until(&w.daemon, &worker, |c| c.attention() == Attention::Limited).await;
+    let free = zerod::model::Usage {
+        windows: vec![zerod::model::UsageWindow {
+            name: "7 days".into(),
+            used: 0.1,
+            resets_at: Some(zerod::now() + 86_400),
+            read_at: Some(zerod::now()),
+        }],
+        ..Default::default()
+    };
+    w.daemon.signins.replace_usage(&second.id, &free);
+    (worker, second)
+}
+
+#[tokio::test]
+async fn words_for_a_limited_worker_carry_it_on_once_another_account_is_free() {
+    let w = world("leads-limit-freed-words");
+    let (worker, second) = limited_with_none_free(&w).await;
+    w.daemon.tell_from_zero(&worker, "Go on with the fix.");
+    until(&w.daemon, &worker, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    let said = nth_runtime(&w, 2).await.said("user", 1).await;
+    let text = said[0]["message"]["content"].as_str().unwrap();
+    assert!(text.contains("another account") && text.contains("Go on with the fix."), "{text}");
+}
+
+#[tokio::test]
+async fn a_usage_read_carries_a_limited_worker_on_as_a_free_account() {
+    let w = world("leads-limit-freed-read");
+    let (worker, second) = limited_with_none_free(&w).await;
+    w.daemon.carry_on_limited();
+    until(&w.daemon, &worker, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    let said = nth_runtime(&w, 2).await.said("user", 1).await;
+    assert!(said[0]["message"]["content"].as_str().unwrap().contains("another account"), "{said:?}");
+}
+
 /// A worker that wrote its report and ended it, then hit its account's limit on the next call: its lead gets that
 /// report, once, as any turn's end, and nothing of the limit; its turn was over, so it isn't carried on to say it again.
 #[tokio::test]

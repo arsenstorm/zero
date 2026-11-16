@@ -20,7 +20,7 @@ impl Daemon {
     /// (signins.rs choose), its agent started again on the same conversation. False when there's none to go to.
     /// With what it answered before the limit (its lead has that): a turn it ended there isn't carried on, and one it
     /// went on from is told not to say it again.
-    fn switch_account(&self, conversation: &Conversation, answered: Option<&str>) -> bool {
+    pub(super) fn switch_account(&self, conversation: &Conversation, answered: Option<&str>) -> bool {
         if self.switching.lock().unwrap().contains(&conversation.id) {
             return true;
         }
@@ -118,18 +118,31 @@ impl Daemon {
         self.tell(&conversation.id, crate::model::from_line("zero", CARRY_ON_AFTER_ERROR));
     }
 
+    /// Tasks stopped at a limit while no other account was free: carried on as one that's free now (a read of the
+    /// accounts' usage found it). One still without a free account waits for its reset.
+    pub fn carry_on_limited(&self) {
+        for conversation in self.sessions().iter().map(|s| s.summary()).filter(|c| c.attention() == Attention::Limited) {
+            self.switch_account(&conversation, None);
+        }
+    }
+
     fn after_reset(&self, conversation: &Conversation) {
         let Some(usage) = conversation.usage.clone().filter(|u| u.limited) else { return };
         let Some(at) = usage.resets_at else { return };
         if self.resets.lock().unwrap().insert(conversation.id.clone(), at) == Some(at) {
             return;
         }
-        let (me, id) = (self.me.clone(), conversation.id.clone());
+        let (me, id, signin) = (self.me.clone(), conversation.id.clone(), conversation.signin.clone());
         let wait = Duration::from_secs((at - now()).max(0) as u64 + 60);
         tokio::spawn(async move {
             tokio::time::sleep(wait).await;
             let Some(daemon) = me.upgrade() else { return };
             let Ok(session) = daemon.session(&id) else { return };
+            // Carried on as another account meanwhile: this reset isn't its.
+            let now = session.summary();
+            if now.signin != signin || now.attention() != Attention::Limited {
+                return;
+            }
             // The provider says nothing when a limit resets; the clock does.
             session.change(Change::Usage { usage: crate::model::Usage { limited: false, resets_at: None, ..usage } });
             daemon.tell(&id, crate::model::from_line("zero", "The usage limit has reset: carry on with what you were doing."));

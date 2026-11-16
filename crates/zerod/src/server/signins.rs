@@ -127,6 +127,7 @@ pub async fn follow_usage(daemon: std::sync::Arc<Daemon>, notices: broadcast::Se
         }
         if read_any {
             let _ = notices.send("signins");
+            daemon.carry_on_limited();
         }
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}

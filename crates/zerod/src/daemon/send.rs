@@ -474,6 +474,12 @@ impl Daemon {
         if self.held_signed_out(&session.summary()) {
             return;
         }
+        // At a limit no other account was free for when it stopped: if one is now, it carries on as that one, these
+        // words with it.
+        let conversation = session.summary();
+        if conversation.attention() == Attention::Limited && self.switch_account(&conversation, None) {
+            return;
+        }
         if !session.is_attached() && session.summary().terminal.is_none() {
             let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return };
             tokio::spawn(async move {
