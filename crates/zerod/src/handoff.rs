@@ -16,10 +16,21 @@ pub fn claude_folder(home: &Path, cwd: &str) -> PathBuf {
     home.join(".claude/projects").join(real.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>())
 }
 
-/// The conversation as a Claude Code session file (JSON lines, one chain of messages) with the id `session`.
+/// How much of Zero's record a handed-on thread carries, in characters (under 100k tokens, the least a context is
+/// set to): the record never compacts, and a long task's whole would leave Claude Code compacting again and again.
+const KEPT: usize = 300_000;
+/// A command's output or a diff as handed on: its last this many characters, where errors and results are.
+const CLIPPED: usize = 20_000;
+
+/// The conversation as a Claude Code session file (JSON lines, one chain of messages) with the id `session`: its
+/// latest part, from a message of the user's, when the whole is more than a context takes.
 pub fn claude_session(conversation: &Conversation, session: &str) -> String {
     let mut chain = Chain { session, cwd: &conversation.cwd, parent: None, lines: vec![], calls: 0 };
-    for item in &conversation.items {
+    let start = latest_part(&conversation.items);
+    if start > 0 {
+        chain.add("user", json!("The earlier part of this conversation is too long to repeat here; it carries on from this point."));
+    }
+    for item in &conversation.items[start..] {
         match &item.kind {
             ItemKind::User { text, .. } => chain.add("user", json!(text)),
             ItemKind::Agent { text, .. } if !text.trim().is_empty() => chain.text(text),
@@ -29,6 +40,7 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
                 let call = format!("toolu_zero_{}", chain.calls);
                 chain.add("assistant", json!([{"type": "tool_use", "id": call, "name": "Bash", "input": {"command": command}}]));
                 let failed = exit_code.is_some_and(|code| code != 0);
+                let output = clip(output);
                 let result = match (output.is_empty(), exit_code) {
                     (true, Some(code)) if failed => format!("Exit code {code}"),
                     (false, Some(code)) if failed => format!("{output}\nExit code {code}"),
@@ -38,7 +50,7 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
             }
             ItemKind::FileChange { changes } => {
                 for change in changes {
-                    chain.text(&format!("Changed {} ({}):\n```diff\n{}```", change.path, change.kind, change.diff));
+                    chain.text(&format!("Changed {} ({}):\n```diff\n{}```", change.path, change.kind, clip(&change.diff)));
                 }
             }
             // As a call, never as words: an agent reading "Used zero_ask: {…}" in its own past replies writes its
@@ -55,6 +67,36 @@ pub fn claude_session(conversation: &Conversation, session: &str) -> String {
         }
     }
     chain.lines.iter().map(|line| line.to_string() + "\n").collect()
+}
+
+/// Where the handed-on part starts: the earliest message of the user's from which the rest fits in `KEPT`, else the
+/// latest one.
+fn latest_part(items: &[Item]) -> usize {
+    let (mut size, mut start) = (0, None);
+    for (at, item) in items.iter().enumerate().rev() {
+        size += match &item.kind {
+            ItemKind::User { text, .. } | ItemKind::Agent { text, .. } | ItemKind::Plan { text } => text.len(),
+            ItemKind::Command { command, output, .. } => command.len() + output.len().min(CLIPPED),
+            ItemKind::FileChange { changes } => changes.iter().map(|c| c.path.len() + c.diff.len().min(CLIPPED)).sum(),
+            ItemKind::Tool { detail, .. } => detail.len(),
+            _ => 0,
+        };
+        if matches!(item.kind, ItemKind::User { .. }) {
+            if size > KEPT && start.is_some() {
+                break;
+            }
+            start = Some(at);
+        }
+    }
+    start.unwrap_or(0)
+}
+
+fn clip(text: &str) -> String {
+    let count = text.chars().count();
+    if count <= CLIPPED {
+        return text.to_string();
+    }
+    format!("…{}", text.chars().skip(count - CLIPPED).collect::<String>())
 }
 
 /// The conversation as plain text, for a provider that can't be handed one (OpenCode): what each said, and the

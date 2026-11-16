@@ -176,6 +176,40 @@ fn the_record_becomes_a_claude_code_session_with_every_message_and_command() {
     );
 }
 
+/// A long task's record is far bigger than any context (it never compacts): handed on whole, Claude Code compacts it
+/// again and again and gives up. The thread carries its latest part, from a message of the user's, outputs clipped.
+#[test]
+fn a_long_record_hands_on_its_latest_part_within_a_context() {
+    let mut conversation = Conversation::new("s", Provider::Claude, "/work");
+    for n in 0..2000 {
+        conversation.items.push(item(&format!("u{n}"), ItemKind::User { text: format!("Message {n}"), images: vec![], sent: None }));
+        conversation.items.push(item(
+            &format!("c{n}"),
+            ItemKind::Command {
+                command: "cat big.log".into(),
+                cwd: "/work".into(),
+                output: format!("{}end of {n}", "x".repeat(100_000)),
+                exit_code: Some(0),
+                duration_ms: None,
+                description: String::new(),
+            },
+        ));
+    }
+    let file = handoff::claude_session(&conversation, "11111111-2222-4333-8444-555555555555");
+    assert!(file.len() < 1_000_000, "{} bytes: within a context, not the whole record", file.len());
+    let records: Vec<Value> = file.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    for (before, after) in records.iter().zip(&records[1..]) {
+        assert_eq!(after["parentUuid"], before["uuid"], "still one chain");
+    }
+    assert!(records[0]["message"]["content"].as_str().unwrap().contains("earlier"), "the agent is told the start isn't there");
+    assert!(
+        records[1]["message"]["content"].as_str().is_some_and(|t| t.starts_with("Message ")),
+        "the cut falls on a message of the user's"
+    );
+    assert!(file.contains("end of 1999"), "a clipped output keeps its end");
+    assert!(file.contains("Message 1999"), "the latest part comes along");
+}
+
 #[test]
 fn claude_code_keeps_a_folders_sessions_under_its_path_with_dashes() {
     assert_eq!(
