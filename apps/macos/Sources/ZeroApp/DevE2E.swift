@@ -1,5 +1,6 @@
 #if ZERO_DEV
     import AppKit
+    import PDFKit
     import SwiftUI
     import ZeroBrowserHost
     import ZeroCore
@@ -589,6 +590,133 @@
                 "Chromium: a pick in Zero's menu reaches Chromium (Select All); no View Page Source",
                 selected && items?.contains("View Page Source") == false, "items \(items ?? []); selected \(selected)",
                 how: "event, menu by model")
+
+            // Printing: never Chrome's own print panel (a window of the browser app's, on the user's screen). The page's
+            // window.print(), the File menu's Print… (⌘P) and the page menu's Print… each print the page to a PDF, with
+            // its print styles, for the Mac's print panel as a sheet on Zero's window (here handed to the checks).
+            _ = await js(
+                "document.body.innerHTML='<style>@media print{.screen{display:none}}</style><h1>Zero print check</h1><p class=screen>On screen only</p>';1",
+                on: page)
+            func printed(_ count: Int) async -> (ok: Bool, why: String) {
+                guard await until(10, { PageQuestions.devPrinted.count >= count }), let url = PageQuestions.devPrinted.last,
+                    let pdf = PDFDocument(url: url)
+                else { return (false, "no PDF (\(PageQuestions.devPrinted.count))") }
+                let text = pdf.string ?? ""
+                let head = (try? FileHandle(forReadingFrom: url).readData(ofLength: 4)).map { String(decoding: $0, as: UTF8.self) }
+                let ok = head == "%PDF" && pdf.pageCount >= 1 && text.contains("Zero print check") && !text.contains("On screen only")
+                return (
+                    ok,
+                    "\(pdf.pageCount) page(s), print styles \(!text.contains("On screen only")), text \(text.prefix(40).debugDescription)"
+                )
+            }
+            PageQuestions.devPrinted = []
+            _ = await js("window.print(); 1", on: page)
+            let byPage = await printed(1)
+            let item = NSApp.mainMenu?.items.first(where: { $0.submenu?.title == "File" })?.submenu?.item(withTitle: "Print…")
+            if let item, let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
+            let byMenu = await printed(2)
+            let background = CGPoint(x: 200, y: 160)
+            let names = await menu(at: background, picking: nil) ?? []
+            let printItem = names.first { $0.hasPrefix("Print") }
+            if let printItem { _ = await menu(at: background, picking: printItem) }
+            let byPageMenu = await printed(3)
+            let printFront = NSWorkspace.shared.frontmostApplication?.processIdentifier == ChromiumEngine.engine.pid
+            check(
+                "Printing: window.print(), File › Print… (⌘P) and the page menu's Print… each make the page's PDF for Zero's print sheet",
+                byPage.ok && byMenu.ok && item?.keyEquivalent == "p" && byPageMenu.ok && !printFront,
+                "window.print(): \(byPage.why); ⌘P item \(item?.keyEquivalent ?? "none"): \(byMenu.why); page menu \(printItem ?? "no Print item in \(names)"): \(byPageMenu.why); browser in front \(printFront)",
+                how: "call, menu by model")
+
+            // VoiceOver: the page's tree as VoiceOver reads it, asked of the elements by model (the calls AppKit makes for
+            // VoiceOver). The rotor's searches in document order, iframes' documents included; states; a live
+            // region's new text and a changed state posted as it changes.
+            var posted: [(name: String, info: [AnyHashable: Any]?, element: Any)] = []
+            page.chromium.axPosted = { element, name, info in posted.append((name, info, element)) }
+            _ = await js(
+                "document.body.innerHTML='<main><h1>Head one</h1><h2>Head two</h2><a href=\"#x\">A link</a><button id=btn aria-expanded=false disabled>Btn</button><input id=cb type=checkbox><input required placeholder=Name><div aria-live=polite id=live></div><nav><a href=\"#y\">Nav link</a></nav><iframe srcdoc=\"<h3>In frame</h3><a href=#z>Frame link</a>\"></iframe></main>';document.getElementById('cb').indeterminate=true;1",
+                on: page)
+            func area() -> NSObject? { page.chromium.view.accessibilityChildren()?.first as? NSObject }
+            func search(_ key: String, from start: Any? = nil, back: Bool = false, limit: Int = -1) -> [ZBAXNode] {
+                var p: [String: Any] = [
+                    "AXSearchKey": key, "AXResultsLimit": limit, "AXDirection": back ? "AXDirectionPrevious" : "AXDirectionNext",
+                ]
+                if let start { p["AXStartElement"] = start }
+                return area()?.accessibilityAttributeValue(.init(rawValue: "AXUIElementsForSearchPredicate"), forParameter: p)
+                    as? [ZBAXNode] ?? []
+            }
+            func labels(_ nodes: [ZBAXNode]) -> [String] { nodes.map { $0.accessibilityLabel() ?? "" } }
+            let built = await until(10) { search("AXHeadingSearchKey").count == 3 && search("AXLinkSearchKey").count == 3 }
+            let headings = search("AXHeadingSearchKey")
+            let levels = headings.compactMap { $0.accessibilityValue() as? Int }
+            let links = search("AXLinkSearchKey")
+            let next = links.first.map { labels(search("AXLinkSearchKey", from: $0, limit: 1)) } ?? []
+            let previous = links.last.map { labels(search("AXLinkSearchKey", from: $0, back: true, limit: 1)) } ?? []
+            let landmarks = search("AXLandmarkSearchKey").map { $0.accessibilitySubrole()?.rawValue ?? "" }
+            let count =
+                area()?.accessibilityAttributeValue(
+                    .init(rawValue: "AXUIElementCountForSearchPredicate"), forParameter: ["AXSearchKey": "AXControlSearchKey"]) as? Int
+            let button = search("AXButtonSearchKey").first
+            let box = search("AXCheckBoxSearchKey").first
+            let textField = search("AXTextFieldSearchKey").first
+            let frame = search("AXFrameSearchKey").first
+            let iframe = frame?.accessibilityParent() as? ZBAXNode
+            let inFrame = headings.last.flatMap { h in iframe.map { $0.pageRect().contains(h.pageRect()) } } ?? false
+            check(
+                "VoiceOver: the rotor finds headings, links, landmarks and controls in order, an iframe's too, placed in the iframe",
+                built && labels(headings) == ["Head one", "Head two", "In frame"] && levels == [1, 2, 3]
+                    && labels(links) == ["A link", "Nav link", "Frame link"] && next == ["Nav link"] && previous == ["Nav link"]
+                    && landmarks == ["AXLandmarkMain", "AXLandmarkNavigation"] && count == 3 && inFrame,
+                "headings \(labels(headings)) levels \(levels); links \(labels(links)), next \(next), previous \(previous); landmarks \(landmarks); controls \(count ?? -1); iframe's heading in the iframe \(inFrame)",
+                how: "call")
+            let enabled = button?.isAccessibilityEnabled()
+            let expanded = button?.accessibilityAttributeValue(.expanded) as? Bool
+            let mixed = box?.accessibilityValue() as? Int
+            let required = textField?.accessibilityAttributeValue(.init(rawValue: "AXRequired")) as? Bool
+            check(
+                "VoiceOver: states: a disabled, collapsed button; a mixed check box; a required field",
+                enabled == false && expanded == false && mixed == 2 && required == true,
+                "button enabled \(String(describing: enabled)) expanded \(String(describing: expanded)); check box \(String(describing: mixed)); field required \(String(describing: required))",
+                how: "call")
+            posted = []
+            _ = await js(
+                "document.getElementById('live').textContent='Saved';document.getElementById('btn').setAttribute('aria-expanded','true');1",
+                on: page)
+            let said = await until(5) {
+                posted.contains {
+                    $0.name == NSAccessibility.Notification.announcementRequested.rawValue
+                        && ($0.info?[NSAccessibility.NotificationUserInfoKey.announcement] as? String) == "Saved"
+                }
+                    && posted.contains { $0.name == "AXExpandedChanged" && ($0.element as? ZBAXNode) === search("AXButtonSearchKey").first }
+            }
+            let reExpanded = search("AXButtonSearchKey").first?.accessibilityAttributeValue(.expanded) as? Bool
+            check(
+                "VoiceOver: a live region's new text is announced; a button's expanded state change is posted",
+                said && reExpanded == true,
+                "posted \(posted.map(\.name)); expanded now \(String(describing: reExpanded))",
+                how: "event")
+            page.chromium.axPosted = nil
+
+            // Fullscreen: a page's element (a video's) asks for it on a click; it fills the page, and the panel gives
+            // the page its address bar's room too. Esc in the page leaves, back as it was.
+            _ = await js(
+                "document.body.innerHTML='<div id=v style=\"width:120px;height:60px;background:#c00\"></div><button id=b onclick=\"document.getElementById(\\'v\\').requestFullscreen()\" style=\"position:absolute;left:20px;top:100px;width:120px;height:40px\">Full</button>';1",
+                on: page)
+            await pause(0.3)
+            let tall = view.bounds.height
+            await click(view, CGPoint(x: 80, y: 120))
+            let entered = await until(5) { page.fullscreen && view.bounds.height > tall }
+            let fills = await waitFor(
+                "(()=>{const e=document.fullscreenElement;if(!e||e.id!=='v')return false;const r=e.getBoundingClientRect();return r.width===innerWidth&&r.height===innerHeight})()",
+                on: page, 3)
+            let grown = view.bounds.height - tall
+            await key(53, "\u{1b}")
+            let left = await until(5) { !page.fullscreen && view.bounds.height == tall }
+            let out = await waitFor("document.fullscreenElement===null", on: page, 3)
+            check(
+                "Fullscreen: a page's element fills the page, the address bar makes room; Esc leaves",
+                entered && fills && left && out,
+                "entered \(entered), page \(Int(grown)) pt taller; element fills the page \(fills); Esc left \(left), none fullscreen \(out)",
+                how: "event")
 
             // Passkeys. No real WebAuthn call here: Chrome's own dialog would show on the user's screen. The page's hook
             // is read back, and its report sent as it would send it: Chrome's dialog then comes from the page itself

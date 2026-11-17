@@ -485,6 +485,7 @@ static NSCursor *Cursor(int type) {
   NSInteger _shield;
   BOOL _devDialogKeeps, _devShieldKeeps;
   NSDictionary *_devDialogState;
+  NSMutableDictionary<NSString *, void (^)(BOOL)> *_pdfs;
   NSInteger _devKeptUnder;
   NSMutableArray *_placeObservers;  // while a dialog is expected or shows: what moves, hides or shows the page
   id _clickMonitor;                 // and every click in Zero, which brings the clicked window above the dialog
@@ -546,6 +547,11 @@ static NSCursor *Cursor(int type) {
   [_engine send:m];
 }
 
+- (void)setAxPosted:(void (^)(id, NSString *, NSDictionary *))axPosted {
+  _axPosted = [axPosted copy];
+  _page.axTree.posted = _axPosted;
+}
+
 /// Opens this tab in the browser app: at first, and again after the app restarts.
 - (void)reopen {
   NSMutableDictionary *open = [@{@"t": @"open", @"tab": @(_number), @"url": _url, @"isolated": @(_isolated)} mutableCopy];
@@ -556,6 +562,7 @@ static NSCursor *Cursor(int type) {
   tree.view = _page;
   tree.press = _page.axTree.press;
   tree.fill = _page.axTree.fill;
+  tree.posted = _page.axTree.posted;
   _page.axTree = tree;
   if (_page.axEnabled) [self send:@{@"t": @"ax", @"on": @YES}];
 }
@@ -613,6 +620,12 @@ static NSCursor *Cursor(int type) {
   NSMutableDictionary *m = [_placed mutableCopy];
   m[@"t"] = @"place";
   [self send:m];
+}
+
+- (void)printToPDF:(NSString *)path paper:(NSSize)inches done:(void (^)(BOOL))done {
+  if (!_pdfs) _pdfs = [NSMutableDictionary dictionary];
+  _pdfs[path] = [done copy];
+  [self send:@{@"t": @"pdf", @"path": path, @"w": @(inches.width), @"h": @(inches.height)}];
 }
 
 - (void)placeDialog {
@@ -763,6 +776,17 @@ static NSCursor *Cursor(int type) {
     if (self.dialogShown) self.dialogShown(NO);
     // The front back to Zero, if the browser app still has it.
     if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == _engine.pid) [NSApp activate];
+    return;
+  } else if ([t isEqual:@"fullscreen"]) {
+    if (self.fullscreen) self.fullscreen([m[@"on"] boolValue]);
+    return;
+  } else if ([t isEqual:@"print"]) {
+    if (self.printAsked) self.printAsked();
+    return;
+  } else if ([t isEqual:@"pdf-done"]) {
+    void (^done)(BOOL) = _pdfs[m[@"path"]];
+    [_pdfs removeObjectForKey:m[@"path"]];
+    if (done) done([m[@"ok"] boolValue]);
     return;
   } else if ([t isEqual:@"new-tab"]) {
     if (self.opened) self.opened(m);

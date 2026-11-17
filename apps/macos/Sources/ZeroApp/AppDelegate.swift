@@ -416,6 +416,9 @@ import ZeroCore
 
     @objc func newTab() { _ = BrowserKeys.newTab(in: keyWorkspace) }
 
+    /// ⌘P: the side panel's page, printed.
+    @objc func printPage() { _ = BrowserKeys.print(in: keyWorkspace) }
+
     /// The workspace window when it's key: the side panel's keys are its alone, never the bar's or another window's.
     private var keyWorkspace: NSWindow? { workspaceWindow.flatMap { $0.isKeyWindow ? $0 : nil } }
 
@@ -441,6 +444,8 @@ import ZeroCore
         // Shifted as AppKit matches them: the capital letter (a lowercase one with a Shift mask never matches ⌘⇧T).
         file.submenu?.addItem(withTitle: "Reopen Closed Tab", action: #selector(AppDelegate.reopenTab), keyEquivalent: "T")
         file.submenu?.addItem(withTitle: "Close Window", action: #selector(AppDelegate.closeTabOrWindow), keyEquivalent: "w")
+        file.submenu?.addItem(.separator())
+        file.submenu?.addItem(withTitle: "Print…", action: #selector(AppDelegate.printPage), keyEquivalent: "p")
         main.addItem(file)
         let edit = NSMenuItem()
         let menu = NSMenu(title: "Edit")

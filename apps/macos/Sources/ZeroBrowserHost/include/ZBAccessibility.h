@@ -13,6 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// A field focused (text nil) or filled with `text` as if typed: what 1Password's Universal Autofill and other
 /// assistive apps set through AXFocused and AXValue.
 @property (nonatomic, copy, nullable) void (^fill)(ZBAXNode *node, NSString *_Nullable text);
+/// Every notification the tree posts for VoiceOver (announcements, values, states), as it posts it: Zero Dev's checks
+/// read them back.
+@property (nonatomic, copy, nullable) void (^posted)(id element, NSString *name, NSDictionary *_Nullable info);
 /// The page's address, from Chromium's tree data: the web area's AXURL, which tells assistive apps (1Password) the site.
 @property (nonatomic, readonly, nullable) NSString *url;
 @property (nonatomic, readonly, nullable) ZBAXNode *root;

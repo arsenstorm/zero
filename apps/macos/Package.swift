@@ -16,7 +16,7 @@ let package = Package(
             name: "ZeroBrowserHost",
             linkerSettings: [.linkedFramework("IOSurface"), .linkedFramework("QuartzCore"), .linkedFramework("Security")]),
         .executableTarget(name: "ZeroApp", dependencies: ["ZeroCore", "ZeroBrowserHost"], linkerSettings: [.linkedFramework("Carbon")]),
-        .testTarget(name: "ZeroCoreTests", dependencies: ["ZeroCore"]),
+        .testTarget(name: "ZeroCoreTests", dependencies: ["ZeroCore", "ZeroBrowserHost"]),
     ],
     swiftLanguageModes: [.v5]
 )

@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import ZeroBrowserHost
 import ZeroCore
@@ -84,6 +85,8 @@ final class WebPage {
     private(set) var canGoForward = false
     /// Why the page went (its renderer or the browser app), until Reload.
     private(set) var crashed: String?
+    /// An element of the page fullscreen (a video's): the panel gives the page its whole column, address bar and all.
+    private(set) var fullscreen = false
     /// Chrome's own dialog for the page (a passkey's) shows, centred on it by the browser app over its panel's column,
     /// which the browser app dims and keeps to the dialog (`modalArea`).
     private(set) var dialog = false {
@@ -163,6 +166,8 @@ final class WebPage {
             PageQuestions.downloaded(path)
         }
         // An app's link clicked in the page: to its app (the browser app kept the page where it was).
+        host.printAsked = { [weak self] in MainActor.assumeIsolated { self?.print() } }
+        host.fullscreen = { [weak self] on in MainActor.assumeIsolated { self?.fullscreen = on } }
         host.outside = { [weak self] address in
             MainActor.assumeIsolated {
                 if let url = URL(string: address) { _ = self?.outside(url) }
@@ -192,6 +197,28 @@ final class WebPage {
         // The tab shows the address at once, as a browser's does, and keeps it if the page can't load.
         changed(address, title)
         chromium.load(address)
+    }
+
+    /// Printed: the page to a PDF (its print styles, on the paper the Mac prints on), then the Mac's print panel for it
+    /// as a sheet on Zero's window (a printer, Save as PDF, Open in Preview). Zero Dev hands the PDF to its checks.
+    func print() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Zero print \(UUID().uuidString).pdf")
+        let info = NSPrintInfo.shared
+        let paper = NSSize(width: info.paperSize.width / 72, height: info.paperSize.height / 72)
+        chromium.print(toPDF: url.path, paper: paper) { [weak self] ok in
+            MainActor.assumeIsolated {
+                guard ok, let self else { return }
+                #if ZERO_DEV
+                    PageQuestions.devPrinted.append(url)
+                #else
+                    guard let window = self.view.window, let document = PDFDocument(url: url),
+                        let operation = document.printOperation(for: info, scalingMode: .pageScaleDownToFit, autoRotate: true)
+                    else { return }
+                    operation.jobTitle = self.title.isEmpty ? url.deletingPathExtension().lastPathComponent : self.title
+                    operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+                #endif
+            }
+        }
     }
 
     func back() {
@@ -389,6 +416,8 @@ enum PageQuestions {
         static var devMenuPick: ([String]) -> String? = { _ in nil }
         /// What was asked, for the harness's evidence.
         static var devTrace: [String] = []
+        /// The PDFs a print made, in place of the print panel.
+        static var devPrinted: [URL] = []
     #endif
 
     /// In Downloads, under a name not taken yet ("name 2.ext"); Zero Dev's in ~/.zero-dev/downloads, never the user's.

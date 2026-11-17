@@ -177,6 +177,9 @@ static KeyInfo Key(int mac) {
 // front of the user, so Chromium keeps its key in memory instead (saved logins and cookies don't outlive the process).
 static bool gNoKeychain = false;
 #define kPasskeyAsked "zero:passkey-asked"
+// A page's window.print(), told to Zero (kPrintAsked): Chrome's own printing on the Mac is its native print panel,
+// a window of this app's with no place in Zero, so the page never reaches it.
+#define kPrintAsked "zero:print-asked"
 static void ExpectDialog(int tab, double seconds);
 static void PlaceDialogs(NSDictionary *place);
 static void DevDialog(int tab, bool open, bool hooked);
@@ -186,6 +189,19 @@ static void DevDialogState();
 // The tab the user last clicked or typed in: a dialog its page didn't say it asked for (kPasskeyAsked) is its.
 static int gInputTab = 0;
 static bool gDev = false;  // Zero Dev's browser (com.….dev.browser)
+
+class PdfDone : public CefPdfPrintCallback {
+ public:
+  PdfDone(int tab, NSString *path) : tab_(tab), path_(path) {}
+  void OnPdfPrintFinished(const CefString &, bool ok) override {
+    ::Send(@{@"t": @"pdf-done", @"tab": @(tab_), @"path": path_, @"ok": @(ok)});
+  }
+
+ private:
+  int tab_;
+  NSString *path_;
+  IMPLEMENT_REFCOUNTING(PdfDone);
+};
 
 class App : public CefApp {
  public:
@@ -288,7 +304,11 @@ class Browser : public CefClient, public CefLifeSpanHandler, public CefDisplayHa
           @"link": @(params->GetLinkUrl().ToString().c_str()), @"selection": @(params->GetSelectionText().ToString().c_str()),
           @"editable": @(params->IsEditable())},
         ^(NSDictionary *a) {
-          if (a[@"command"]) callback->Continue([a[@"command"] intValue], EVENTFLAG_NONE);
+          // Print… goes to Zero, as window.print() does (Chrome's would open its native panel).
+          if ([a[@"command"] intValue] == MENU_ID_PRINT) {
+            callback->Cancel();
+            Send(@{@"t": @"print"});
+          } else if (a[@"command"]) callback->Continue([a[@"command"] intValue], EVENTFLAG_NONE);
           else callback->Cancel();
         });
     return true;
@@ -441,6 +461,8 @@ class Browser : public CefClient, public CefLifeSpanHandler, public CefDisplayHa
     // A page that asks for a passkey says so (a console line, kPasskeyAsked): Chrome's passkey dialog (a window of its
     // own, not in the page) then goes with this tab (ExpectDialog). The call itself goes on as it was; autofill's quiet
     // requests (mediation "conditional") show no dialog and aren't told.
+    // Every frame's window.print(), an agent's page's too (where it does nothing): never Chrome's print panel.
+    Cdp(@"Page.addScriptToEvaluateOnNewDocument", @{@"runImmediately": @YES, @"source": @"window.print = function print() { console.debug('" kPrintAsked "'); };"}, nil);
     if (!agent)
       Cdp(@"Page.addScriptToEvaluateOnNewDocument", @{@"runImmediately": @YES, @"source": @"(() => { const c = navigator.credentials; if (!c) return; for (const n of ['get', 'create']) { const f = c[n].bind(c); c[n] = function (o) { if (o && o.publicKey && o.mediation !== 'conditional') console.debug('" kPasskeyAsked "'); return f(o); }; } })()"}, nil);
     if (url != createdWith_) b->GetMainFrame()->LoadURL(url);  // a load that came while it was being made
@@ -471,10 +493,16 @@ class Browser : public CefClient, public CefLifeSpanHandler, public CefDisplayHa
     Send(@{@"t": @"address", @"url": @(u.ToString().c_str())});
   }
   bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString &message, const CefString &, int) override {
+    if (message.ToString() == kPrintAsked) {
+      if (!agent) Send(@{@"t": @"print"});
+      return true;
+    }
     if (agent || message.ToString() != kPasskeyAsked) return false;
     ExpectDialog(tab, 10);
     return true;
   }
+  // A page's element fullscreen (a video's): Chromium sizes it to the page's area; Zero gives the page more of it.
+  void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override { Send(@{@"t": @"fullscreen", @"on": @(fullscreen)}); }
   void OnTitleChange(CefRefPtr<CefBrowser>, const CefString &title) override {
     this->title = title.ToString();
     Send(@{@"t": @"title", @"title": @(title.ToString().c_str())});
@@ -615,6 +643,11 @@ class Browser : public CefClient, public CefLifeSpanHandler, public CefDisplayHa
   // (doCommandBySelector:), which Blink then runs: deleteToBeginningOfLine for ⌘⌫, moveWordLeft for ⌥←…
   void SendKey(NSDictionary *m) {
     int mac = [m[@"code"] intValue];
+    // Esc leaves a page's fullscreen (as in Chrome, which keeps the key from the page then): Alloy leaves it to us.
+    if (mac == 53 && browser && browser->GetHost()->IsFullscreen()) {
+      if (![m[@"kind"] isEqual:@"keyUp"]) browser->GetHost()->ExitFullscreen(true);
+      return;
+    }
     KeyInfo info = Key(mac);
     NSString *text = m[@"text"] ?: @"";
     NSString *kind = m[@"kind"];
@@ -730,6 +763,15 @@ class Browser : public CefClient, public CefLifeSpanHandler, public CefDisplayHa
       h->StopFinding(true);
     } else if ([t isEqual:@"zoom"]) {
       h->SetZoomLevel([m[@"level"] doubleValue]);
+    } else if ([t isEqual:@"pdf"]) {
+      // The page printed to a PDF (its print styles, on the paper Zero says), for Zero's print panel.
+      CefPdfPrintSettings s;
+      s.paper_width = [m[@"w"] doubleValue];
+      s.paper_height = [m[@"h"] doubleValue];
+      s.prefer_css_page_size = true;
+      s.generate_document_outline = true;
+      NSString *path = m[@"path"];
+      h->PrintToPDF(path.UTF8String, s, new PdfDone(tab, path));
     } else if ([t hasPrefix:@"drag-"]) {
       // A drag over the page: from the page itself (its own data), or from another app (what Zero read off the
       // pasteboard: files, text, a link).

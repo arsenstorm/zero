@@ -83,6 +83,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// The part of the page's window its dialog keeps to itself while it shows (the side panel's column), in the
 /// window's coordinates: the browser app dims it and takes its clicks, giving the dialog the keyboard.
 @property (nonatomic, copy, nullable) NSRect (^modalArea)(void);
+/// The page's element fullscreen (requestFullscreen) on or off; Esc in the page leaves it.
+@property (nonatomic, copy, nullable) void (^fullscreen)(BOOL on);
+/// The page asks to print (its window.print(), or Print… in its menu).
+@property (nonatomic, copy, nullable) void (^printAsked)(void);
+/// What the page's accessibility tree posts for VoiceOver (announcements, values, states), for Zero Dev's checks.
+@property (nonatomic, copy, nullable) void (^axPosted)(id element, NSString *name, NSDictionary *_Nullable info);
+/// The page printed to a PDF at `path` (its print styles, on paper of `inches`); `done` says whether it was written.
+- (void)printToPDF:(NSString *)path paper:(NSSize)inches done:(void (^)(BOOL ok))done;
 /// Whether the page's tab is the one in view (its task shown, its panel open, it selected): its dialog hides otherwise.
 @property (nonatomic, copy, nullable) BOOL (^inView)(void);
 /// Its dialog placed again (what `inView` or `modalArea` says changed); nothing while none shows.

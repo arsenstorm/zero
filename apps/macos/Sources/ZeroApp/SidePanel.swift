@@ -122,8 +122,10 @@ struct SidePanel: View {
         Group {
             if let tab = tabs.shown {
                 VStack(spacing: 0) {
-                    BrowserBar(task: task, tab: tab)
-                    Hairline()
+                    if WebPages.existing(tab.id)?.fullscreen != true {
+                        BrowserBar(task: task, tab: tab)
+                        Hairline()
+                    }
                     if tab.isNew {
                         NewTabPage(workspace: workspace, row: row, conversation: conversation, closed: tabs.closed) { open($0) }
                     } else {
@@ -268,6 +270,14 @@ enum BrowserKeys {
         Panels.shared.change(task) { reopened = $0.reopen() }
         if reopened { kept = task }
         return reopened
+    }
+
+    /// ⌘P: the page the panel shows, printed. False leaves the key to Zero.
+    static func print(in window: NSWindow?) -> Bool {
+        guard window != nil, let task = visible(), let tab = Panels.shared.tabs(task).selected, let page = WebPages.existing(tab)
+        else { return false }
+        page.print()
+        return true
     }
 
     /// ⌘T: a new tab, its address bar ready to type in.
