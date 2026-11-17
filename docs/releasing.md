@@ -16,9 +16,10 @@ The release has these files:
 |---|---|
 | `Zero.dmg` | The download for people: the notarised app beside a link to Applications. The website links it. |
 | `Zero.zip` | The same app, zipped. Zero's updater installs the release's only `.zip`, so keep it the only one. |
-| `Zero.dmg.sha256`, `Zero.zip.sha256` | Their SHA-256, as `shasum -a 256` writes it. |
-| `Zero.dmg.sigstore.json`, `Zero.zip.sigstore.json` | Their cosign signature bundles. |
-| `Zero.intoto.jsonl` | The SLSA build provenance of both: the same attestation that `gh attestation verify` reads. |
+| `Zero.slim` | The same app without Chromium's framework (`make slim`), about a tenth of the size, zipped. The updater copies the framework from the installed Zero into it, then checks the app's signature. If the installed Chromium is another version, the check fails and the updater downloads `Zero.zip`. The name does not end in `.zip`, so older updaters ignore it. |
+| `Zero.dmg.sha256`, `Zero.zip.sha256`, `Zero.slim.sha256` | Their SHA-256, as `shasum -a 256` writes it. |
+| `Zero.dmg.sigstore.json`, `Zero.zip.sigstore.json`, `Zero.slim.sigstore.json` | Their cosign signature bundles. |
+| `Zero.intoto.jsonl` | The SLSA build provenance of all three: the same attestation that `gh attestation verify` reads. |
 
 ## The disk image
 

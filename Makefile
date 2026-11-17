@@ -71,6 +71,17 @@ dmg: $(DMGBUILD)
 	rm -f build/Zero.dmg
 	$(DMGBUILD) -s $(MACOS)/dmg/settings.py -D app=$(APP) Zero build/Zero.dmg
 
+# The update for a Zero that has this release's Chromium already: the app as it is (stapled, in CI) without CEF's
+# framework, about a tenth of Zero.zip. The updater puts the installed Zero's framework in and checks the seal
+# (Updates.download); a Zero with another Chromium downloads Zero.zip. Not a .zip: updaters before it take the only one.
+CEF_FRAMEWORK = Contents/Helpers/Zero Browser.app/Contents/Frameworks/Chromium Embedded Framework.framework
+slim:
+	rm -rf build/slim build/Zero.slim && mkdir build/slim
+	ditto $(APP) build/slim/Zero.app
+	rm -rf "build/slim/Zero.app/$(CEF_FRAMEWORK)"
+	cd build/slim && ditto -c -k --keepParent Zero.app ../Zero.slim
+	rm -rf build/slim
+
 # Releases are built, signed, notarised and published by CI (.github/workflows/release.yml, docs/releasing.md) from a
 # pushed tag: raise the version in Info.plist (X.Y.Z), commit and push, then `make release` tags HEAD and pushes the tag.
 release:
@@ -116,4 +127,4 @@ lint:
 	swift format lint --strict --recursive --parallel $(SWIFT_SOURCES)
 	bun run format:check
 
-.PHONY: build zerod bundle dmg install release run dev dev-stop e2e test setup format lint
+.PHONY: build zerod bundle dmg slim install release run dev dev-stop e2e test setup format lint

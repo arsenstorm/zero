@@ -19,6 +19,9 @@ public struct Release: Decodable, Equatable, Sendable {
 
     public var version: String { tag.hasPrefix("v") ? String(tag.dropFirst()) : tag }
     public var app: Asset? { assets.first { $0.name.hasSuffix(".zip") } }
+    /// The same app without Chromium's framework (a tenth of the size), for a Zero that has the same Chromium. Not a
+    /// .zip, so updaters before it take `app`.
+    public var slim: Asset? { assets.first { $0.name == "Zero.slim" } }
 }
 
 /// Zero's updates, from its GitHub releases (CI makes them from a pushed tag: docs/releasing.md). Nothing installs unless it's
@@ -55,9 +58,37 @@ public enum Updates {
     }
 
     #if os(macOS)
-        /// The release's app, downloaded and unzipped into a folder of its own.
-        public static func download(_ release: Release) async throws -> URL {
+        /// Where Zero Browser's Chromium is in Zero.app: most of its size, and the same from release to release until
+        /// apps/browser/cef.sh pins another.
+        public static let chromium = "Contents/Helpers/Zero Browser.app/Contents/Frameworks/Chromium Embedded Framework.framework"
+
+        /// The release's app, downloaded and unzipped into a folder of its own. The slim one first, with the installed
+        /// Zero's Chromium put in: if that Chromium isn't the one the release was signed with, the app's seal fails and
+        /// the whole app is downloaded instead.
+        public static func download(_ release: Release, installed: URL = Bundle.main.bundleURL) async throws -> URL {
+            if let slim = release.slim, let app = try? await fetch(slim, of: release), graft(from: installed, into: app),
+                signedAsThis(app)
+            {
+                return app
+            }
             guard let asset = release.app else { throw Failure("Zero \(release.version) has no app to download") }
+            let app = try await fetch(asset, of: release)
+            guard signedAsThis(app) else { throw Failure("Zero \(release.version) isn't signed as this Zero is, so it wasn't installed") }
+            return app
+        }
+
+        /// Copies the installed Zero's Chromium into `app`, which has none: a clone on the same disk, so it takes no
+        /// time or space.
+        public static func graft(from installed: URL, into app: URL) -> Bool {
+            let (from, to) = (installed.appendingPathComponent(chromium), app.appendingPathComponent(chromium))
+            let files = FileManager.default
+            guard files.fileExists(atPath: from.path), !files.fileExists(atPath: to.path),
+                files.fileExists(atPath: to.deletingLastPathComponent().path)
+            else { return false }
+            return (try? files.copyItem(at: from, to: to)) != nil
+        }
+
+        private static func fetch(_ asset: Release.Asset, of release: Release) async throws -> URL {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("zero-update-\(release.version)")
             try? FileManager.default.removeItem(at: folder)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -72,9 +103,7 @@ public enum Updates {
             guard run("/usr/bin/ditto", ["-x", "-k", zip.path, folder.path]) != nil else {
                 throw Failure("Couldn't unzip Zero \(release.version)")
             }
-            let app = folder.appendingPathComponent("Zero.app")
-            guard signedAsThis(app) else { throw Failure("Zero \(release.version) isn't signed as this Zero is, so it wasn't installed") }
-            return app
+            return folder.appendingPathComponent("Zero.app")
         }
 
         /// Whether the app at `app` meets this build's own designated requirement: signed by the same identity, intact.

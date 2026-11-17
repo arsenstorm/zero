@@ -1,7 +1,8 @@
 # Zero's releases (docs/releasing.md). A pushed tag vX.Y.Z builds what `make bundle` builds, signs it as a Developer ID
 # with the hardened runtime, notarises and staples it, then publishes the GitHub release: Zero.zip (what Zero's updater
-# installs) and Zero.dmg (what people download), each with its SHA-256 and a Sigstore signature, and SLSA build
-# provenance for both. Run by hand, it rehearses everything up to publishing and leaves them as the run's artifact.
+# installs), Zero.slim (the same without Chromium's framework, which the updater takes from the installed Zero when it is
+# the same) and Zero.dmg (what people download), each with its SHA-256 and a Sigstore signature, and SLSA build
+# provenance for all three. Run by hand, it rehearses everything up to publishing and leaves them as the run's artifact.
 name: Release
 
 on:
@@ -123,6 +124,11 @@ jobs:
           shasum -a 256 Zero.zip > Zero.zip.sha256
           cat Zero.zip.sha256
 
+      - name: Slim zip
+        run: |
+          make slim
+          cd build && shasum -a 256 Zero.slim > Zero.slim.sha256 && cat Zero.slim.sha256
+
       # For people: the same stapled app in a disk image with an Applications link (make dmg), which is signed,
       # notarised and stapled in turn.
       - name: Disk image
@@ -144,6 +150,8 @@ jobs:
           path: |
             build/Zero.zip
             build/Zero.zip.sha256
+            build/Zero.slim
+            build/Zero.slim.sha256
             build/Zero.dmg
             build/Zero.dmg.sha256
           if-no-files-found: error
@@ -187,6 +195,7 @@ jobs:
         working-directory: ${{ runner.temp }}/release
         run: |
           cosign sign-blob --yes --bundle Zero.zip.sigstore.json Zero.zip
+          cosign sign-blob --yes --bundle Zero.slim.sigstore.json Zero.slim
           cosign sign-blob --yes --bundle Zero.dmg.sigstore.json Zero.dmg
 
       - name: Attest build provenance
@@ -195,10 +204,11 @@ jobs:
         with:
           subject-path: |
             ${{ runner.temp }}/release/Zero.zip
+            ${{ runner.temp }}/release/Zero.slim
             ${{ runner.temp }}/release/Zero.dmg
 
       # Attached too: Scorecard's Signed-Releases check looks for a release asset ending in .intoto.jsonl. One
-      # attestation, with the zip and the disk image as its subjects.
+      # attestation, with the zips and the disk image as its subjects.
       - name: Keep the provenance with the release
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
