@@ -113,3 +113,67 @@ private let acme = Slack.State(team: .init(id: "T0AB", name: "Acme", domain: "ac
     #expect(found.map { ns.substring(with: $0.range) } == ["zero://task/01a1e4b4537c009e", "064c6bb7b5"])
     #expect(found.first?.url.absoluteString == "zero://task/01a1e4b4537c009e")
 }
+
+/// A lead in a folder of worktrees (no repository of its own) writes a table of its pull requests and their heads.
+private let followedPulls: [String: Set<String>] = ["13963": ["acme/app"], "13964": ["acme/app"], "500": ["acme/app", "acme/site"]]
+
+@Test func aBarePullRequestIsTheOneTheTaskFollows() {
+    let text = "#13963 is up, #500 is in two repos, #77 in none"
+    let urls = { (repo: String?) in
+        References.find(in: text, repo: repo, linear: [:], linearApp: false, pulls: followedPulls).map(\.url.absoluteString)
+    }
+    #expect(urls(nil) == ["https://github.com/acme/app/pull/13963"], "two repos or none, and no folder repo: no link")
+    // A folder repo: one of the two repos is the folder's own; a number followed nowhere is the folder's.
+    #expect(
+        urls("acme/site") == [
+            "https://github.com/acme/app/pull/13963", "https://github.com/acme/site/pull/500", "https://github.com/acme/site/pull/77",
+        ])
+    #expect(urls("acme/other").count == 2, "followed in two repos, neither the folder's: no guess")
+}
+
+@Test func aCommitIsInTheRepoOfThePullRequestBesideIt() {
+    let find = { (text: String, repo: String?, row: String?) in
+        References.find(in: text, repo: repo, linear: [:], linearApp: false, pulls: followedPulls, row: row).map(\.url.absoluteString)
+    }
+    // A table cell: the pull request is in another cell of its row.
+    #expect(
+        find("87c01f9a1e", nil, "#13963 | U-9810: titles | 87c01f9a1e | 17/17 pass") == ["https://github.com/acme/app/commit/87c01f9a1e"])
+    #expect(find("87c01f9a1e", nil, "#77 | 87c01f9a1e").isEmpty, "a pull request of no known repo, no folder repo: no link")
+    #expect(find("87c01f9a1e", nil, "#77 | 87c01f9a1e | after #13963").isEmpty, "its own PR unknown, another's known: no guess")
+    // Prose: the pull request in the same sentence, not the one before.
+    #expect(
+        find("#13964 is merged. Then 79cf980666 went out.", nil, nil) == ["https://github.com/acme/app/pull/13964"])
+    #expect(
+        find("Pushed 79cf980666 to #13964.", nil, nil) == [
+            "https://github.com/acme/app/commit/79cf980666", "https://github.com/acme/app/pull/13964",
+        ])
+    #expect(find("Pushed 79cf980666 to site#9.", nil, nil).isEmpty, "a named repo needs an owner")
+    #expect(
+        find("Pushed 79cf980666 to acme/site#9.", "acme/app", nil).first == "https://github.com/acme/site/commit/79cf980666")
+    // Pull requests beside it that disagree, or one of no known repo: no link, not the folder's.
+    #expect(find("Pushed 79cf980666 for acme/site#9 and acme/api#3.", "acme/app", nil).count == 2)
+    #expect(find("79cf980666", "acme/other", "#500 | 79cf980666").isEmpty)
+    // No pull request beside it: the folder's repo, else nothing.
+    #expect(find("Pushed 79cf980666.", "acme/app", nil) == ["https://github.com/acme/app/commit/79cf980666"])
+    #expect(find("Pushed 79cf980666.", nil, nil).isEmpty)
+    // Not inside a word or an address.
+    #expect(find("c4f54766-1dec-4258-9559-8f6f3bc9270b and 87c01f9a1e.png", "acme/app", nil).isEmpty)
+    #expect(find("x79cf980666 and https://github.com/acme/app/commit/79cf980666", "acme/app", nil).isEmpty)
+    #expect(find("zero://task/01a1e4b4537c009e", "acme/app", "#13963 | zero://task/01a1e4b4537c009e") == ["zero://task/01a1e4b4537c009e"])
+}
+
+@Test func aWorkersFollowsCountForItsLead() {
+    let follow = { (session: String, topic: String) -> ZerodLink.Followed in
+        let json =
+            #"{"session":"\#(session)","topic":"\#(topic)","at":0,"summary":"","lastPoll":0,"mine":false,"about":[],"new":false,"detail":""}"#
+        return try! JSONDecoder().decode(ZerodLink.Followed.self, from: Data(json.utf8))
+    }
+    let pulls = References.pulls(
+        [
+            follow("lead", "github/acme/app/13963"), follow("worker", "github/acme/site/pull/9"), follow("lead", "linear/U-1"),
+            follow("other", "github/acme/app/9"), follow("lead", "github/*/*/4"),
+        ], leads: ["worker": "lead"])
+    #expect(pulls["lead"] == ["13963": ["acme/app"], "9": ["acme/site"]])
+    #expect(pulls["worker"] == ["9": ["acme/site"]])
+    #expect(pulls["other"] == ["9": ["acme/app"]])
+}

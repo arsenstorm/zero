@@ -1151,6 +1151,7 @@ struct StreamingText: View {
     let readout: Readout
     let text: String
     let cwd: String
+    @Environment(\.linkTask) private var task
     /// Its item still arriving: read out the GPU way until it's whole, though reading catches up with it now and then
     /// (each catch-up was otherwise a switch to the finished text and back, the view and its layout made anew).
     var growing = false
@@ -1173,7 +1174,7 @@ struct StreamingText: View {
             // jumping as it went from one to the other.
             let _ = MarkdownText.render(
                 text, size: 14.5, compact: false,
-                links: MarkdownText.links(cwd: cwd, yours: false))
+                links: MarkdownText.links(cwd: cwd, yours: false, task: task))
             MarkdownText(text, cwd: cwd, size: 14.5)
         } else {
             // Read here so the clock's tick redraws this, and only this.

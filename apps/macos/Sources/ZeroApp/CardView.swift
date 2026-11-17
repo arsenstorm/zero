@@ -209,14 +209,14 @@ struct CardView: View {
 
     /// An agent's words and nothing else; the time is in Earlier once the card folds away.
     @ViewBuilder private var noteText: some View {
-        MarkdownText(ask.body, cwd: ask.agent.cwd ?? ask.cwd)
+        MarkdownText(ask.body, cwd: ask.agent.cwd ?? ask.cwd).environment(\.linkTask, task)
         if ask.status == "blocked" { Text("Blocked").font(.system(size: 11, weight: .medium)).foregroundStyle(.red) }
     }
 
     /// Its words with what they name made links, as a message's are: a Linear ticket, a pull request (repo#123, #123 in
     /// the agent's own repository), a commit, a Slack channel; "#anchor", a passage of its task's conversation.
     private func linked(_ words: String) -> AttributedString {
-        let links = MarkdownText.links(cwd: ask.agent.cwd ?? ask.cwd, yours: false)
+        let links = MarkdownText.links(cwd: ask.agent.cwd ?? ask.cwd, yours: false, task: task)
         return MarkdownText.inline(task.map { TaskLinks.absolute(words, task: $0) } ?? words, links: links)
     }
 

@@ -43,7 +43,10 @@ import ZeroCore
     // From inside a task: another task's words, marked as its and given between turns (as a worker's report is),
     // never passed off as the user's or steering a turn.
     if let me = ProcessInfo.processInfo.environment["ZERO_SESSION"], me != positional[0] {
-        await zerod { try await $0.notify(session: positional[0], text: text, from: me) }
+        // Held rather than given between its turns: said, so the sender doesn't take it as delivered.
+        if let held = await zerod({ try await $0.notify(session: positional[0], text: text, from: me) }) {
+            print("held: \(positional[0]) \(held)")
+        }
     } else {
         await zerod { try await $0.send(session: positional[0], text: text) }
     }
@@ -51,7 +54,7 @@ import ZeroCore
 
 @MainActor func notifyCommand() async {
     guard positional.count >= 2 else { usage() }
-    await zerod { try await $0.notify(session: positional[0], text: positional[1...].joined(separator: " ")) }
+    _ = await zerod { try await $0.notify(session: positional[0], text: positional[1...].joined(separator: " ")) }
 }
 
 @MainActor func waitSessionsCommand() async {

@@ -3,12 +3,19 @@ import Observation
 import SwiftUI
 import ZeroCore
 
+extension EnvironmentValues {
+    /// The task whose conversation is shown: what its messages' bare references resolve against (MarkdownText.links).
+    @Entry var linkTask: String? = nil
+}
+
 /// Markdown the way agents write it: paragraphs with inline emphasis and `code`, and fenced blocks set in
 /// monospace on their own surface. ponytail: fences and inline syntax only; headings and lists read as text.
 struct MarkdownText: View {
     let text: String
     /// The agent's folder: what "./" in the text is in, and whose skills a "/word" may name.
     var cwd: String?
+    /// The task it's in: the pull requests it follows say which repository a bare "#123" is in.
+    @Environment(\.linkTask) private var task
     /// The body text's size; headings, code and markers scale with it. The inbox's cards are smaller than a task's page.
     var size: CGFloat
     /// Quieter, for a preview: headings at the text's size, code without pills, tighter spacing.
@@ -144,12 +151,13 @@ struct MarkdownText: View {
     }
 
     /// What finding links needs, read on the main thread so rendering can happen anywhere.
-    private var links: Links { Self.links(cwd: cwd, yours: yours) }
+    private var links: Links { Self.links(cwd: cwd, yours: yours, task: task) }
     /// `links.key` without building them (yours read the folder's skills): reading the version redraws this when it changes.
-    private var keyOfLinks: String { Links.key(cwd: cwd, yours: yours, version: LinkInputs.shared.version) }
+    private var keyOfLinks: String { Links.key(cwd: cwd, yours: yours, task: task, version: LinkInputs.shared.version) }
 
-    static func links(cwd: String?, yours: Bool) -> Links {
+    static func links(cwd: String?, yours: Bool, task: String? = nil) -> Links {
         Links(
+            pulls: task.flatMap { LinkInputs.shared.pulls[$0] } ?? [:], task: task,
             repo: cwd.flatMap(References.repo(of:)), owner: cwd.flatMap(References.owner(of:)), github: GitHubLinks.enabled,
             slack: SlackLinks.teams, teams: LinearLinks.enabled ? LinearTeams.known : [:],
             app: LinearLinks.inApp, loops: LoopNames.known, skills: yours, pads: PadNames.known, cwd: cwd,
@@ -159,7 +167,10 @@ struct MarkdownText: View {
     /// Styles a conversation's messages ahead of their first drawing (the window opening on it), off the main thread,
     /// so the page paints at once instead of parsing as it scrolls into view.
     static func warm(_ conversation: Conversation) async {
-        let (theirs, yours) = (links(cwd: conversation.cwd, yours: false), links(cwd: conversation.cwd, yours: true))
+        let (theirs, yours) = (
+            links(cwd: conversation.cwd, yours: false, task: conversation.id),
+            links(cwd: conversation.cwd, yours: true, task: conversation.id)
+        )
         let texts: [(String, Bool)] = conversation.items.compactMap { item in
             switch item.kind {
             case let .agent(text, _): (text, false)
@@ -173,6 +184,9 @@ struct MarkdownText: View {
     }
 
     struct Links: Sendable {
+        /// The task's followed pull requests (LinkInputs.pulls), and the task.
+        var pulls: [String: Set<String>] = [:]
+        var task: String?
         let repo: String?
         let owner: String?
         /// Pull requests and commits as links.
@@ -195,8 +209,10 @@ struct MarkdownText: View {
         var version = 0
 
         /// What the rendering depends on, for its cache keys: repo and owner come from the folder; the rest is the version.
-        var key: String { Self.key(cwd: cwd, yours: skills, version: version) }
-        static func key(cwd: String?, yours: Bool, version: Int) -> String { "\(cwd ?? "")|\(yours)|\(version)" }
+        var key: String { Self.key(cwd: cwd, yours: skills, task: task, version: version) }
+        static func key(cwd: String?, yours: Bool, task: String?, version: Int) -> String {
+            "\(cwd ?? "")|\(yours)|\(task ?? "")|\(version)"
+        }
     }
 
     private struct Rendered: @unchecked Sendable { let text: NSAttributedString; init(_ text: NSAttributedString) { self.text = text } }
@@ -207,7 +223,8 @@ struct MarkdownText: View {
         let key = "\(links.key)|false"
         let render = { (part: String, growing: Bool, trimmed: Bool) in
             RichMarkdown.render(
-                MarkdownBlock.parse(part), size: size, inline: { inline($0, links: links) }, key: key, growing: growing, trimmed: trimmed)
+                MarkdownBlock.parse(part), size: size, inline: { inline($0, links: links, row: $1) }, key: key, growing: growing,
+                trimmed: trimmed)
         }
         // What's settled (MarkdownBlock.settled) is rendered once and kept; each frame parses and styles only what
         // follows it. Parsed whole, each frame's work grew with the answer.
@@ -232,7 +249,7 @@ struct MarkdownText: View {
     nonisolated static func render(_ text: String, size: CGFloat, compact: Bool, links: Links) -> NSAttributedString {
         RichMarkdown.cached(text, size: size, compact: compact, links: links.key) {
             let made = RichMarkdown.render(
-                MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links) },
+                MarkdownBlock.parse(ZeroEnding.split(text).0), size: size, inline: { inline($0, links: links, row: $1) },
                 key: "\(links.key)|\(compact)")
             // Yours, in a bubble: its code without a panel of its own (never a card in a card).
             let flat = links.skills ? RichMarkdown.flat(made) : made
@@ -241,7 +258,7 @@ struct MarkdownText: View {
     }
 
     /// Linear issues and pull requests become links, except inside `code` and links the agent already wrote.
-    nonisolated static func inline(_ prose: String, links: Links) -> AttributedString {
+    nonisolated static func inline(_ prose: String, links: Links, row: String? = nil) -> AttributedString {
         var result =
             (try? AttributedString(markdown: prose, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(prose)
@@ -250,7 +267,7 @@ struct MarkdownText: View {
         }
         for (range, url) in References.find(
             in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app, owner: links.owner,
-            github: links.github, slack: links.slack)
+            github: links.github, slack: links.slack, pulls: links.pulls, row: row)
         {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }

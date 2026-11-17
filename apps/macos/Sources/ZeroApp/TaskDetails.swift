@@ -18,18 +18,47 @@ struct TaskDetails: View {
     @State private var allWorkers = false
     @FocusState private var focus: String?
 
+    /// Folded parts opened: an issue's closed pull requests (by its ticket), and everything done or closed ("more").
+    @State private var unfolded: Set<String> = []
+    /// As wide as a browser page made the panel: the links get a column of their own, their names whole.
+    @State private var wide = false
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                status; issues; workers; links; leftRunning; agent; folder
+            Group {
+                if wide && !followed.isEmpty {
+                    HStack(alignment: .top, spacing: 40) {
+                        column {
+                            status; issues; workers; leftRunning; agent; folder
+                        }.frame(maxWidth: 460)
+                        // Its heading level with the status pill at the top of the other column.
+                        column { links }.frame(maxWidth: 600).padding(.top, row == nil ? 0 : -20)
+                    }
+                } else {
+                    // The pane's whole width: link names get the room; only long lines keep a measure (Self.measure).
+                    column {
+                        status; issues; workers; links; leftRunning; agent; folder
+                    }
+                }
             }
             .font(.system(size: 12.5))
-            .frame(maxWidth: 460, alignment: .leading)
             .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .thinScrollbar()
+        .onGeometryChange(for: Bool.self) {
+            $0.size.width >= 900
+        } action: {
+            wide = $0
+        }
         .task(id: workspace.followingVersion) { await workspace.loadFollowing() }
+    }
+
+    /// The most a paragraph runs across (its status in words, a worker's report) before it's hard to read.
+    private static let measure: CGFloat = 640
+
+    private func column(@ViewBuilder _ content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 0) { content() }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Status
@@ -48,6 +77,7 @@ struct TaskDetails: View {
                 }
                 if let words = row.trouble ?? row.needs ?? row.now, !words.isEmpty {
                     Text(Self.inline(words)).foregroundStyle(.secondary).tint(Theme.link).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: Self.measure, alignment: .leading)
                 }
                 if let next = nextTurn(row.next) { Text(next).foregroundStyle(.tertiary) }
                 ForEach(asks) { ask in
@@ -87,25 +117,27 @@ struct TaskDetails: View {
 
     // MARK: Issues and workers
 
-    /// Its issues are the board at the top of its conversation (IssueStrip): here, how many, and a way to it.
+    /// Its issues are the board at the top of its conversation (IssueStrip): here, a pill per state, and a way to it.
     @ViewBuilder private var issues: some View {
         let issues = row?.issues ?? []
         if !issues.isEmpty {
-            let you = issues.filter { $0.state == "you" }.count
             section("Issues") {
-                Button {
-                    NotificationCenter.default.post(name: IssueStrip.show, object: conversation.id)
-                } label: {
-                    Self.linked(
-                        "\(issues.count) \(issues.count == 1 ? "issue" : "issues")"
-                            + (you == 0 ? "" : " · \(you) \(you == 1 ? "needs" : "need") you"))
+                HStack(spacing: 6) {
+                    ForEach(IssueBoard.counts(issues), id: \.state) { state, count in Count(state: state, count: count) }
+                    Spacer(minLength: 8)
+                    Button {
+                        NotificationCenter.default.post(name: IssueStrip.show, object: conversation.id)
+                    } label: {
+                        Self.linked("Open the board")
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
 
     /// The few that matter (needing you, in trouble, at work) first, the rest behind their count; a click shows one.
+    /// Each line is its worker's (an agent's): the pixel family, by its state, and its latest words.
     @ViewBuilder private var workers: some View {
         let members = (row?.team ?? []).filter { $0.session != conversation.id }.sorted { $0.state.urgency < $1.state.urgency }
         if !members.isEmpty {
@@ -120,11 +152,21 @@ struct TaskDetails: View {
                         navigation.worker = member.session
                     } label: {
                         HStack(alignment: .top, spacing: 8) {
-                            TaskStateIcon(state: member.state).frame(width: 14, height: 16)
+                            Group {
+                                if member.state == .working {
+                                    TaskStateIcon(state: member.state)
+                                } else {
+                                    PixelIcon(Self.workerIcon(member.state), height: 12).foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(width: 14, height: 16).tip(TaskStateIcon.look(member.state).name)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(workspace.conversation(member.session).map(Workspace.label(of:)) ?? member.place).fontWeight(.medium)
                                     .lineLimit(1)
-                                if let now = member.needs ?? member.now, !now.isEmpty { Text(now).foregroundStyle(.secondary).lineLimit(2) }
+                                if let now = member.needs ?? member.now, !now.isEmpty {
+                                    Text(Self.inline(now)).foregroundStyle(.secondary).tint(.secondary).lineLimit(2)
+                                        .frame(maxWidth: Self.measure, alignment: .leading)
+                                }
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -136,19 +178,206 @@ struct TaskDetails: View {
         }
     }
 
+    /// A worker's state as AgentIcons words its reports.
+    private static func workerIcon(_ state: BoardRow.State) -> String {
+        switch state {
+        case .needsYou: "px-circle-question"
+        case .trouble: "px-robot-angry"
+        case .blocked: "px-robot-ban"
+        case .done, .handed: "px-robot-heart"
+        case .waiting: "px-robot-sleeping"
+        default: "px-robot"
+        }
+    }
+
     // MARK: Links
 
-    /// Its pull request, ticket, other attributes and follows, once each; each opens in a tab of the panel.
+    private var followed: [ZerodLink.Followed] { workspace.followed.filter { $0.session == conversation.id } }
+
+    /// The issues its links go under: its board's, done or not, and its own ticket.
+    private var linkTickets: [(ticket: String, done: Bool?)] {
+        let board: [(ticket: String, done: Bool?)] = IssueBoard.sorted(conversation.issues ?? row?.issues ?? []).map {
+            ($0.ticket, $0.state == "done")
+        }
+        guard let ticket = conversation.ticket, !board.contains(where: { $0.ticket == ticket }) else { return board }
+        return board + [(ticket, nil)]
+    }
+
+    /// What it follows by issue (LinkGroups): each issue still open with its open pull requests, its closed ones behind
+    /// their count; then what's about no issue and its channels; everything done or closed behind one count at the end.
+    /// Its own links that it doesn't follow (attributes, its ticket) first.
     @ViewBuilder private var links: some View {
-        let links = TaskLinksList.of(conversation, row: row, in: workspace)
-        if !links.isEmpty {
+        let own = TaskLinksList.of(conversation, row: row, in: workspace).filter { $0.followed == nil }
+        let groups = LinkGroups.of(followed, issues: linkTickets)
+        let live = groups.issues.filter { !$0.folded }
+        let folded = groups.issues.filter(\.folded)
+        let other = groups.other.filter { !($0.closed ?? false) }
+        let closed = groups.other.filter { $0.closed ?? false }
+        let hidden = folded.reduce(0) { $0 + ($1.issue == nil ? 0 : 1) + $1.changes.reduce(0) { $0 + $1.follows.count } } + closed.count
+        if !own.isEmpty || !followed.isEmpty {
             section("Links") {
-                ForEach(links) { link in
-                    LinkLine(link: link, open: open) { follow in
-                        Task { await workspace.unfollow(session: follow.session, topic: follow.topic) }
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(own) { link in
+                        LinkRow(icon: link.icon) { linkWords(link.title, link.url) }
+                    }
+                    ForEach(live) { issueLinks($0) }
+                    if !other.isEmpty || !groups.channels.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(other) { followLine($0) }
+                            if !groups.channels.isEmpty { channels(groups.channels) }
+                        }
+                    }
+                    if hidden > 0 {
+                        fold("more", "\(hidden) more, done or closed")
+                        if unfolded.contains("more") {
+                            ForEach(folded) { issueLinks($0) }
+                            if !closed.isEmpty { VStack(alignment: .leading, spacing: 4) { ForEach(closed) { followLine($0) } } }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    /// An issue: its ticket, its name and status, then its open pull requests, the closed ones behind their count.
+    private func issueLinks(_ group: LinkGroups.Issue) -> some View {
+        let live = group.changes.filter { !$0.closed }
+        let closed = group.changes.filter(\.closed)
+        let count = closed.reduce(0) { $0 + $1.follows.count }
+        return VStack(alignment: .leading, spacing: 4) {
+            LinkRow(icon: "ticket", pill: group.issue?.state.map { ($0, .secondary) }, unfollow: group.issue.map(unfollowing)) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    let url = group.issue?.url ?? Self.ticketURL(group.ticket)
+                    if let url {
+                        Button {
+                            open(url.absoluteString)
+                        } label: {
+                            Self.linked(group.ticket)
+                        }.buttonStyle(.plain).fixedSize().tip(url.absoluteString)
+                    } else {
+                        Text(group.ticket).fontWeight(.medium).fixedSize()
+                    }
+                    if let issue = group.issue { name(issue.name ?? issue.title, error: issue) }
+                }
+            }
+            ForEach(live) { change($0) }
+            if !closed.isEmpty {
+                if unfolded.contains(group.ticket) {
+                    ForEach(closed) { change($0) }
+                } else {
+                    fold(group.ticket, "\(count) \(closed.allSatisfy { $0.state == "merged" } ? "merged" : "closed")")
+                }
+            }
+        }
+    }
+
+    /// A pull request, or the same change in several repositories: each one's repo#number, its name, its state.
+    private func change(_ change: LinkGroups.Change) -> some View {
+        LinkRow(icon: "github:glyph", pill: change.state.map(Self.pill)) {
+            Task { for follow in change.follows { await workspace.unfollow(session: follow.session, topic: follow.topic) } }
+        } words: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(spacing: 6) {
+                    ForEach(change.follows) { follow in
+                        Button {
+                            open(follow.url?.absoluteString ?? "")
+                        } label: {
+                            Self.linked(Self.shown(follow.url?.absoluteString ?? follow.topic))
+                        }
+                        .buttonStyle(.plain).fixedSize().tip(follow.url?.absoluteString ?? "")
+                    }
+                }
+                name(change.name, error: change.follows.first { $0.error != nil })
+            }
+        }
+    }
+
+    /// A followed thing about no issue: a pull request or issue by its number and name, a thread by its line.
+    private func followLine(_ follow: ZerodLink.Followed) -> some View {
+        let icon = ["github": "github:glyph", "linear": "ticket", "slack": "slack:glyph"][follow.source] ?? "link"
+        let url = follow.url?.absoluteString ?? ""
+        return LinkRow(icon: icon, pill: follow.state.map(Self.pill), unfollow: unfollowing(follow)) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if let thing = follow.name {
+                    let ref = follow.source == "github" ? Self.shown(url) : String(follow.topic.split(separator: "/").last ?? "")
+                    Button {
+                        open(url)
+                    } label: {
+                        Self.linked(ref)
+                    }.buttonStyle(.plain).fixedSize().tip(url)
+                    name(thing, error: follow)
+                } else {
+                    Button {
+                        open(url)
+                    } label: {
+                        Self.linked(follow.title).lineLimit(1).truncationMode(.tail)
+                    }.buttonStyle(.plain).tip(url)
+                }
+            }
+        }
+    }
+
+    /// Its channels in a line, each its own link (an × to unfollow under the pointer).
+    private func channels(_ follows: [ZerodLink.Followed]) -> some View {
+        LinkRow(icon: "slack:glyph") {
+            WrappingStack(spacing: 8) {
+                ForEach(follows) { follow in
+                    ChannelChip(name: follow.title, url: follow.url?.absoluteString ?? "", open: open, unfollow: unfollowing(follow))
+                }
+            }
+        }
+    }
+
+    /// A thing's name: whole when the links have a column of their own, else cut at its end; that polling
+    /// it fails, while it does.
+    @ViewBuilder private func name(_ text: String, error follow: ZerodLink.Followed?) -> some View {
+        if let follow, let error = follow.error {
+            Text("Can't reach \(Self.service(follow.source)) · retrying").foregroundStyle(.tertiary).lineLimit(1).tip(error)
+        } else {
+            Text(text).foregroundStyle(.secondary).lineLimit(wide ? nil : 1).truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: wide)
+        }
+    }
+
+    /// A folded part's count: a click shows what's behind it.
+    private func fold(_ key: String, _ words: String) -> some View {
+        Button {
+            if unfolded.contains(key) { unfolded.remove(key) } else { unfolded.insert(key) }
+        } label: {
+            HStack(spacing: 8) {
+                NucleoIcon("chevron-right", size: 10).foregroundStyle(.tertiary).rotationEffect(.degrees(unfolded.contains(key) ? 90 : 0))
+                    .frame(width: 14)
+                Text(words).foregroundStyle(.secondary)
+            }
+            .frame(minHeight: 20).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func unfollowing(_ follow: ZerodLink.Followed) -> () -> Void {
+        { Task { await workspace.unfollow(session: follow.session, topic: follow.topic) } }
+    }
+
+    /// A pull request's state as GitHub colours it; an issue's status grey, as each team names its own.
+    private static func pill(_ state: String) -> (String, Color) {
+        let color: Color = ["merged": .purple, "open": .green, "closed": .red][state] ?? .secondary
+        return (state.prefix(1).uppercased() + state.dropFirst(), color)
+    }
+
+    static func service(_ source: String) -> String {
+        ["github": "GitHub", "linear": "Linear", "slack": "Slack"][source] ?? source
+    }
+
+    /// One of its own links it doesn't follow (an attribute, its ticket): a link, or words.
+    @ViewBuilder private func linkWords(_ title: String, _ url: String) -> some View {
+        if url.isEmpty {
+            Text(title).lineLimit(1).truncationMode(.middle)
+        } else {
+            Button {
+                open(url)
+            } label: {
+                Self.linked(title).truncationMode(.middle)
+            }.buttonStyle(.plain).tip(url)
         }
     }
 
@@ -413,49 +642,60 @@ struct TaskLinksList: Identifiable, Equatable {
     }
 }
 
-/// A link of the task's: its kind's icon, its name, and what's latest from following it, or that it can't be read.
-/// A followed one has an eye, an × to unfollow under the pointer.
-private struct LinkLine: View {
-    let link: TaskLinksList
-    let open: (String) -> Void
-    let unfollow: (ZerodLink.Followed) -> Void
+/// A line of the task's links: its kind's icon, its words, its state as a pill, and an × to unfollow under the pointer.
+private struct LinkRow<Words: View>: View {
+    let icon: String
+    var pill: (String, Color)?
+    var unfollow: (() -> Void)?
+    @ViewBuilder let words: Words
     @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            NucleoIcon(link.icon, size: 13).foregroundStyle(.secondary).frame(width: 14)
-            if link.url.isEmpty {
-                Text(link.title).lineLimit(1).truncationMode(.middle).layoutPriority(1)
-            } else {
-                Button {
-                    open(link.url)
-                } label: {
-                    TaskDetails.linked(link.title).truncationMode(.middle)
-                }
-                .buttonStyle(.plain).tip(link.url).layoutPriority(1)
-            }
-            if let error = link.followed?.error {
-                Text("Can't reach \(Self.service(link.followed?.source ?? "")) · retrying").foregroundStyle(.tertiary).lineLimit(1).tip(
-                    error)
-            } else if let detail = link.detail, !detail.isEmpty, detail != link.title {
-                Text(detail).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            if let follow = link.followed {
-                Button {
-                    unfollow(follow)
-                } label: {
-                    NucleoIcon(hovered ? "xmark" : "eye", size: hovered ? 11 : 12).foregroundStyle(hovered ? .secondary : .tertiary)
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(Hovering(radius: 5)).tip(hovered ? "Unfollow" : "Following")
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            NucleoIcon(icon, size: 12).foregroundStyle(.tertiary).frame(width: 14)
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+            // 2.5 above and below: a line's 20 pt, and a wrapped one keeps the same gap to the next row.
+            words.padding(.vertical, 2.5).frame(maxWidth: .infinity, alignment: .leading)
+            // The × takes the pill's place under the pointer, so the pills end at the column's edge and nothing moves.
+            if let pill {
+                StatePill(text: pill.0, color: pill.1).fixedSize().opacity(hovered && unfollow != nil ? 0 : 1)
+                    .overlay(alignment: .trailing) { if hovered { cross } }
+            } else if unfollow != nil {
+                cross.opacity(hovered ? 1 : 0).allowsHitTesting(hovered)
+                    .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
             }
         }
-        .frame(minHeight: 20)
         .contentShape(Rectangle()).onHover { hovered = $0 }
     }
 
-    static func service(_ source: String) -> String {
-        ["github": "GitHub", "linear": "Linear", "slack": "Slack"][source] ?? source
+    @ViewBuilder private var cross: some View {
+        if let unfollow {
+            Button(action: unfollow) {
+                NucleoIcon("xmark", size: 11).foregroundStyle(.secondary).frame(width: 18, height: 18)
+            }
+            .buttonStyle(Hovering(radius: 5)).tip("Unfollow")
+        }
+    }
+}
+
+/// A followed channel among others in a line: its name, and an × to unfollow it under the pointer, its place kept.
+private struct ChannelChip: View {
+    let name: String
+    let url: String
+    let open: (String) -> Void
+    let unfollow: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Button {
+                open(url)
+            } label: {
+                TaskDetails.linked(name)
+            }.buttonStyle(.plain).fixedSize().tip(url)
+            Button(action: unfollow) { NucleoIcon("xmark", size: 9).foregroundStyle(.secondary).frame(width: 12, height: 12) }
+                .buttonStyle(.plain).tip("Unfollow").opacity(hovered ? 1 : 0).allowsHitTesting(hovered)
+        }
+        .onHover { hovered = $0 }
     }
 }

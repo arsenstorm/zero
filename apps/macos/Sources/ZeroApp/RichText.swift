@@ -67,13 +67,15 @@ enum RichMarkdown {
         let cache = NSCache<NSString, NSAttributedString>(); cache.countLimit = 4000; return cache
     }()
 
-    /// The blocks as one attributed text; `inline` reads what's inside a line (bold, code, links). With a `key` (what
+    /// The blocks as one attributed text; `inline` reads what's inside a line (bold, code, links), and a table cell's row
+    /// (its cells), where a commit in it finds its pull request. With a `key` (what
     /// the inline links depend on), each top-level block is kept once rendered: an answer still streaming grows by
     /// its last block, and only that one is parsed and styled again.
     /// `growing`: the text is still arriving, and its last block isn't kept (it's different next frame; kept, every
     /// frame's would push out blocks the page needs).
     static func render(
-        _ blocks: [MarkdownBlock], size: CGFloat, inline: (String) -> AttributedString, key: String? = nil, growing: Bool = false,
+        _ blocks: [MarkdownBlock], size: CGFloat, inline: (_ text: String, _ row: String?) -> AttributedString, key: String? = nil,
+        growing: Bool = false,
         trimmed: Bool = true
     ) -> NSAttributedString {
         let out = NSMutableAttributedString()
@@ -139,7 +141,8 @@ enum RichMarkdown {
     }
 
     private static func append(
-        _ blocks: [MarkdownBlock], depth: Int, into out: NSMutableAttributedString, size: CGFloat, inline: (String) -> AttributedString,
+        _ blocks: [MarkdownBlock], depth: Int, into out: NSMutableAttributedString, size: CGFloat,
+        inline: (_ text: String, _ row: String?) -> AttributedString,
         tight: Bool = false
     ) {
         let indent = CGFloat(depth) * indentStep
@@ -150,10 +153,10 @@ enum RichMarkdown {
                 let font = NSFont.systemFont(ofSize: size + [5, 3, 1.5, 0.5, 0, 0][min(level, 6) - 1], weight: .semibold)
                 out.append(
                     line(
-                        inline(text), font: font,
+                        inline(text, nil), font: font,
                         style: style(size: size, indent: indent, after: round(size * 0.4), before: level <= 2 ? round(size * 0.6) : 0)))
             case let .paragraph(text):
-                out.append(line(inline(text), font: .systemFont(ofSize: size), style: style(size: size, indent: indent, after: gap)))
+                out.append(line(inline(text, nil), font: .systemFont(ofSize: size), style: style(size: size, indent: indent, after: gap)))
             case let .list(ordered, start, items):
                 for (index, item) in items.enumerated() {
                     let marker = ordered ? "\(start + index)." : "•"
@@ -167,7 +170,7 @@ enum RichMarkdown {
                         text.addAttribute(
                             .font, value: NSFont.systemFont(ofSize: size, weight: .heavy), range: NSRange(location: 0, length: 1))
                     }
-                    text.append(styled(inline(item.text), font: .systemFont(ofSize: size)))
+                    text.append(styled(inline(item.text, nil), font: .systemFont(ofSize: size)))
                     let hang = indent + indentStep
                     let paragraph = style(
                         size: size, indent: hang, first: indent + (ordered ? 0 : 4),
@@ -195,7 +198,7 @@ enum RichMarkdown {
                 out.append(text)
             case let .quote(text):
                 let quoted = line(
-                    inline(text), font: .systemFont(ofSize: size), style: style(size: size, indent: indent + 14, after: gap),
+                    inline(text, nil), font: .systemFont(ofSize: size), style: style(size: size, indent: indent + 14, after: gap),
                     color: .secondaryLabelColor)
                 quoted.addAttribute(.zeroQuote, value: true, range: NSRange(location: 0, length: quoted.length - 1))
                 out.append(quoted)
@@ -310,7 +313,9 @@ enum RichMarkdown {
         return out
     }
 
-    private static func table(_ rows: [[String]], size: CGFloat, indent: CGFloat, after: CGFloat, inline: (String) -> AttributedString)
+    private static func table(
+        _ rows: [[String]], size: CGFloat, indent: CGFloat, after: CGFloat, inline: (_ text: String, _ row: String?) -> AttributedString
+    )
         -> NSAttributedString
     {
         let out = NSMutableAttributedString()
@@ -323,7 +328,8 @@ enum RichMarkdown {
         table.collapsesBorders = true
         table.setWidth(indent, type: .absoluteValueType, for: .margin, edge: .minX)
         let font = { (r: Int) in NSFont.systemFont(ofSize: size, weight: r == 0 ? .semibold : .regular) }
-        let cells = rows.enumerated().map { r, row in (0..<columns).map { c in styled(inline(c < row.count ? row[c] : ""), font: font(r)) }
+        let cells = rows.enumerated().map { r, row in
+            (0..<columns).map { c in styled(inline(c < row.count ? row[c] : "", row.joined(separator: " | ")), font: font(r)) }
         }
         let padding = { (c: Int) -> CGFloat in (c == 0 ? 0 : 6) + (c == columns - 1 ? 0 : 14) }
         var natural = [CGFloat](repeating: 0, count: columns), least = natural
@@ -642,7 +648,23 @@ final class RichTextView: NSTextView {
         if stillSelecting { Self.hideReplies(); extend() } else { Self.placeReplies() }
     }
 
+    /// A link clicked in a message: where Zero's links go (LinearLinks.open), not straight to the default browser.
+    override func clicked(onLink link: Any, at charIndex: Int) {
+        guard let url = link as? URL ?? (link as? String).flatMap(URL.init(string:)), !url.isFileURL else {
+            return super.clicked(onLink: link, at: charIndex)
+        }
+        LinearLinks.open(url)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        // Option-click on a link opens it in the other place (LinearLinks.open); a text view would start a selection.
+        if event.modifierFlags.contains(.option), let index = characterIndex(under: event),
+            let link = textStorage?.attribute(.link, at: index, effectiveRange: nil),
+            let url = link as? URL ?? (link as? String).flatMap(URL.init(string:)), !url.isFileURL
+        {
+            LinearLinks.open(url, other: true)
+            return
+        }
         // A click in another message: the selection that was elsewhere goes.
         if Self.selecting !== self { Self.selecting?.deselect() }
         Self.clearExtended(except: self)

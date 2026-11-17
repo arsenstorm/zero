@@ -39,7 +39,7 @@ struct IssueStrip: View {
         GeometryReader { page in
             VStack(spacing: 0) {
                 if issues.count == 1, let only = issues.first {
-                    row(only, now: Date(), headed: false)
+                    solo(only, now: Date())
                 } else {
                     strip
                     if opened {
@@ -116,7 +116,7 @@ struct IssueStrip: View {
                     head
                     ForEach(Array(IssueBoard.kept(issues, order: order).enumerated()), id: \.element.ticket) { _, issue in
                         Hairline()
-                        row(issue, now: now.date, headed: true)
+                        row(issue, now: now.date)
                     }
                 }
             }
@@ -155,37 +155,80 @@ struct IssueStrip: View {
         static let age: CGFloat = 28
     }
 
-    /// One issue: its line, as tall as its words (up to three lines each) and never under 40 pt; opened, its worker's
-    /// ask and its steps. `headed`: under the board's headings; alone (one issue), the strip itself.
-    private func row(_ issue: BoardRow.Issue, now: Date, headed: Bool) -> some View {
-        let open = expanded == issue.ticket
+    /// Where a row's "Where it stands" starts: its opened steps' words line up under it.
+    private static let boardWhere = 16 + Column.state + Column.gap + Column.issue + Column.gap + Column.pr + Column.gap
+    private static let soloWhere = 16 + Column.state + Column.gap + Column.issue + Column.gap
+
+    /// One issue under the board's headings: its line, as tall as its words (up to three lines each) and never under
+    /// 40 pt; opened, its worker's ask and its steps.
+    private func row(_ issue: BoardRow.Issue, now: Date) -> some View {
         let cells = lit[issue.ticket] ?? []
-        // Alone, the strip is its row: one line, in the strip's room.
-        let lines = headed ? 3 : 1
-        return VStack(alignment: .leading, spacing: 0) {
+        return opening(issue, at: Self.boardWhere) {
             HStack(alignment: .firstTextBaseline, spacing: Column.gap) {
                 StateLabel(state: issue.boardState)
                     .background(Wash(on: cells.contains(.state)))
                     .frame(width: Column.state, alignment: .leading)
                 ticket(issue.ticket).frame(width: Column.issue, alignment: .leading)
                 prCell(issue).frame(width: Column.pr, alignment: .leading)
-                words(issue.text, lit: cells.contains(.text), lines: lines).frame(maxWidth: .infinity, alignment: .leading)
-                needsCell(issue, lines: lines).frame(width: Column.needs, alignment: .leading)
+                words(issue.text, lit: cells.contains(.text), lines: 3).frame(maxWidth: .infinity, alignment: .leading)
+                needsCell(issue, lines: 3).frame(width: Column.needs, alignment: .leading)
                 ForEach(fieldNames, id: \.self) { name in
-                    fieldCell(issue.fields?.first { $0.name == name }?.value, lines: lines).frame(width: Column.field, alignment: .leading)
+                    fieldCell(issue.fields?.first { $0.name == name }?.value, lines: 3).frame(width: Column.field, alignment: .leading)
                 }
-                Text(IssueBoard.age(since: issue.since, now: now)).monospacedDigit().foregroundStyle(.tertiary)
-                    .frame(width: Column.age, alignment: .trailing)
+                age(issue, now: now)
             }
-            .font(.system(size: 13))
-            .padding(.horizontal, 16).padding(.vertical, headed ? 11 : 0)
-            .frame(minHeight: headed ? 40 : Self.height)
-            .opacity(["done", "parked"].contains(issue.state) && !open ? 0.6 : 1)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(Motion.animation(.easeOut(duration: 0.18))) { expanded = open ? nil : issue.ticket }
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            .frame(minHeight: 40)
+        }
+    }
+
+    /// The one issue, as the strip: its state, its ticket, where it stands filling the rest of one line, then only
+    /// what it has (its PR, what it needs, the lead's columns), and its age. No headings, so no empty cells.
+    private func solo(_ issue: BoardRow.Issue, now: Date) -> some View {
+        let cells = lit[issue.ticket] ?? []
+        let needs = needs(issue)
+        return opening(issue, at: Self.soloWhere) {
+            HStack(alignment: .firstTextBaseline, spacing: Column.gap) {
+                StateLabel(state: issue.boardState)
+                    .background(Wash(on: cells.contains(.state)))
+                    .frame(width: Column.state, alignment: .leading)
+                ticket(issue.ticket).frame(width: Column.issue, alignment: .leading)
+                // Where and Needs you share a narrow row; Needs you stops at 220 once there's room.
+                words(issue.text, lit: cells.contains(.text), lines: 1).frame(maxWidth: .infinity, alignment: .leading)
+                if pullRequest(issue) != nil { prCell(issue).fixedSize() }
+                if let needs {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("Needs you").foregroundStyle(.secondary).fixedSize()
+                        Text(needs).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+                    }
+                    .frame(maxWidth: 220, alignment: .leading)
+                }
+                ForEach((issue.fields ?? []).filter { !$0.value.isEmpty }, id: \.name) { field in
+                    fieldCell(field.value, lines: 1).fixedSize().tip(field.name)
+                }
+                age(issue, now: now)
             }
-            if open { details(issue) }
+            .padding(.horizontal, 16).frame(height: Self.height)
+        }
+    }
+
+    private func age(_ issue: BoardRow.Issue, now: Date) -> some View {
+        Text(IssueBoard.age(since: issue.since, now: now)).monospacedDigit().foregroundStyle(.tertiary)
+            .frame(width: Column.age, alignment: .trailing)
+    }
+
+    /// A row that opens on a click to its worker's ask and its steps, their words starting at `at`.
+    private func opening(_ issue: BoardRow.Issue, at whereX: CGFloat, @ViewBuilder line: () -> some View) -> some View {
+        let open = expanded == issue.ticket
+        return VStack(alignment: .leading, spacing: 0) {
+            line()
+                .font(.system(size: 13))
+                .opacity(["done", "parked"].contains(issue.state) && !open ? 0.6 : 1)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(Motion.animation(.easeOut(duration: 0.18))) { expanded = open ? nil : issue.ticket }
+                }
+            if open { details(issue, at: whereX) }
         }
         // Square: the card's clip rounds it where it meets the corners.
         .background(hovered == issue.ticket ? Theme.hover : Color.clear)
@@ -258,12 +301,14 @@ struct IssueStrip: View {
     // MARK: Opened
 
     /// A worker's ask, answerable here (the lead's own is docked above the composer), then its steps.
-    private func details(_ issue: BoardRow.Issue) -> some View {
+    /// Its time and state icon in the gutter before `whereX`, its words under the row's "Where it stands".
+    private func details(_ issue: BoardRow.Issue, at whereX: CGFloat) -> some View {
+        let gutter: CGFloat = 52 + 8 + 14 + 8
         let steps = IssueBoard.steps(issue)
         return VStack(alignment: .leading, spacing: 0) {
             if let ask = ask(issue), ask.session != conversation.id {
                 CardView(ask: ask, controller: inbox, focus: $focus, flat: true, showsByline: false)
-                    .padding(.leading, Column.state + 12 - 16).padding(.bottom, 6)
+                    .padding(.leading, whereX - 16).padding(.bottom, 6)
             }
             VStack(alignment: .leading, spacing: 7) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
@@ -277,11 +322,11 @@ struct IssueStrip: View {
                 }
             }
             .font(.system(size: 12.5))
-            .padding(.leading, 16 + Column.state + 12).padding(.trailing, 16).padding(.bottom, 14)
+            .padding(.leading, whereX - gutter).padding(.trailing, 16).padding(.bottom, 14)
             if let worker = worker(issue) {
                 Button("Open its worker") { navigation.worker = worker }
                     .buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(.secondary)
-                    .padding(.leading, 16 + Column.state + 12).padding(.bottom, 14)
+                    .padding(.leading, whereX).padding(.bottom, 14)
             }
         }
     }
@@ -323,7 +368,7 @@ struct IssueStrip: View {
 }
 
 /// A state's pill with how many are in it, for the strip; its name on hover.
-private struct Count: View {
+struct Count: View {
     let state: BoardRow.State
     let count: Int
     var body: some View {

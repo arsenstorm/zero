@@ -12,6 +12,7 @@ struct RevealText: View {
     let readout: Readout
     let text: String
     let cwd: String
+    @Environment(\.linkTask) private var task
     /// Bumped as the shown part gets taller (a new line): only then is SwiftUI asked to measure it again.
     @State private var grew = RevealGrowth()
 
@@ -20,7 +21,7 @@ struct RevealText: View {
     var body: some View {
         RevealBox(
             readout: readout, text: text,
-            links: MarkdownText.links(cwd: cwd, yours: false),
+            links: MarkdownText.links(cwd: cwd, yours: false, task: task),
             grew: grew, generation: grew.count
         )
         .padding(.horizontal, -RichTextView.bleed)

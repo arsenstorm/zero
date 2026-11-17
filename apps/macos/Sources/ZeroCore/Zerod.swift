@@ -1554,8 +1554,10 @@ public final class ZerodLink: @unchecked Sendable {
     }
 
     /// Words for a session between its turns, marked as Zero's, or as `from`'s (another task's).
-    public func notify(session: String, text: String, from: String? = nil) async throws {
-        _ = try await call("notify", ["session": session, "text": text, "from": from])
+    /// Why the words wait rather than go between its turns, if something holds them (zerod's Daemon::holds).
+    @discardableResult
+    public func notify(session: String, text: String, from: String? = nil) async throws -> String? {
+        (try await call("notify", ["session": session, "text": text, "from": from]) as? [String: Any])?["held"] as? String
     }
 
     /// What a task's agent may do without asking, changed between turns: its next message starts it with them.
@@ -1817,6 +1819,12 @@ public final class ZerodLink: @unchecked Sendable {
         public let lastPoll: Int
         public var new: Bool = false
         public var detail: String = ""
+        /// The thing's own name (a pull request's or issue's title), its state as its service words it, and whether it
+        /// has closed (merged or closed, a completed or canceled status). Nil for a thread or a channel, or from an
+        /// older zerod.
+        public var name: String?
+        public var state: String?
+        public var closed: Bool?
         /// The integration it is read through: "github", "linear" or "slack".
         public var source: String { String(topic.prefix { $0 != "/" }) }
     }
@@ -2093,6 +2101,7 @@ public final class ZerodLink: @unchecked Sendable {
     /// The installed daemon, started if it isn't running: by launchd when it's Zero's LaunchAgent (ZerodAgent), else here.
     public static func ensureRunning() async -> Bool {
         if answers(socket) { return true }
+        if DevBuild.on { return false } // Zero Dev's zerod is started by whoever tests it, never by the app
         #if os(macOS)
             if ZerodAgent.state == .on, ZerodAgent.kickstart() {
                 for _ in 0..<30 {

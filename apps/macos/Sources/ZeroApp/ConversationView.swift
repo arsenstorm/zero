@@ -251,7 +251,9 @@ struct ConversationView: View {
     /// The blocks on screen, by the message of yours each answers to: the rail's bright ticks.
 
     var body: some View {
-        conversationPane
+        // The pull requests it follows resolve its messages' bare "#123" and commits (MarkdownText.links).
+        conversationPane.environment(\.linkTask, conversation.id)
+            .task(id: workspace.followingVersion) { await workspace.loadFollowing() }
     }
 
     /// The next older page, with what's read kept where it is: the offset moves by exactly what was added above once

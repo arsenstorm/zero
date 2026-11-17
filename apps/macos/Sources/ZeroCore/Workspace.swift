@@ -69,7 +69,12 @@ public final class Workspace {
     /// What sessions follow (pull requests, issues, threads; zerod's following.rs), as zerod last listed them; bumped
     /// when a follow is made, taken back, or read again.
     public private(set) var followingVersion = 0
-    public private(set) var followed: [ZerodLink.Followed] = []
+    public private(set) var followed: [ZerodLink.Followed] = [] {
+        didSet {
+            let leads = Dictionary(uniqueKeysWithValues: roster.compactMap { id, task in task.parent.map { (id, $0) } })
+            LinkInputs.shared.pulls = References.pulls(followed, leads: leads)
+        }
+    }
     /// The user's workspaces (zerod's workspaces.rs), Zero first, and the one the window shows. Every workspace's
     /// tasks run alike; this only says which are shown.
     public internal(set) var workspaces: [ZerodLink.Workspace] = [ZerodLink.Workspace(id: "zero", name: "Zero")]
@@ -697,9 +702,21 @@ public final class Workspace {
     public func replaceDialogs(_ on: Bool) async { _ = await attempt { try await $0.saveBrowserDialogs(on) } }
 
     public func loadFollowing() async {
+        #if ZERO_DEV
+            if let devFollows { return followed = devFollows }
+        #endif
         guard let list = try? await link?.following() else { return }
         if list != followed { followed = list }
     }
+    #if ZERO_DEV
+        /// Zero Dev's harness (DevE2E): follows as zerod would list them, with no service polled for them; kept over
+        /// zerod's own list until set to nil.
+        @ObservationIgnored private var devFollows: [ZerodLink.Followed]?
+        public func devFollowed(_ list: [ZerodLink.Followed]?) {
+            devFollows = list
+            followed = list ?? []
+        }
+    #endif
 
     public func unfollow(session: String, topic: String) async {
         _ = await attempt { try await $0.unfollow(session: session, topics: [topic]) }

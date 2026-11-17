@@ -271,7 +271,9 @@ final class Connection {
 }
 
 /// One of zerod's requests, as ZerodLink makes it; fails with zerod's words when it refuses.
-func zerod(_ op: String, _ fields: [(String, String?)]) {
+/// zerod's answer to one request: its result, or the CLI fails with its error.
+@discardableResult
+func zerod(_ op: String, _ fields: [(String, String?)]) -> JSON? {
     guard let link = Connection(daemonSocket) else { delegate() }
     guard link.write(line: object(fields + [("op", quote(op)), ("id", "1")])) else {
         fail("zero: Couldn't write to zerod: write: \(String(cString: strerror(errno)))")
@@ -280,7 +282,7 @@ func zerod(_ op: String, _ fields: [(String, String?)]) {
         guard let message = Parser.parse(line), case .object = message, message["event"]?.string == nil,
             case .number(let id)? = message["id"], Int(id) == 1
         else { continue }
-        if case .bool(true)? = message["ok"] { return }
+        if case .bool(true)? = message["ok"] { return message["result"] }
         fail("zero: \(message["error"]?.string ?? "zerod refused the request")")
     }
     fail("zero: zerod closed the connection")
@@ -405,7 +407,10 @@ func send() -> Never {
     guard positional.count >= 2 else { delegate() }
     let text = positional[1...].joined(separator: " ")
     if let me = env("ZERO_SESSION"), me != positional[0] {
-        zerod("notify", [("session", quote(positional[0])), ("text", quote(text)), ("from", quote(me))])
+        // Held rather than given between its turns: said, as zero-full does.
+        if let held = zerod("notify", [("session", quote(positional[0])), ("text", quote(text)), ("from", quote(me))])?["held"]?.string {
+            print("held: \(positional[0]) \(held)")
+        }
     } else {
         zerod("send", [("session", quote(positional[0])), ("text", quote(text)), ("images", "[]")])
     }
