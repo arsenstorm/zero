@@ -22,6 +22,8 @@ pub async fn serve(zerod: Zerod, socket: PathBuf) -> std::io::Result<()> {
         Some(inbox) => inbox.with_open_asks(id, text),
         None => text,
     }));
+    let starting = zerod.clone();
+    zerod.browsers.set_zero_browser_starter(Arc::new(move || super::browser::start_zero_browser(&starting)));
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
@@ -43,6 +45,12 @@ pub(crate) async fn next_connection(listener: &UnixListener) -> UnixStream {
             }
         }
     }
+}
+
+/// One more connection, served as the listener's are: Zero Browser's end of its socket pair. A plain function, so a
+/// request's handling can start one (an async one there would make the two futures' types depend on each other).
+pub(super) fn serve_one(zerod: Zerod, stream: UnixStream) {
+    tokio::spawn(connection(zerod, stream));
 }
 
 async fn connection(zerod: Zerod, stream: UnixStream) {

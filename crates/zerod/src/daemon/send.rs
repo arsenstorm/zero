@@ -363,29 +363,77 @@ impl Daemon {
     /// Words for a session from anywhere (an event source, a script, the user): given when it is between turns, kept
     /// on disk while it is offline.
     pub fn notify(&self, id: &str, text: &str) -> Result<(), String> {
-        self.notify_from(id, "zero", text)
+        self.notify_from(id, "zero", text).map(|_| ())
     }
 
     /// Words from another task (`zero send` inside one), marked as its, as a worker's report is. An archived task
-    /// comes back (with its lead, if it went with one) to hear them.
-    pub fn notify_from(&self, id: &str, from: &str, text: &str) -> Result<(), String> {
-        if self.session(id).is_err() && self.exists(id) {
+    /// comes back (with its lead, if it went with one) to hear them. Gives why they wait, if something holds them.
+    pub fn notify_from(&self, id: &str, from: &str, text: &str) -> Result<Option<String>, String> {
+        let unarchived = self.session(id).is_err() && self.exists(id);
+        if unarchived {
             let root = archived_with(&self.home.join("archive").join(id)).unwrap_or_else(|| id.to_string());
             self.unarchive(&root)?;
         }
-        self.session(id)?;
+        let session = self.session(id)?;
+        // Its lead's word lets it carry on with another task (the pair's hold lifted, counted afresh), and brings it
+        // back past what it left when put away. The user's Stop holds it still: that's theirs to lift.
+        if session.summary().parent.as_deref() == Some(from) {
+            self.lift_crossing(id);
+            if unarchived {
+                self.hold(id, false);
+            }
+        }
         self.count_crossing(id, from);
         self.tell(id, crate::model::from_line(from, text));
-        Ok(())
+        Ok(self.holding(&session.summary()).reason(Some(from)))
+    }
+
+    /// What holds `conversation`'s messages now, read at once: a queue is then sorted under its lock without asking the
+    /// inbox or other sessions.
+    pub(super) fn holding(&self, conversation: &Conversation) -> Holding {
+        let id = conversation.id.as_str();
+        let crossing: Vec<(String, bool)> = self
+            .crossing
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((to, _), _)| to == id)
+            .map(|((_, from), ceiling)| (from.clone(), *ceiling))
+            .collect();
+        let everyone = if self.held_signed_out(conversation) {
+            Some("is signed out: it hears this once its account works again")
+        } else if self.blocked_by_ask(id) {
+            Some("waits on the user's answer to its blocking ask")
+        } else {
+            None
+        };
+        Holding {
+            paused: self.is_paused(id),
+            stopped: self.held.lock().unwrap().contains(id),
+            everyone,
+            senders: crossing
+                .into_iter()
+                .filter(|(from, ceiling)| *ceiling || !self.waits_on_task(conversation, from))
+                .map(|(from, ceiling)| (from.clone(), (self.summary(&from).map_or(from, |c| crate::bridge::label(&c)), ceiling)))
+                .collect(),
+        }
+    }
+
+    /// Whether `waiter`'s last answer ends `[zero: waiting on <task>]`, by `task`'s id or name.
+    pub(super) fn waits_on_task(&self, waiter: &Conversation, task: &str) -> bool {
+        let Some(on) = waiter.answer().and_then(crate::board::waits_on) else { return false };
+        on == task || self.summary(task).is_some_and(|c| on.eq_ignore_ascii_case(&crate::bridge::label(&c)))
     }
 
     /// One more message between two tasks (neither the other's lead) without the user: past BETWEEN_TASKS, the
-    /// receiver's messages from other tasks wait for the user's word, and it says so.
+    /// receiver holds the sender's messages for the user's word, and says so. Past WAITING_CEILING for the task it
+    /// waits on, whose words are what it waits for: its lead (the user, for a task of their own) is told once.
     fn count_crossing(&self, to: &str, from: &str) {
-        let (Some(receiver), Some(sender)) = (self.get(to), self.get(from)) else { return };
+        let (Some(receiver), Some(sender)) = (self.summary(to), self.summary(from)) else { return };
         if receiver.parent.as_deref() == Some(from) || sender.parent.as_deref() == Some(to) {
             return;
         }
+        let ceiling = self.waits_on_task(&receiver, from);
         let pair = if to < from { (to.to_string(), from.to_string()) } else { (from.to_string(), to.to_string()) };
         let count = {
             let mut crossed = self.crossed.lock().unwrap();
@@ -393,23 +441,54 @@ impl Daemon {
             *n += 1;
             *n
         };
-        if count > BETWEEN_TASKS
-            && self.crossing.lock().unwrap().insert(to.to_string())
-            && let Ok(session) = self.session(to)
+        if count <= if ceiling { WAITING_CEILING } else { BETWEEN_TASKS } {
+            return;
+        }
+        // Once each: held already (at the ceiling, or at the lower limit for a task it doesn't wait on), nothing new.
         {
-            session.report(&format!("Zero is holding messages from \"{}\": the two tasks have written to each other {BETWEEN_TASKS} times without you. Write to this task to let them carry on.", crate::bridge::label(&sender)));
+            let mut crossing = self.crossing.lock().unwrap();
+            let key = (to.to_string(), from.to_string());
+            if crossing.get(&key).is_some_and(|held| *held || !ceiling) {
+                return;
+            }
+            crossing.insert(key, ceiling);
+        }
+        let (name, other) = (crate::bridge::label(&sender), crate::bridge::label(&receiver));
+        match (ceiling, receiver.parent.as_deref()) {
+            (true, Some(lead)) => self.tell(
+                lead,
+                crate::model::from_line(
+                    "zero",
+                    &format!("Zero is holding messages from \"{name}\" to \"{other}\", which waits on it: the two wrote to each other {WAITING_CEILING} times. Write to {to} (`zero send {to} \"…\"`) to let them carry on."),
+                ),
+            ),
+            (true, None) => {
+                if let Ok(session) = self.session(to) {
+                    session.report(&format!("Zero is holding messages from \"{name}\", which this task waits on: the two tasks have written to each other {WAITING_CEILING} times without you. Write to this task to let them carry on."))
+                }
+            }
+            (false, _) => {
+                if let Ok(session) = self.session(to) {
+                    session.report(&format!("Zero is holding messages from \"{name}\": the two tasks have written to each other {BETWEEN_TASKS} times without you. Write to this task to let them carry on."))
+                }
+            }
         }
     }
 
-    /// Holding messages from other tasks for the user's word (count_crossing).
+    /// Holding another task's messages for the user's word (count_crossing).
     pub fn holding_crossed(&self, id: &str) -> bool {
-        self.crossing.lock().unwrap().contains(id)
+        self.crossing.lock().unwrap().keys().any(|(to, _)| to == id)
+    }
+
+    /// Its exchanges with other tasks start counting again, and what they held goes.
+    fn lift_crossing(&self, id: &str) {
+        self.crossing.lock().unwrap().retain(|(to, _), _| to != id);
+        self.crossed.lock().unwrap().retain(|(a, b), _| a != id && b != id);
     }
 
     /// The user wrote to a task: its exchanges with other tasks start counting again, and what was held goes.
     fn heard_from_user(&self, id: &str) {
-        self.crossing.lock().unwrap().remove(id);
-        self.crossed.lock().unwrap().retain(|(a, b), _| a != id && b != id);
+        self.lift_crossing(id)
     }
 
     /// Stops a task's running command (the user's Stop it, or Zero's own per Settings › Stuck commands) and tells its
@@ -471,34 +550,54 @@ impl Daemon {
             session.change(Change::Item { item });
             return;
         }
-        if self.held_signed_out(&session.summary()) {
-            return;
-        }
         // At a limit no other account was free for when it stopped: if one is now, it carries on as that one, these
         // words with it.
         let conversation = session.summary();
-        if conversation.attention() == Attention::Limited && self.switch_account(&conversation, None) {
+        if !self.held_signed_out(&conversation)
+            && conversation.attention() == Attention::Limited
+            && self.switch_account(&conversation, None)
+        {
             return;
         }
-        if !session.is_attached() && session.summary().terminal.is_none() {
-            let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return };
-            tokio::spawn(async move {
-                if let Err(error) = daemon.resume(&id).await {
-                    eprintln!("zerod: couldn't resume {id} for its words: {error}")
-                }
-            });
-        } else if between_turns(&session.summary()) {
-            self.deliver(id)
-        }
+        self.wake(id);
     }
 
-    /// The next of what waits: a message of the user's on its own (one turn each, never joined to anything), or the
-    /// reports at the head of the queue together. The rest goes when that turn ends. A held queue waits.
+    /// What's queued for `id` goes on if any of it may (holds): given now between turns, or a parked task resumed for
+    /// it. Gives whether it was resumed.
+    pub(super) fn wake(&self, id: &str) -> bool {
+        let Ok(session) = self.session(id) else { return false };
+        let conversation = session.summary();
+        if session.is_attached() || conversation.terminal.is_some() {
+            if between_turns(&conversation) {
+                self.deliver(id)
+            }
+            return false;
+        }
+        let holding = self.holding(&conversation);
+        // Only others' words resume it: the user's own, queued for a parked task, wait for them to resume it.
+        if !self.pending.lock().unwrap().get(id).is_some_and(|queue| queue.iter().any(|q| q.report && holding.may_go(q))) {
+            return false;
+        }
+        let (Some(daemon), id) = (self.me.upgrade(), id.to_string()) else { return false };
+        tokio::spawn(async move {
+            if let Err(error) = daemon.resume(&id).await {
+                eprintln!("zerod: couldn't resume {id} for its words: {error}")
+            }
+        });
+        true
+    }
+
+    /// Once zerod is up: every parked task with words that may go, which nothing woke for them (a hold that went with
+    /// the zerod before, a resume that failed), resumed for them. Gives the tasks resumed.
+    pub fn deliver_stranded(&self) -> Vec<String> {
+        let queued: Vec<String> = self.pending.lock().unwrap().iter().filter(|(_, l)| !l.is_empty()).map(|(id, _)| id.clone()).collect();
+        queued.into_iter().filter(|id| !self.is_paused(id) && self.wake(id)).collect()
+    }
+
+    /// The next of what may go (Holding::may_go): a message of the user's on its own (one turn each, never joined to anything),
+    /// or the reports before the user's next message together. The rest goes when that turn ends; what's held waits.
     pub(super) fn deliver(&self, id: &str) {
         if self.restarting.load(Ordering::Relaxed) || self.is_paused(id) {
-            return;
-        }
-        if self.held.lock().unwrap().contains(id) {
             return;
         }
         let Ok(session) = self.session(id) else { return };
@@ -508,30 +607,24 @@ impl Daemon {
         if !self.delivering.lock().unwrap().insert(id.into()) {
             return;
         }
+        let holding = self.holding(&session.summary());
         let mut reporters: Vec<String> = vec![];
         let (text, images, sent) = {
             let mut pending = self.pending.lock().unwrap();
-            let Some(list) = pending.get_mut(id).filter(|l| !l.is_empty()) else {
+            let Some((list, first)) = pending.get_mut(id).and_then(|l| l.iter().position(|q| holding.may_go(q)).map(|at| (l, at))) else {
                 self.delivering.lock().unwrap().remove(id);
                 return;
             };
-            // Signed out, or holding other tasks' messages for the user: only the user's words go.
-            if self.held_signed_out(&session.summary()) || self.holding_crossed(id) || self.blocked_by_ask(id) {
-                let Some(at) = list.iter().position(|q| !q.report) else {
-                    self.delivering.lock().unwrap().remove(id);
-                    return;
-                };
-                let next = list.remove(at);
-                (self.noted(id, next.text), next.images, Some(next.id))
-            } else if list[0].report {
-                let reports = list.iter().take_while(|q| q.report).count();
-                let given: Vec<Queued> = list.drain(..reports).collect();
+            if list[first].report {
+                let end = list[first..].iter().position(|q| !q.report).map_or(list.len(), |n| first + n);
+                let given: Vec<Queued> = list[first..end].iter().filter(|q| holding.may_go(q)).cloned().collect();
+                list.retain(|q| !given.iter().any(|g| g.id == q.id));
                 reporters =
                     given.iter().filter_map(|q| crate::model::from(&q.text)).filter(|who| *who != "zero").map(String::from).collect();
                 (given.into_iter().map(|q| q.text).collect::<Vec<_>>().join("\n\n"), vec![], None)
             } else {
                 // The user's words as they wrote them, kept so in the queue; what's open is told as they go.
-                let next = list.remove(0);
+                let next = list.remove(first);
                 (self.noted(id, next.text), next.images, Some(next.id))
             }
         };
@@ -586,9 +679,10 @@ impl Daemon {
         if !turn_worked || !self.signed_out.lock().unwrap().remove(&key) {
             return;
         }
+        // Parked ones too: what waited for them resumes them.
         for other in self.sessions().iter().map(|s| s.summary()) {
-            if account(&other) == key && between_turns(&other) {
-                self.deliver(&other.id)
+            if account(&other) == key {
+                self.wake(&other.id);
             }
         }
     }
@@ -711,3 +805,38 @@ impl Daemon {
 
 /// A task's change kept for its next turn, in its folder.
 const NEXT: &str = "next.json";
+
+/// What holds a task's messages (Daemon::holding). The user's and its lead's words go, unless the user paused or
+/// stopped it, it's signed out or blocked on its own ask.
+pub(super) struct Holding {
+    paused: bool,
+    stopped: bool,
+    /// Holds every task's words, and Zero's: only the user's go.
+    everyone: Option<&'static str>,
+    /// Tasks whose words wait for the user's (count_crossing), with their names, and whether past WAITING_CEILING.
+    senders: HashMap<String, (String, bool)>,
+}
+
+impl Holding {
+    /// Why words from `from` (a task's id, "zero"; none, the user's own) wait rather than go between its turns.
+    pub(super) fn reason(&self, from: Option<&str>) -> Option<String> {
+        if self.paused {
+            return Some("is paused by the user: it hears this when they resume it".into());
+        }
+        if self.stopped {
+            return Some("has its queue held since the user stopped it: it goes on when they write to it".into());
+        }
+        let from = from?;
+        if let Some(why) = self.everyone {
+            return Some(why.into());
+        }
+        self.senders.get(from).map(|(name, ceiling)| match ceiling {
+            true => format!("holds messages from {name}, which it waits on: the two wrote to each other {WAITING_CEILING} times, until its lead or the user writes to it"),
+            false => format!("holds messages from {name}: the two wrote to each other {BETWEEN_TASKS} times without the user, until the user writes to it"),
+        })
+    }
+
+    pub(super) fn may_go(&self, queued: &Queued) -> bool {
+        self.reason(queued.report.then(|| crate::model::from(&queued.text).unwrap_or("zero"))).is_none()
+    }
+}

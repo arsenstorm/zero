@@ -154,7 +154,7 @@ pub(super) async fn messages(zerod: &Zerod, request: Request) -> Result<Value, S
                 request.from.as_deref().unwrap_or("zero"),
                 request.text.as_deref().ok_or("Notify with text")?,
             )
-            .map(|_| Value::Null),
+            .map(|held| held.map_or(Value::Null, |why| json!({"held": why}))),
         // The user asks two tasks to work together.
         "introduce" => daemon
             .introduce(&request.session()?, request.args.as_ref().and_then(|a| a["other"].as_str()).ok_or("Introduce to which task?")?)

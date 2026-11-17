@@ -142,7 +142,7 @@ impl Daemon {
             drop(pending);
             self.keep_pending(id);
         }
-        // Which turns to carry on: these, and only these (words waiting for a parked task wait for you to resume it).
+        // Which turns to carry on: these, and only these. Words left for a parked task are deliver_stranded's.
         let _ = std::fs::write(self.home.join("paused.json"), serde_json::to_vec(&paused).unwrap_or_default());
         paused
     }

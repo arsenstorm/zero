@@ -9,7 +9,10 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
 /// The Keychain item: what its prompt names.
+#[cfg(not(feature = "dev"))]
 const SERVICE: &str = "Zero integrations";
+#[cfg(feature = "dev")]
+const SERVICE: &str = "Zero Dev integrations";
 const ACCOUNT: &str = "zerod";
 
 pub enum Vault {

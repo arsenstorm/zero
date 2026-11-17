@@ -272,8 +272,9 @@ impl Daemon {
         // A turn that only says it waits (on CI, on a verifier) is no news for its lead; a blocked one is.
         let quiet_wait = now == Attention::Blocked
             && conversation.answer().is_some_and(|a| !crate::board::says_blocked(a) && crate::board::without_ending(a).trim().is_empty());
-        if came_to_an_end && !restarting && !sent_back {
-            self.wake_waiting_on(&conversation);
+        // Not for a turn the user paused, one being put away (archive wakes them), or one carried on as another account.
+        if came_to_an_end && !restarting && !sent_back && !archiving && !self.is_paused(id) && (!switched || reported_answer) {
+            self.wake_waiting_on(&conversation, now);
         }
         if let Some(lead) = &conversation.parent
             && !quiet_wait
@@ -476,23 +477,43 @@ impl Daemon {
         self.tell(id, crate::model::from_line("zero", NOTHING_WAKES));
     }
 
-    /// `ended` has come to the end of a turn: every session between turns whose answer ends `[zero: waiting on <it>]`
-    /// (its id or name) is told what it said, a parked one resumed for it. Its lead hears it as a report already.
-    fn wake_waiting_on(&self, ended: &Conversation) {
+    /// `ended` has come to the end of a turn (`now`, how): every session waiting on it is woken (wake_waiters). Not for
+    /// a limit: it carries on as another account, or after the reset.
+    fn wake_waiting_on(&self, ended: &Conversation, now: Attention) {
+        let said = ended.answer().map(clipped).filter(|s| !s.is_empty());
+        let what = match now {
+            Attention::Failed => {
+                let why = ended.failure.as_ref().map(|f| f.message.as_str()).or(ended.error.as_deref()).unwrap_or("no reason given");
+                format!("failed: {why}")
+            }
+            Attention::Offline => "stopped: its process ended".into(),
+            Attention::Limited => return,
+            _ => format!("ended its turn: {}", said.as_deref().unwrap_or("nothing")),
+        };
+        let quiet = said.is_none() && !matches!(now, Attention::Failed | Attention::Offline);
+        self.wake_waiters(ended, &format!("{what}\n\n{}", reply_to(ended)), quiet)
+    }
+
+    /// Every session between turns whose answer ends `[zero: waiting on <ended>]` (its id or name) is told `what`
+    /// became of it, a parked one resumed for it. Not its lead: it hears it as a report already. Nor a worker of
+    /// `ended`'s: its lead writes to it with zero send, so the lead's turns are no news to it (waiting on it is plain
+    /// waiting). A `quiet` end (a turn that said nothing) doesn't wake the one `ended` itself waits
+    /// on: two waiting on each other would wake each other forever.
+    pub(super) fn wake_waiters(&self, ended: &Conversation, what: &str, quiet: bool) {
         let name = crate::bridge::label(ended);
-        let said = ended.answer().map(clipped).filter(|s| !s.is_empty()).unwrap_or_else(|| "nothing".into());
         for session in self.sessions() {
             let waiter = session.summary();
             if waiter.id == ended.id
                 || ended.parent.as_deref() == Some(waiter.id.as_str())
                 || !matches!(waiter.status, Status::Idle | Status::Offline)
+                || (quiet && self.waits_on_task(ended, &waiter.id))
+                || waiter.parent.as_deref() == Some(ended.id.as_str())
             {
                 continue;
             }
             let Some(on) = waiter.answer().and_then(crate::board::waits_on) else { continue };
             if on == ended.id || on.eq_ignore_ascii_case(&name) {
-                let words = format!("{name}, which you wait on, ended its turn: {said}\n\n{}", reply_to(ended));
-                self.tell(&waiter.id, crate::model::from_line(&ended.id, &words));
+                self.tell(&waiter.id, crate::model::from_line(&ended.id, &format!("{name}, which you wait on, {what}")));
             }
         }
     }

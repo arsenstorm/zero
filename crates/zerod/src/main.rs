@@ -39,7 +39,13 @@ async fn main() {
     // From a shell it is already a group leader and this fails, harmlessly.
     setsid();
     more_descriptors();
-    let zero = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".zero");
+    // A dev zerod's Keychain calls fail rather than show the user a dialog (it keeps no items; this is for any missed).
+    if cfg!(feature = "dev") {
+        zerod::vault::no_prompts();
+    }
+    // Zero Dev's zerod keeps to a folder of its own (as Zero Dev does), so nothing of the user's Zero is shared.
+    let zero =
+        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(if cfg!(feature = "dev") { ".zero-dev" } else { ".zero" });
     let mut args = std::env::args().skip(1).peekable();
     // `zerod mcp`: the MCP server on stdio, for an agent, talking to the running zerod.
     let mcp = args.next_if_eq("mcp").is_some();
@@ -126,6 +132,8 @@ fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
     zerod::adapter::set_compact_window(zerod::server::Settings::load(home).compact_window());
     daemon.take_over();
     daemon.carry_on();
+    // And parked tasks with words that may go, which nothing woke for them before (a hold that went with that zerod).
+    daemon.deliver_stranded();
     // Every task's turns end on Zero's ending, whichever agent runs it: one that doesn't is sent back once.
     daemon.require_endings();
     daemon.name_tasks();
@@ -155,7 +163,11 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> Arc<zerod::in
 /// keep from anyone: its tokens are in a file there, and its client is whoever started it.
 fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod::inbox::Inbox>, own: bool) -> zerod::server::Zerod {
     let (home, beside) = (&args.home, &args.beside);
-    let vault = if own { zerod::vault::Vault::Keychain(None) } else { zerod::vault::Vault::File(home.join("secrets.json")) };
+    let vault = if own && !cfg!(feature = "dev") {
+        zerod::vault::Vault::Keychain(None)
+    } else {
+        zerod::vault::Vault::File(home.join("secrets.json"))
+    };
     let integrations = zerod::integrations::Integrations::open_in(home, Arc::new(zerod::integrations::Commands::default()), vault);
     let peers: zerod::server::Peers = if own { Arc::new(zerod::peer::is_zero_app) } else { Arc::new(|_| true) };
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
@@ -311,6 +323,13 @@ fn poll_following(zerod: zerod::server::Zerod) {
 /// Firefox Developer Edition under remote control with Zero's extension from the app's resources.
 fn open_browsers(home: &Path) -> Arc<zerod::browser::Browsers> {
     let browsers = zerod::browser::Browsers::open(home);
+    if let Some(zero_browser) = zerod::zero_browser::ZeroBrowser::bundled(home.join("zero-browser.log")) {
+        browsers.set_zero_browser(zero_browser)
+    }
+    // Zero Dev's zerod has Zero Browser alone: it never opens or drives the user's Chrome, Firefox or Safari.
+    if cfg!(feature = "dev") {
+        return browsers;
+    }
     browsers.set_launcher(zerod::browser::Browsers::chrome());
     if let Ok(exe) = std::env::current_exe()
         && exe.starts_with("/Applications")

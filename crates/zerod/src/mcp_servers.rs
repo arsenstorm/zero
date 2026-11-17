@@ -112,6 +112,9 @@ impl McpServer {
 
 /// The Keychain's value for an account, through the `security` tool (as the app keeps its own secrets): no prompt.
 pub fn keychain(service: &str, account: &str) -> Option<String> {
+    if !own_item(service) {
+        return None;
+    }
     let output = std::process::Command::new("/usr/bin/security")
         .args(["find-generic-password", "-s", service, "-a", account, "-w"])
         .output()
@@ -131,6 +134,9 @@ pub fn keychain(service: &str, account: &str) -> Option<String> {
 // sign-ins) isn't written; the Security framework can't keep its item `security`'s.
 pub fn keychain_write(service: &str, account: &str, value: Option<&str>) -> Result<(), String> {
     use std::io::Write;
+    if !own_item(service) {
+        return Err(format!("a dev zerod keeps out of {service}"));
+    }
     let Some(value) = value else {
         let output = std::process::Command::new("/usr/bin/security")
             .args(["delete-generic-password", "-s", service, "-a", account])
@@ -161,6 +167,12 @@ pub fn keychain_write(service: &str, account: &str, value: Option<&str>) -> Resu
 
 /// The longest line `security -i` reads whole (4096 bytes, with room to spare).
 const SECURITY_LINE: usize = 4032;
+
+/// Whether this zerod may touch a Keychain item: none in a dev build, which runs on a home of its own where the
+/// Keychain finds no keychain (a write there asks the user, offering to reset theirs), and mustn't read the user's.
+fn own_item(_service: &str) -> bool {
+    !cfg!(feature = "dev")
+}
 
 /// Whether `keychain_write` can give the Keychain this value: on one line of `security -i`, as it's quoted there.
 pub fn fits_keychain(service: &str, account: &str, value: &str) -> bool {

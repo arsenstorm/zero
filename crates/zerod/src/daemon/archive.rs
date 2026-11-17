@@ -20,11 +20,16 @@ impl Daemon {
             }
             i += 1;
         }
+        let gone: Vec<Conversation> = team.iter().filter_map(|m| self.session(m).ok()).map(|s| s.summary()).chain([root.clone()]).collect();
         for member in team.iter().rev() {
             self.archive_one(member, Some(id)).await?
         }
         let workspace = self.workspace_of(&root);
         self.archive_one(id, None).await?;
+        // Who waited on them hears they went: nothing else will wake it. Once they're all gone, so none of them is.
+        for conversation in &gone {
+            self.wake_waiters(conversation, "was put away.", false)
+        }
         let _ = std::fs::write(
             self.home.join("archive").join(id).join(ARCHIVED),
             serde_json::to_vec(&serde_json::json!({

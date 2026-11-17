@@ -5,6 +5,11 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Zero's daemon: runs agent sessions and keeps them, whether or not the app is open"
 
+[features]
+# Zero Dev: a zerod for testing beside the user's own. Its own Keychain names, and only Zero Dev passes the
+# app-only check. Never in a release.
+dev = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }

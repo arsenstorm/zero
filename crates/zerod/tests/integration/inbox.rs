@@ -606,3 +606,20 @@ async fn many_asks_leaving_the_window_at_once_are_one_event_not_one_each() {
     assert_eq!((removed, trimmed), (0, 1));
     assert!(inbox.asks().is_empty());
 }
+
+#[tokio::test]
+async fn a_waiting_ask_after_a_relaunch_is_delivered_unless_its_cli_waits_again() {
+    // The zerod before held the waiting `zero ask` connections: none is on the line now. A CLI still alive waits
+    // again (Inbox::on_the_line); the rest get the answer as --async asks do.
+    let log = std::env::temp_dir().join(format!("zerod-inbox-unwaited-{}.jsonl", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let first = Inbox::open(Some(log.clone()), vec![]);
+    first.configure(Duration::from_millis(50), 3600);
+    let open = first.create(ask(AskKind::Question, "Which?", &[]), false);
+    assert_eq!(first.ask(&open.id).unwrap().waits, None);
+    let again = Inbox::open(Some(log.clone()), vec![]);
+    assert_eq!(again.ask(&open.id).unwrap().waits, Some(false));
+    again.on_the_line(&open.id, true);
+    assert_eq!(again.ask(&open.id).unwrap().waits, None, "a CLI that waits again reads it itself");
+    let _ = std::fs::remove_file(&log);
+}

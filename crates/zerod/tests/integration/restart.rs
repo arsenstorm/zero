@@ -170,7 +170,7 @@ async fn after_a_restart_only_what_it_paused_carries_on() {
     tokio::time::sleep(Duration::from_millis(100)).await; // their processes connect
     daemon.session(&paused).unwrap().change(Change::Status { status: Status::Working, turn: Some("t1".into()), error: None });
     daemon.session(&parked).unwrap().change(Change::Status { status: Status::Offline, turn: None, error: None });
-    // Words left for a parked task (a note for when it's next resumed) aren't a reason to resume it.
+    // Words left for a parked task aren't carry_on's: deliver_stranded resumes it for them (held_messages.rs).
     std::fs::write(home.join("zerod/sessions").join(&parked).join("pending.json"), r#"["for when you're back"]"#).unwrap();
     assert_eq!(daemon.pause_for_restart().await, std::slice::from_ref(&paused));
     drop(daemon);

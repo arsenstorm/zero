@@ -615,13 +615,13 @@
  },
  {
   "name": "browser_select",
-  "description": "Uses another browser for this task from now on: a connected one by its id, or \"firefox\" for the user's Firefox Developer Edition (Zero opens it under remote control if it isn't, with the same tools) or \"chrome\" to go back. For front-end changes, check them in Firefox too.",
+  "description": "Uses another browser for this task from now on: a connected one by its id, or \"firefox\" for the user's Firefox Developer Edition (Zero opens it under remote control if it isn't, with the same tools), \"zero\" for Zero's own Chromium (signed out of the user's sites; its tabs show in the task's side panel when the user has Chromium draw it), or \"chrome\" to go back. For front-end changes, check them in Firefox too.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "browser": {
      "type": "string",
-     "description": "Its id from browser_list, or firefox or chrome."
+     "description": "Its id from browser_list, or firefox, zero or chrome."
     }
    },
    "required": [

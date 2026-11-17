@@ -156,6 +156,15 @@ pub struct Followed {
     #[serde(flatten)]
     pub follow: Follow,
     pub summary: String,
+    /// The thing's own name (a pull request's or issue's title), its state as its service words it (a pull request's
+    /// open, draft, merged or closed; an issue's status), and whether it has closed: merged or closed, or a status of
+    /// the completed or canceled kind. Empty for a thread or channel.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub closed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub last_poll: i64,
@@ -165,6 +174,15 @@ pub struct Followed {
     /// What else `follow` learned, e.g. whose comment thread it is.
     #[serde(default)]
     pub detail: String,
+}
+
+/// A followed thing's name, state and whether it has closed (Followed), from its last reading.
+fn status(topic: &str, state: Option<&Value>) -> (String, String, bool) {
+    match (Source::of(topic), state) {
+        (Ok(Source::GitHub), Some(s)) => github::status(s),
+        (Ok(Source::Linear), Some(s)) => linear::status(s),
+        _ => Default::default(),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -291,9 +309,13 @@ impl Following {
             .filter(|f| session.is_none_or(|s| f.session == s))
             .map(|f| {
                 let target = kept.targets.get(&poll_key(&f.topic)).cloned().unwrap_or_default();
+                let (name, state, closed) = status(&f.topic, target.state.as_ref());
                 Followed {
                     follow: f.clone(),
                     summary: target.summary,
+                    name,
+                    state,
+                    closed,
                     error: target.error,
                     last_poll: target.last_poll,
                     new: false,
@@ -339,9 +361,13 @@ impl Following {
         kept.follows.push(Follow { session: session.into(), topic: topic.clone(), mine, about, at: now() });
         self.keep(&kept);
         let target = kept.targets.get(&key).cloned().unwrap_or_default();
+        let (name, state, closed) = status(&topic, target.state.as_ref());
         Ok(Followed {
             follow: kept.follows.last().unwrap().clone(),
             summary: target.summary,
+            name,
+            state,
+            closed,
             error: target.error,
             last_poll: target.last_poll,
             new,

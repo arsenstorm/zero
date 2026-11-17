@@ -56,6 +56,9 @@ pub type Noted = Box<dyn Fn(&str, String) -> String + Send + Sync>;
 
 /// Messages two tasks may send each other without the user before Zero holds them for the user's word.
 const BETWEEN_TASKS: u32 = 10;
+/// The same for a task and the one it waits on, whose words are what it waits for: higher, but two agents still can't
+/// loop forever.
+const WAITING_CEILING: u32 = 40;
 /// The agents' processes one zerod hands the next across a restart (Daemon::hand_off, take_over).
 const HANDOFF: &str = "handoff.json";
 /// Each task's reply the user has seen (its answer's item, and when), on any client: seen.json.
@@ -114,8 +117,10 @@ pub struct Daemon {
     /// Tasks told nothing wakes them: not again until something could (a follow, a background run, a note saying who).
     /// ponytail: in memory; a restart may tell one once more.
     told_nothing_wakes: Mutex<HashSet<String>>,
-    /// Tasks whose messages from other tasks wait for the user: too many between them without the user.
-    crossing: Mutex<HashSet<String>>,
+    /// (receiver, sender): the sender's messages wait for the user, the two having written to each other too often
+    /// without them; true when past WAITING_CEILING, the receiver waiting on the sender. ponytail: in memory, so a
+    /// restart lets them go (deliver_stranded); keep it on disk if pairs loop.
+    crossing: Mutex<HashMap<(String, String), bool>>,
     /// Workers that ended done: each leaves its lead's tree (archived) once its report has been handed to the lead.
     leaving: Mutex<HashSet<String>>,
     /// Sessions being archived now: their end is the archiving, not news for their lead.

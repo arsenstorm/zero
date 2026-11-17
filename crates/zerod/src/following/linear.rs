@@ -134,6 +134,11 @@ fn thread_topic(key: &str, root: &str) -> String {
     format!("{key}/{}", root.chars().take(8).collect::<String>())
 }
 
+/// Its title, its status as the team names it, and whether that status is of the completed or canceled kind.
+pub fn status(s: &Value) -> (String, String, bool) {
+    (str(&s["title"]).into(), str(&s["state"]).into(), ended(s))
+}
+
 /// Whether the issue has ended: its state's type completed or canceled, whatever the team calls it.
 pub fn ended(state: &Value) -> bool {
     matches!(str(&state["state_type"]), "completed" | "canceled")

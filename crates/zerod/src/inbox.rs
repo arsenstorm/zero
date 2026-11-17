@@ -804,6 +804,23 @@ impl Inbox {
         let _ = self.events.send(InboxEvent::Output { id: id.into(), chunk: chunk.into() });
     }
 
+    /// Whether an agent's `zero ask` waits on ask `id`'s connection: one that hung up (its tool moved it to the
+    /// background and stopped it) gets the answer as an --async ask's agent does, now if it's in; one that waits again
+    /// reads it there. ponytail: an answer in the moment between a hang-up and waiting again goes both ways.
+    pub fn on_the_line(&self, id: &str, on: bool) {
+        let waits = if on { None } else { Some(false) };
+        let changed = self.update(id, |a| {
+            let change = a.waits != waits && !(on && a.state.is_final());
+            if change {
+                a.waits = waits
+            }
+            change
+        });
+        if changed && !on {
+            self.deliver_answer(id)
+        }
+    }
+
     /// Types the answer into the session of an agent that asked with --async and so isn't waiting for it; again
     /// when the user retries a failed delivery.
     pub fn deliver_answer(&self, id: &str) {
@@ -1188,6 +1205,11 @@ impl Inbox {
         let mut died = vec![];
         let mut running = vec![];
         for mut ask in all {
+            // The zerod before held the connections `zero ask` waited on: none is on the line now. One still alive
+            // waits again (on_the_line); for the rest, the answer goes to the task as an --async ask's does.
+            if !ask.state.is_final() && ask.waits.is_none() {
+                ask.waits = Some(false)
+            }
             if ask.state == AskState::Pending {
                 ask.state = AskState::Waiting;
                 ask.answer = None;

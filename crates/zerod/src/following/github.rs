@@ -194,6 +194,12 @@ pub fn describe(s: &Value) -> String {
     format!("{} ({state}{draft}) {}", s["title"].as_str().unwrap_or(""), s["url"].as_str().unwrap_or(""))
 }
 
+/// Its title, its state in a word (open, draft, merged, closed), and whether it's merged or closed.
+pub fn status(s: &Value) -> (String, String, bool) {
+    let state = if s["draft"] == true && s["state"] == "OPEN" { "draft".into() } else { lower(&s["state"]) };
+    (str(&s["title"]).into(), state, closed(s))
+}
+
 fn str(v: &Value) -> &str {
     v.as_str().unwrap_or("")
 }

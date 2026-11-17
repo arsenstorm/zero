@@ -177,3 +177,32 @@ async fn an_ask_with_a_time_out_of_range_is_refused_not_a_crash() {
         assert_eq!(reply["op"], "error", "{time}");
     }
 }
+
+#[tokio::test]
+async fn an_ask_whose_waiting_cli_hung_up_is_delivered_as_an_async_one() {
+    // The agent's tool moved `zero ask` to the background and stopped it: nothing reads the answer on the connection,
+    // so it goes to the task as --async's does.
+    let (inbox, socket) = serve("hangup").await;
+    let mut cli = Line::open(&socket, json!({"op": "create", "ask": ask("question", "Which?", &[])})).await;
+    let id = cli.next().await.unwrap()["id"].as_str().unwrap().to_string();
+    drop(cli);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(inbox.ask(&id).unwrap().waits, Some(false), "no one waits on it now");
+    inbox.reply(&id, "the second one");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(inbox.ask(&id).unwrap().delivery.is_some(), "delivered (or tried): {:?}", inbox.ask(&id));
+}
+
+#[tokio::test]
+async fn waiting_again_after_a_hang_up_reads_the_answer_itself() {
+    let (inbox, socket) = serve("hangup-rewait").await;
+    let mut cli = Line::open(&socket, json!({"op": "create", "ask": ask("question", "Which?", &[])})).await;
+    let id = cli.next().await.unwrap()["id"].as_str().unwrap().to_string();
+    drop(cli);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut again = Line::open(&socket, json!({"op": "wait", "id": id})).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    inbox.reply(&id, "now");
+    assert_eq!(again.next().await.unwrap()["ask"]["answer"], "now");
+    assert_eq!(inbox.ask(&id).unwrap().delivery, None, "read on its connection, not typed in as well");
+}

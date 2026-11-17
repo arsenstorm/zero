@@ -40,6 +40,8 @@ pub(super) async fn handle(zerod: &Zerod, request: Request) -> Result<Value, Str
         "browserSettings" => Ok(zerod.browsers.settings()),
         "saveBrowserSettings" => zerod.browsers.save_settings(request.browser.as_ref().ok_or("Which settings?")?),
         "browserSetup" => setup(),
+        // Zero Browser started for Zero.app (its side panel) if it isn't: its pid, which Zero.app reaches it by.
+        "zeroBrowser" => Ok(json!({"pid": zerod.browsers.start_zero_browser()?})),
         other => unknown(other),
     }
 }
@@ -67,6 +69,18 @@ async fn call(zerod: &Zerod, request: &Request) -> Result<Value, String> {
         review(zerod, conversation, tool, &args).await?
     }
     zerod.browsers.call(session, task, tool, args).await
+}
+
+/// Zero Browser started if it isn't, its socket served as one more connection: its pid.
+pub(super) fn start_zero_browser(zerod: &Zerod) -> Result<i32, String> {
+    let zero_browser = zerod.browsers.zero_browser().ok_or("Zero Browser isn't in this Zero")?;
+    let serving = zerod.clone();
+    zero_browser.ensure(move |stream| {
+        let _ = stream.set_nonblocking(true);
+        if let Ok(stream) = tokio::net::UnixStream::from_std(stream) {
+            super::connection::serve_one(serving, stream);
+        }
+    })
 }
 
 /// Chrome's native host installed for this zerod, and where Zero for Chrome is to load from.
@@ -102,6 +116,10 @@ async fn review(zerod: &Zerod, conversation: &crate::model::Conversation, tool: 
             ));
         }
         zerod.browsers.allow(&conversation.id, &site);
+        return Ok(());
+    }
+    // A dev zerod never starts an agent's CLI on its own: it would run under the dev home, or reach the user's account.
+    if cfg!(feature = "dev") {
         return Ok(());
     }
     // What the user asked first, and what they asked last: a long task's current work is in the latter.

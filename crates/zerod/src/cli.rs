@@ -178,46 +178,55 @@ async fn connection(inbox: Arc<Inbox>, stream: UnixStream) {
     }
 }
 
-/// Holds the connection until the ask is final, streaming a run's output; ends early if the client hangs up.
+/// Holds the connection until the ask is final, streaming a run's output. A client that hangs up first (or can't be
+/// told) isn't waiting any more: the answer goes to its task as an --async one does (Inbox::on_the_line).
 async fn park(
-    inbox: &Inbox, mut events: broadcast::Receiver<InboxEvent>, id: &str, mut out: OwnedWriteHalf,
-    mut lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    inbox: &Inbox, events: broadcast::Receiver<InboxEvent>, id: &str, mut out: OwnedWriteHalf,
+    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
 ) {
+    if !wait_on(inbox, events, id, &mut out, lines).await {
+        inbox.on_the_line(id, false)
+    }
+}
+
+/// Whether the client read the ask's end on its connection.
+async fn wait_on(
+    inbox: &Inbox, mut events: broadcast::Receiver<InboxEvent>, id: &str, out: &mut OwnedWriteHalf,
+    mut lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+) -> bool {
     let Some(ask) = inbox.ask(id) else {
-        send(&mut out, error(format!("no such ask {id}"))).await;
-        return;
+        send(out, error(format!("no such ask {id}"))).await;
+        return true;
     };
     if ask.state.is_final() {
-        send(&mut out, Response { op: "done", ask: Some(ask), ..Default::default() }).await;
-        return;
+        return send(out, Response { op: "done", ask: Some(ask), ..Default::default() }).await;
     }
+    inbox.on_the_line(id, true);
     if !ask.output.is_empty()
-        && !send(&mut out, Response { op: "output", id: Some(id.into()), chunk: Some(ask.output), ..Default::default() }).await
+        && !send(out, Response { op: "output", id: Some(id.into()), chunk: Some(ask.output), ..Default::default() }).await
     {
-        return;
+        return false;
     }
     loop {
         tokio::select! {
             event = events.recv() => match event {
                 Ok(InboxEvent::Output { id: of, chunk }) if of == id => {
-                    if !send(&mut out, Response { op: "output", id: Some(of), chunk: Some(chunk), ..Default::default() }).await { return }
+                    if !send(out, Response { op: "output", id: Some(of), chunk: Some(chunk), ..Default::default() }).await { return false }
                 }
                 Ok(InboxEvent::Ask(ask)) if ask.id == id && ask.state.is_final() => {
-                    send(&mut out, Response { op: "done", ask: Some(*ask), ..Default::default() }).await;
-                    return;
+                    return send(out, Response { op: "done", ask: Some(*ask), ..Default::default() }).await;
                 }
                 Ok(_) => {}
                 // Fell behind: the ask as it is now settles it.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     if let Some(ask) = inbox.ask(id).filter(|a| a.state.is_final()) {
-                        send(&mut out, Response { op: "done", ask: Some(ask), ..Default::default() }).await;
-                        return;
+                        return send(out, Response { op: "done", ask: Some(ask), ..Default::default() }).await;
                     }
                 }
-                Err(broadcast::error::RecvError::Closed) => return,
+                Err(broadcast::error::RecvError::Closed) => return false,
             },
             // The client hung up (or wrote something): either way it's no longer waiting here.
-            _ = lines.next_line() => return,
+            _ = lines.next_line() => return false,
         }
     }
 }

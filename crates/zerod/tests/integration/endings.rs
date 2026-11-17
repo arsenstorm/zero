@@ -35,7 +35,7 @@ fn item(id: &str, kind: ItemKind) -> Change {
 }
 
 /// A turn: the user's message (or Zero's), the agent's answer, between turns again.
-async fn turn(session: &zerod::session::Session, n: usize, said: &str, answer: &str) {
+pub async fn turn(session: &zerod::session::Session, n: usize, said: &str, answer: &str) {
     session.change(Change::Status { status: Status::Working, turn: Some(format!("t{n}")), error: None });
     tokio::time::sleep(Duration::from_millis(100)).await;
     session.change(item(&format!("u{n}"), ItemKind::User { text: said.into(), images: vec![], sent: None }));

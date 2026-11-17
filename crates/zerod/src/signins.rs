@@ -11,7 +11,10 @@ use crate::model::Provider;
 use crate::process::Variables;
 
 /// The Keychain service sign-ins' values are kept under, by the sign-in's id.
+#[cfg(not(feature = "dev"))]
 pub const KEYCHAIN: &str = "Zero sign-ins";
+#[cfg(feature = "dev")]
+pub const KEYCHAIN: &str = "Zero Dev sign-ins";
 
 const ACTIVITY: &str = "activity.json";
 

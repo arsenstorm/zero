@@ -684,3 +684,38 @@ async fn a_burst_of_events_wakes_an_idle_task_once() {
     assert_eq!(told.lock().unwrap().len(), 2, "one after the window is its own wake");
     assert!(told.lock().unwrap()[1].1.starts_with("1 new event"));
 }
+
+/// A follow lists the thing's name, its state and whether it has closed, for the app to show as a pill and to fold
+/// what has ended: a pull request merged, an issue whose status is completed or canceled, whatever the team calls it.
+#[tokio::test]
+async fn a_follow_lists_its_things_name_state_and_whether_it_closed() {
+    let mut draft = pr(vec![], vec![], vec![], "aaa", "OPEN");
+    draft["data"]["repository"]["pullRequest"]["isDraft"] = json!(true);
+    let mut done = issue("Shipped", vec![]);
+    done["data"]["issue"]["state"]["type"] = json!("completed");
+    let mut review = issue("PM review", vec![]);
+    review["data"]["issue"]["identifier"] = json!("ENG-2");
+    review["data"]["issue"]["url"] = json!("https://linear.app/acme/issue/ENG-2");
+    review["data"]["issue"]["state"]["type"] = json!("started");
+    let fetcher = canned(vec![Ok(draft), Ok(pr(vec![], vec![], vec![], "aaa", "MERGED")), Ok(done), Ok(review)]);
+    let home = temp_dir("following-status");
+    std::fs::write(home.join("linear.json"), r#"{"name":"Acme","url_key":"acme","access":"lin_tok","refresh":null,"expires":9999999999}"#)
+        .unwrap();
+    let following = Following::open(&home, fetcher.clone(), Integrations::open(&home, fetcher));
+    let seen = |f: &Followed| (f.name.clone(), f.state.clone(), f.closed);
+    let followed = following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    assert_eq!(seen(&followed), ("Fix vitals".into(), "draft".into(), false));
+    following.follow("s1", "github/o/r/43", false, vec![]).await.unwrap();
+    following.follow("s1", "linear/ENG-1", false, vec![]).await.unwrap();
+    following.follow("s1", "linear/ENG-2", false, vec![]).await.unwrap();
+    let listed: Vec<_> = following.list(Some("s1")).iter().map(seen).collect();
+    assert_eq!(
+        listed,
+        [
+            ("Fix vitals".into(), "draft".into(), false),
+            ("Fix vitals".into(), "merged".into(), true),
+            ("Vitals".into(), "Shipped".into(), true),
+            ("Vitals".into(), "PM review".into(), false),
+        ]
+    );
+}

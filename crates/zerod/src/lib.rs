@@ -51,6 +51,7 @@ pub mod vault;
 pub mod watches;
 pub mod websocket;
 pub mod workspaces;
+pub mod zero_browser;
 
 /// Now, in seconds since 1970.
 pub fn now() -> i64 {

@@ -6,8 +6,12 @@ use std::ffi::c_void;
 
 use crate::vault::{CFDictionaryGetValue, CFTypeRef, Cf, data, dictionary, string, text};
 
-/// Zero.app's identifier, as it's signed.
+/// Zero.app's identifier, as it's signed (Zero Dev's in a dev build: the user's Zero can't drive a dev zerod, nor
+/// Zero Dev the user's).
+#[cfg(not(feature = "dev"))]
 const APP: &str = "com.arsen.zero";
+#[cfg(feature = "dev")]
+const APP: &str = "com.arsen.zero.dev";
 
 /// The audit token of a Unix socket's peer (its pid is the sixth word): what the kernel says, not what the peer does.
 pub fn audit_token(fd: std::os::fd::RawFd) -> Option<[u32; 8]> {
@@ -82,4 +86,37 @@ unsafe extern "C" {
     fn SecCodeCheckValidity(code: CFTypeRef, flags: u32, requirement: CFTypeRef) -> i32;
     fn SecCodeCopySelf(flags: u32, me: *mut CFTypeRef) -> i32;
     fn SecCodeCopySigningInformation(code: CFTypeRef, flags: u32, information: *mut CFTypeRef) -> i32;
+}
+
+/// Whether the app bundle at `path` is validly signed by zerod's own team as `identifier`: checked before zerod
+/// starts it, so a bundle swapped in by anyone else isn't handed a socket to zerod. Unsigned zerod: the identifier alone.
+pub fn is_signed_app(path: &std::path::Path, identifier: &str) -> bool {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    let url = Cf(unsafe { CFURLCreateFromFileSystemRepresentation(std::ptr::null(), bytes.as_ptr(), bytes.len() as isize, 1) });
+    let mut code = std::ptr::null();
+    if url.0.is_null() || unsafe { SecStaticCodeCreateWithPath(url.0, 0, &mut code) } != 0 {
+        return false;
+    }
+    let code = Cf(code);
+    let requirement_text = match own_team() {
+        Some(team) => format!("anchor apple generic and certificate leaf[subject.OU] = \"{team}\" and identifier \"{identifier}\""),
+        None => format!("identifier \"{identifier}\""),
+    };
+    let mut requirement = std::ptr::null();
+    if unsafe { SecRequirementCreateWithString(string(&requirement_text).0, 0, &mut requirement) } != 0 {
+        return false;
+    }
+    let requirement = Cf(requirement);
+    unsafe { SecStaticCodeCheckValidity(code.0, 0, requirement.0) == 0 }
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    fn CFURLCreateFromFileSystemRepresentation(allocator: CFTypeRef, path: *const u8, length: isize, directory: u8) -> CFTypeRef;
+}
+
+#[link(name = "Security", kind = "framework")]
+unsafe extern "C" {
+    fn SecStaticCodeCreateWithPath(path: CFTypeRef, flags: u32, code: *mut CFTypeRef) -> i32;
+    fn SecStaticCodeCheckValidity(code: CFTypeRef, flags: u32, requirement: CFTypeRef) -> i32;
 }

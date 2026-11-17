@@ -148,12 +148,26 @@ pub struct Browsers {
     launched: Mutex<Option<std::time::Instant>>,
     firefox: Mutex<Option<Arc<crate::firefox::Firefox>>>,
     safari: Mutex<Option<Arc<crate::safari::Safari>>>,
+    zero_browser: Mutex<Option<Arc<crate::zero_browser::ZeroBrowser>>>,
+    start_zero_browser: Mutex<Option<ZeroBrowserStarter>>,
     /// The tab browser_compare uses, by session and browser.
     compared: Mutex<HashMap<(String, String), i64>>,
 }
 
 /// Starts Chrome: `open -g` in zerod, a stand-in in tests (which never open the user's).
 pub type Launcher = Arc<dyn Fn() + Send + Sync>;
+
+/// Zero Browser's name as it connects: a task uses it only once it picks it (browser_select "zero"); Chrome stays the
+/// default, as the user's own signed-in browser.
+pub const ZERO_BROWSER: &str = "Zero Browser";
+
+/// Starts Zero Browser if it isn't running (zerod's own, with its socket served): its pid.
+pub type ZeroBrowserStarter = Arc<dyn Fn() -> Result<i32, String> + Send + Sync>;
+
+/// A browser any task may use without picking it: Chrome (Firefox and Zero Browser only when picked).
+fn is_default(browser: &Browser) -> bool {
+    browser.name != "Firefox" && browser.name != ZERO_BROWSER
+}
 
 /// How long a call waits for the Chrome it opened to connect, and how often Chrome is opened at most.
 const OPENING: std::time::Duration = std::time::Duration::from_secs(20);
@@ -169,6 +183,8 @@ impl Browsers {
             launched: Mutex::new(None),
             firefox: Mutex::new(None),
             safari: Mutex::new(None),
+            zero_browser: Mutex::new(None),
+            start_zero_browser: Mutex::new(None),
             compared: Mutex::default(),
         })
     }
@@ -191,6 +207,22 @@ impl Browsers {
     }
     pub fn safari(&self) -> Option<Arc<crate::safari::Safari>> {
         self.safari.lock().unwrap().clone()
+    }
+    /// Zero Browser, the Chromium inside Zero.app, when this zerod runs from one.
+    pub fn set_zero_browser(&self, zero_browser: Arc<crate::zero_browser::ZeroBrowser>) {
+        *self.zero_browser.lock().unwrap() = Some(zero_browser)
+    }
+    pub fn zero_browser(&self) -> Option<Arc<crate::zero_browser::ZeroBrowser>> {
+        self.zero_browser.lock().unwrap().clone()
+    }
+    /// What starts Zero Browser with its socket served: set by the server, which serves it.
+    pub fn set_zero_browser_starter(&self, start: ZeroBrowserStarter) {
+        *self.start_zero_browser.lock().unwrap() = Some(start)
+    }
+    /// Zero Browser started if it isn't: its pid.
+    pub fn start_zero_browser(&self) -> Result<i32, String> {
+        let start = self.start_zero_browser.lock().unwrap().clone().ok_or("Zero Browser isn't in this Zero")?;
+        start()
     }
 
     /// browser_compare: one step in Chrome, Firefox and Safari at once (or those `browsers` names), each ending with
@@ -320,7 +352,7 @@ impl Browsers {
 
     /// No Chrome connected: it's opened (at most once a minute), and the call waits a while for its extension.
     async fn opening(&self) {
-        if self.state.lock().unwrap().browsers.iter().any(|b| b.name != "Firefox") {
+        if self.state.lock().unwrap().browsers.iter().any(is_default) {
             return;
         }
         let Some(launcher) = self.launcher.lock().unwrap().clone() else { return };
@@ -332,7 +364,7 @@ impl Browsers {
             }
         }
         let deadline = tokio::time::Instant::now() + OPENING;
-        while !self.state.lock().unwrap().browsers.iter().any(|b| b.name != "Firefox") && tokio::time::Instant::now() < deadline {
+        while !self.state.lock().unwrap().browsers.iter().any(is_default) && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
@@ -512,11 +544,11 @@ impl Browsers {
     }
 
     fn pick<'a>(state: &'a State, session: Option<&str>) -> Option<&'a Browser> {
-        // Firefox only for a task that chose it: whichever connected first, the rest use Chrome.
+        // Firefox and Zero Browser only for a task that chose them: whichever connected first, the rest use Chrome.
         session
             .and_then(|s| state.chosen.get(s))
             .and_then(|id| state.browsers.iter().find(|b| &b.id == id))
-            .or_else(|| state.browsers.iter().find(|b| b.name != "Firefox"))
+            .or_else(|| state.browsers.iter().find(|b| is_default(b)))
     }
 
     /// Runs one tool for a task. `task` says which (its session, its tab group and window, its name); the user's blocked
@@ -545,6 +577,10 @@ impl Browsers {
                         .named("Firefox", OPENING)
                         .await
                         .ok_or("Firefox is under Zero's remote control, but Zero's extension didn't start in it")?;
+                } else if want.eq_ignore_ascii_case("zero") {
+                    // Zero Browser by name: started if it isn't, and its tools page waited for.
+                    self.start_zero_browser()?;
+                    want = self.named(ZERO_BROWSER, OPENING).await.ok_or("Zero Browser started, but its tools didn't connect")?;
                 } else if want.eq_ignore_ascii_case("chrome") {
                     self.opening().await;
                     want = self.named("Chrome", Duration::ZERO).await.ok_or("Zero for Chrome isn't connected")?;

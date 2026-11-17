@@ -323,6 +323,7 @@ pub(crate) const APP_ONLY: &[&str] = &[
     "reorderWorkspaces",
     "gitKey",
     "saveBrowserSettings",
+    "zeroBrowser",
     "saveSignIn",
     "codexSignIn",
     "claudeSignIn",
@@ -524,7 +525,8 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         | "firefox"
         | "browserSettings"
         | "saveBrowserSettings"
-        | "browserSetup" => browser::handle(zerod, request).await,
+        | "browserSetup"
+        | "zeroBrowser" => browser::handle(zerod, request).await,
         "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" | "accountActivity"
         | "claudeModels" => signins::handle(zerod, request).await,
         "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun"
