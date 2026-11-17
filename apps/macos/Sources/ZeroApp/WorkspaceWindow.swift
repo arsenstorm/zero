@@ -32,7 +32,11 @@ extension AppDelegate {
             }
             let host = NSHostingController(rootView: view)
             host.sizingOptions = []
-            let window = NSWindow(contentViewController: host)
+            #if ZERO_DEV
+                let window: NSWindow = DevWindow(contentViewController: host)
+            #else
+                let window = NSWindow(contentViewController: host)
+            #endif
             window.title = "Zero"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             window.titlebarAppearsTransparent = true
@@ -276,3 +280,27 @@ extension Transaction {
         return transaction
     }
 }
+
+#if ZERO_DEV
+    /// Zero Dev's workspace window: key to Zero Dev itself while its harness drives it (DevE2E), so what goes by the
+    /// key window is tested with Zero Dev never the active app. The window server's key window stays the user's.
+    final class DevWindow: NSWindow {
+        static var driven = false
+        override var isKeyWindow: Bool { Self.driven || super.isKeyWindow }
+
+        /// Off every display (`--e2e`): nothing of Zero Dev's shows on the user's screen while it's tested.
+        static let offscreen = CommandLine.arguments.contains("--e2e")
+        static var away: NSPoint {
+            let all = NSScreen.screens.reduce(NSRect.zero) { $0.union($1.frame) }
+            return NSPoint(x: all.maxX + 4000, y: all.maxY + 4000)
+        }
+        override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+            Self.offscreen ? NSRect(origin: Self.away, size: frameRect.size) : super.constrainFrameRect(frameRect, to: screen)
+        }
+        override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+            super.setFrame(Self.offscreen ? NSRect(origin: Self.away, size: frameRect.size) : frameRect, display: flag)
+        }
+        override func setFrameOrigin(_ point: NSPoint) { super.setFrameOrigin(Self.offscreen ? Self.away : point) }
+
+    }
+#endif

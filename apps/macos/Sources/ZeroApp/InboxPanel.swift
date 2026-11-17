@@ -56,7 +56,7 @@ extension AppDelegate {
 
     /// The bar on screen, or put away with its panel, as Settings says; shown at once when switched back on.
     func showBar() {
-        guard settings.showBar else {
+        guard settings.showBar, !DevBuild.on else {
             pill.orderOut(nil)
             if inboxPanel.isVisible { hideInbox() }
             return

@@ -29,6 +29,8 @@ public enum Keychain {
     }
 
     private static func security(_ arguments: [String], input: String? = nil) -> String? {
+        // Zero Dev never reads or writes the user's Keychain: the `security` tool would hand it their items unasked.
+        if DevBuild.on { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         process.arguments = arguments

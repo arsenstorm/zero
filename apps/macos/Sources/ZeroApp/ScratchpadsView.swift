@@ -256,7 +256,7 @@ struct ScratchpadsPage: View {
         }
     }
 
-    static let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zero/scratchpads")
+    static let root = Paths.dir.appendingPathComponent("scratchpads")
 
     private func create(in folder: String) {
         Task {

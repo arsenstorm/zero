@@ -17,3 +17,6 @@ node_modules/
 
 # The iPhone app's icons, filled by apps/ios/icons.sh (Nucleo from zero-private, else Lucide)
 apps/ios/Zero/Icons.xcassets/
+
+# Zero Dev's build and its runs (make dev, make e2e)
+build-dev/

@@ -9,7 +9,7 @@ import ZeroCore
 // (~/.zero/attachments), since a pasted screenshot's own file is often a temporary one.
 
 enum Attachments {
-    static let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zero/attachments")
+    static let folder = Paths.dir.appendingPathComponent("attachments")
 
     /// An image kept as Zero's own PNG.
     static func save(_ image: NSImage) -> URL? {

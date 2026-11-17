@@ -279,6 +279,10 @@ final class WorkspaceSelector {
         advisor: @escaping (String) -> String? = { _ in nil }, setAdvisor: @escaping (String, String) -> Void = { _, _ in }
     ) {
         guard let window = window ?? NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
+        #if ZERO_DEV
+            // A menu is a panel of its own, drawn on a display whatever its window: never while the harness drives.
+            if DevWindow.driven { return }
+        #endif
         let state = SelectorState(kind: kind)
         state.sections = rows()
         state.rebuild = rows

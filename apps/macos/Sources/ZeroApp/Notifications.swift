@@ -41,8 +41,11 @@ import ZeroCore
         center.delegate = self
         // Registered ahead, off the main thread: the first registered when it played cost 100 ms there.
         Chime.warm([BoardRow.State.needsYou, .trouble, .done].map(settings.sound(for:)) + ["Glass"])
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-            if !granted { Log.write("notifications not allowed: \(error.map { "\($0)" } ?? "turned off")") }
+        // Zero Dev asks for nothing: a system prompt would show on the user's screen while it's tested.
+        if !DevBuild.on {
+            center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+                if !granted { Log.write("notifications not allowed: \(error.map { "\($0)" } ?? "turned off")") }
+            }
         }
         watchPlace()
         for name in [NSApplication.didBecomeActiveNotification, NSWindow.didBecomeKeyNotification] {
