@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import WebKit
 import ZeroCore
 
 // A task's right side as a panel with tabs, as Codex's: the conversation narrows to a column on the left, the panel
@@ -128,17 +127,14 @@ struct SidePanel: View {
                     if tab.isNew {
                         NewTabPage(workspace: workspace, row: row, conversation: conversation, closed: tabs.closed) { open($0) }
                     } else {
-                        let page = WebPages.page(for: tab, outside: Self.outside)
-                        WebPageView(page: page).id(tab.id)
-                            .onAppear {
-                                page.changed = { [task, id = tab.id] url, title in
-                                    Panels.shared.change(task) { $0.visited(id, url: url, title: title) }
-                                }
-                            }
+                        WebPageView(page: WebPages.page(for: tab, in: task, outside: Self.outside)).id(tab.id)
                     }
                 }
             } else {
-                TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation) { open($0) }
+                // Its links go where Zero's links go (Open links in), unlike a new tab's, which open here.
+                TaskDetails(workspace: workspace, inbox: inbox, navigation: navigation, row: row, conversation: conversation) {
+                    if let url = URL(string: $0) { LinearLinks.open(url) }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -201,7 +197,7 @@ enum BrowserKeys {
         guard let task = visible() else { return nil }
         let responder = window.firstResponder
         let field = (responder as? NSTextView)?.isFieldEditor == true
-        return (address && field) || page(holding: responder as? NSView) != nil || (kept == task && responder === window) ? task : nil
+        return (address && field) || WebPages.holding(responder as? NSView) != nil || (kept == task && responder === window) ? task : nil
     }
 
     /// The panel's page under the pointer: the visible task's tab shown, if the pointer is on it. (Not a hit test: a
@@ -215,16 +211,6 @@ enum BrowserKeys {
     private static func shows(_ view: NSView, _ event: NSEvent) -> Bool {
         view.window === event.window && !view.isHiddenOrHasHiddenAncestor
             && view.bounds.contains(view.convert(event.locationInWindow, from: nil))
-    }
-
-    /// The page this view is, or is inside.
-    private static func page(holding view: NSView?) -> WKWebView? {
-        var view = view
-        while let next = view {
-            if let web = next as? WKWebView { return web }
-            view = next.superview
-        }
-        return nil
     }
 
     /// A click in the workspace window: in the panel (outside its page and address bar, which take the keyboard
@@ -270,7 +256,7 @@ enum BrowserKeys {
     /// undoes its typing as anywhere else.
     static func undo(in window: NSWindow?) -> Bool {
         guard let window, task(in: window) != nil, !(window.firstResponder is NSTextView),
-            page(holding: window.firstResponder as? NSView)?.inputContext == nil
+            WebPages.holding(window.firstResponder as? NSView)?.editing != true
         else { return false }
         return reopen(in: window)
     }

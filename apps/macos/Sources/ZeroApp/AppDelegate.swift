@@ -105,7 +105,7 @@ import ZeroCore
             return lead
         }
         FieldEditorStyle.start()
-        if let app = MoveToApplications.needed() {
+        if !DevBuild.on, let app = MoveToApplications.needed() {
             moveWindow = MoveToApplications(source: app).window()
             NSApp.setActivationPolicy(.regular)
             NSApp.activate()
@@ -117,24 +117,31 @@ import ZeroCore
         ClaudeModels.refresh()
         HealthMonitor.shared.start()
         // Before connecting: launchd starts zerod, rather than the app (ZerodLink.ensureRunning).
-        ZerodAgent.register()
+        if !DevBuild.on { ZerodAgent.register() }
         connectStore()
         connectWorkspace()
         connectInbox()
         makePanels()
-        if launchedToRestore() { restoreWorkspace() } else { openWorkspace() }
-        activateForTypingInInbox()
-        makeStatusItem()
-        Updater.shared.watch()
+        if DevBuild.on {
+            showWorkspace(activating: false)
+        } else {
+            if launchedToRestore() { restoreWorkspace() } else { openWorkspace() }
+            activateForTypingInInbox()
+            makeStatusItem()
+            Updater.shared.watch()
+        }
         applySettings()
         settings.onChange = { [weak self] in self?.applySettings() }
-        registerHotKey()
+        if !DevBuild.on { registerHotKey() }
         monitorEvents()
         watchFloating()
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] _ in
             DispatchQueue.main.async { self?.updateDock() }
         }
-        if !UserDefaults.standard.bool(forKey: "onboarded") { openOnboarding() }
+        if !DevBuild.on, !UserDefaults.standard.bool(forKey: "onboarded") { openOnboarding() }
+        #if ZERO_DEV
+            if CommandLine.arguments.contains("--e2e") { DevE2E.run(self) }
+        #endif
     }
 
     /// The asks' store: an ask arriving sounds, one ending takes back its notification.
@@ -166,7 +173,8 @@ import ZeroCore
         self.notifier = notifier
         workspace.onBoard = { [weak notifier] rows in notifier?.board(rows) }
         Phones.shared.mcpServers = { [weak self] in await self?.mcpServersForPhones() ?? [] }
-        Phones.shared.start()
+        // Zero Dev pairs no phones: the relay and the tunnel's keys are the user's Zero's.
+        if !DevBuild.on { Phones.shared.start() }
         Task { [workspace] in await workspace?.connect() }
         workspace?.keepSlackFresh()
     }
@@ -409,7 +417,7 @@ import ZeroCore
     @objc func newTab() { _ = BrowserKeys.newTab(in: keyWorkspace) }
 
     /// The workspace window when it's key: the side panel's keys are its alone, never the bar's or another window's.
-    private var keyWorkspace: NSWindow? { NSApp.keyWindow.flatMap { $0 === workspaceWindow ? $0 : nil } }
+    private var keyWorkspace: NSWindow? { workspaceWindow.flatMap { $0.isKeyWindow ? $0 : nil } }
 
     /// Settings live in the workspace window.
     @objc func openSettings() {
@@ -430,15 +438,14 @@ import ZeroCore
         let file = NSMenuItem()
         file.submenu = NSMenu(title: "File")
         file.submenu?.addItem(withTitle: "New Tab", action: #selector(AppDelegate.newTab), keyEquivalent: "t")
-        file.submenu?.addItem(withTitle: "Reopen Closed Tab", action: #selector(AppDelegate.reopenTab), keyEquivalent: "t")
-            .keyEquivalentModifierMask = [.command, .shift]
+        // Shifted as AppKit matches them: the capital letter (a lowercase one with a Shift mask never matches ⌘⇧T).
+        file.submenu?.addItem(withTitle: "Reopen Closed Tab", action: #selector(AppDelegate.reopenTab), keyEquivalent: "T")
         file.submenu?.addItem(withTitle: "Close Window", action: #selector(AppDelegate.closeTabOrWindow), keyEquivalent: "w")
         main.addItem(file)
         let edit = NSMenuItem()
         let menu = NSMenu(title: "Edit")
         menu.addItem(withTitle: "Undo", action: #selector(AppDelegate.undoOrReopenTab), keyEquivalent: "z")
-        let redo = menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
-        redo.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")

@@ -522,7 +522,7 @@ final class InboxController {
         guard let id = id ?? selected, let ask = store.ask(id), index < ask.options.count else { return }
         // Its page opens, the ask staying until zerod closes it (a sign-in, once it's done).
         if index == 0, let link = ask.link.flatMap(URL.init(string:)) {
-            NSWorkspace.shared.open(link)
+            LinearLinks.open(link)
             return
         }
         if Ask.expectsText(ask.options[index]) {

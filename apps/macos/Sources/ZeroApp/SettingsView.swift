@@ -1427,12 +1427,48 @@ private struct BrowserRows: View {
     @State private var trying = false
     @State private var opening = false
     @State private var firefoxError: String?
+    @AppStorage(LinksOpenIn.key) private var openLinksIn = LinksOpenIn.development
+    @State private var panelHosts = UserDefaults.standard.stringArray(forKey: LinksOpenIn.hostsKey) ?? []
+    @State private var addingHost = ""
 
     private var chromes: [String]? { connected?.filter { $0 != "Firefox" } }
     private var firefox: Bool { connected?.contains("Firefox") == true }
 
     var body: some View {
         Sections {
+            SettingsSection(title: "Side panel") {
+                Rows {
+                    SettingRow(.openLinksIn) {
+                        SettingChoice(
+                            id: "openLinksIn",
+                            choices: [
+                                [
+                                    ("Default browser, except development addresses", LinksOpenIn.development),
+                                    ("Side panel", .panel), ("Default browser", .browser),
+                                ]
+                            ],
+                            selection: $openLinksIn)
+                    }
+                    if openLinksIn == .development {
+                        SettingRow(.panelHosts) { EmptyView() }
+                        ForEach(panelHosts, id: \.self) { host in
+                            BlockedSiteRow(site: host, removeTip: "Open it in the default browser", inRows: true) {
+                                savePanelHosts(panelHosts.filter { $0 != host })
+                            }
+                        }
+                        HStack(spacing: 10) {
+                            NucleoIcon("plus", size: 13).foregroundStyle(.secondary)
+                            TextField("Add a host (staging.acme.com)", text: $addingHost).textFieldStyle(.plain).font(.system(size: 13))
+                                .onSubmit {
+                                    let host = addingHost.trimmingCharacters(in: .whitespaces).lowercased()
+                                    addingHost = ""
+                                    if !host.isEmpty, !panelHosts.contains(host) { savePanelHosts(panelHosts + [host]) }
+                                }
+                        }
+                        .frame(height: 44)
+                    }
+                }
+            }
             SettingsSection(title: "Chrome") { chrome }
             SettingsSection(title: "Firefox") {
                 Rows {
@@ -1544,6 +1580,11 @@ private struct BrowserRows: View {
         }
     }
 
+    private func savePanelHosts(_ hosts: [String]) {
+        panelHosts = hosts
+        UserDefaults.standard.set(hosts, forKey: LinksOpenIn.hostsKey)
+    }
+
     private func saveSites(_ sites: [String]) {
         blocked = sites
         Task { await workspace.saveBlockedSites(sites) }
@@ -1574,6 +1615,9 @@ private struct BrowserRows: View {
 /// A blocked site's row: its name, and a trash icon on hover that removes it.
 private struct BlockedSiteRow: View {
     let site: String
+    var removeTip = "Unblock it"
+    /// In a card's Rows, which already inset it.
+    var inRows = false
     let remove: () -> Void
     @State private var hovered = false
     var body: some View {
@@ -1581,9 +1625,9 @@ private struct BlockedSiteRow: View {
             Text(site).font(.system(size: 13, weight: .medium))
             Spacer()
             Button(action: remove) { NucleoIcon("trash", size: 14).foregroundStyle(.secondary).frame(width: 28, height: 28) }
-                .buttonStyle(Hovering(radius: 7)).tip("Unblock it").opacity(hovered ? 1 : 0)
+                .buttonStyle(Hovering(radius: 7)).tip(removeTip).opacity(hovered ? 1 : 0)
         }
-        .padding(.leading, 18).padding(.trailing, 10).frame(height: 44)
+        .padding(.leading, inRows ? 0 : 18).padding(.trailing, inRows ? -8 : 10).frame(height: 44)
         .contentShape(Rectangle()).onHover { hovered = $0 }
     }
 }

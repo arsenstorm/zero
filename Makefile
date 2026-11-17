@@ -49,6 +49,7 @@ bundle: build
 	$(CODESIGN) $(APP)/Contents/MacOS/zero-cli
 	$(CODESIGN) $(APP)/Contents/MacOS/zero-full
 	$(CODESIGN) $(APP)/Contents/MacOS/zerod
+	SIGN="$(SIGN)" SIGNFLAGS="$(SIGNFLAGS)" apps/browser/helper.sh $(CURDIR)/$(APP) com.arsen.zero.browser "Zero Browser"
 	$(CODESIGN) $(APP)
 
 # The app quits and opens again where you were; zerod, only when it changed, restarts gracefully (install.sh).
@@ -79,6 +80,18 @@ release:
 
 run: install
 
+# Zero Dev (apps/macos/scripts/dev.sh): Zero built for testing beside the user's own, in build-dev/, with its own
+# zerod, state (~/.zero-dev) and Zero Browser; started in the background, never taking focus.
+dev:
+	@$(MACOS)/scripts/dev.sh && $(MACOS)/scripts/dev-run.sh start
+
+dev-stop:
+	@$(MACOS)/scripts/dev-run.sh stop
+
+# Zero Dev's end-to-end checks (DevE2E): built, run, stopped; the results in build-dev/e2e/results.md.
+e2e:
+	@$(MACOS)/scripts/e2e.sh
+
 test:
 	cargo test --workspace
 	swift test --package-path $(MACOS)
@@ -103,4 +116,4 @@ lint:
 	swift format lint --strict --recursive --parallel $(SWIFT_SOURCES)
 	bun run format:check
 
-.PHONY: build zerod bundle dmg install release run test setup format lint
+.PHONY: build zerod bundle dmg install release run dev dev-stop e2e test setup format lint

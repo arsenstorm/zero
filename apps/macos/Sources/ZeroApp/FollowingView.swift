@@ -90,10 +90,10 @@ private struct FollowRow: View {
         .padding(.leading, 18).padding(.trailing, 10).padding(.vertical, 12)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture(count: 2) { if let url { NSWorkspace.shared.open(url) } }
+        .onTapGesture(count: 2) { if let url { LinearLinks.open(url) } }
         .zeroContextMenu("follow-\(row.session)-\(row.topic)") {
             [
-                (url.map { url in [MenuItem("Open", "arrow-up-right") { NSWorkspace.shared.open(url) }] } ?? [])
+                (url.map { url in [MenuItem("Open", "arrow-up-right") { LinearLinks.open(url) }] } ?? [])
                     + [
                         MenuItem("Copy topic", "copy") {
                             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(row.topic, forType: .string)

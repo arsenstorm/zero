@@ -349,10 +349,45 @@ enum LinearLinks {
         return URL(string: inApp && link.hasPrefix(web) ? "linear://" + link.dropFirst(web.count) : link)
     }
 
-    /// Opens a link the way the user set: every link a user clicks in Zero goes through here, so a Linear issue
-    /// written as a full web link (an agent's Markdown link, a follow, a Later item) opens in the app too.
-    static func open(_ url: URL) {
-        NSWorkspace.shared.open(Self.url(url.absoluteString) ?? url)
+    /// Opens a link the way the user set: every link a user clicks in Zero goes through here (a message's, the details
+    /// pane's, the issue board's, a follow's, a Later item's), so it goes where LinkRoute.place says: an app's link
+    /// (a Linear issue written as a full web link too) to its app, a web page to the task's side panel or the default
+    /// browser as Settings' "Open links in" has it, Option-click the other of the two.
+    /// `other`: Option was held (the click's own event says), when the caller knows; else the event being handled.
+    @MainActor static func open(_ url: URL, other: Bool? = nil) {
+        let defaults = UserDefaults.standard
+        let setting = defaults.string(forKey: LinksOpenIn.key).flatMap(LinksOpenIn.init) ?? .development
+        let hosts = defaults.stringArray(forKey: LinksOpenIn.hostsKey) ?? []
+        // The click's own keys (the event being handled), not the keyboard's now.
+        let other = other ?? (NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags).contains(.option)
+        switch LinkRoute.place(url, in: setting, hosts: hosts, linearApp: inApp, slack: SlackLinks.teams, other: other) {
+        case let .app(app): leave(app)
+        case .panel where inPanel(url): return
+        case .panel, .browser: leave(url)
+        }
+    }
+
+    /// To the default browser or an app. Zero Dev's links never leave it: kept in `left` for its harness (DevE2E).
+    @MainActor private static func leave(_ url: URL) {
+        #if ZERO_DEV
+            left.append(url)
+        #else
+            NSWorkspace.shared.open(url)
+        #endif
+    }
+    #if ZERO_DEV
+        @MainActor static var left: [URL] = []
+    #endif
+
+    /// In a tab of the side panel of the task the workspace shows, the panel opened; false when the click wasn't in
+    /// the workspace window or it shows no task (the inbox, Later), and the default browser has it.
+    @MainActor private static func inPanel(_ url: URL) -> Bool {
+        guard let app = NSApp.delegate as? AppDelegate, app.workspaceWindow?.isKeyWindow == true,
+            case let .task(lead) = app.navigation.place
+        else { return false }
+        Panels.shared.change(lead) { $0.open(url.absoluteString) }
+        app.navigation.pane = true
+        return true
     }
 }
 

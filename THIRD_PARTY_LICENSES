@@ -73,6 +73,12 @@ Nucleo icons (https://nucleoapp.com)
     terminal
     wand-sparkle
 
+Chromium Embedded Framework (https://github.com/chromiumembedded/cef), with Chromium
+  Zero Browser (Contents/Helpers/Zero Browser.app): CEF's minimal build, apps/browser/cef.sh pins its version.
+  BSD 3-Clause License. Copyright (c) 2008-2020 Marshall A. Greenblatt, portions Copyright (c) 2006-2009 Google Inc.
+  Chromium and the works it includes, each under its own licence: listed with their texts in Zero Browser.app's
+  Resources ("Chromium CREDITS.html"), beside CEF's own ("CEF LICENSE.txt").
+
 Provider marks
   The Claude, OpenAI and OpenCode marks in the apps and the site belong to their owners and are used to name the
   agents Zero runs. They are not covered by the GPL.

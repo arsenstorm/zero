@@ -9,6 +9,11 @@ app=/Applications/Zero.app
 pid=$(ps -axo pid=,comm= | awk -v exe="$app/Contents/MacOS/Zero" '$2 == exe {print $1}')
 [ -z "$pid" ] || kill "$pid"
 for _ in $(seq 1 50); do [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1 || break; sleep 0.1; done
+# Zero Browser too, asked to quit (cookies written out) before its bundle goes; Zero.app's next zerod starts it again.
+browser="$app/Contents/Helpers/Zero Browser.app/Contents/MacOS/Zero Browser"
+if pkill -TERM -xf "$browser" 2>/dev/null; then
+	for _ in $(seq 1 50); do pgrep -xf "$browser" >/dev/null || break; sleep 0.1; done
+fi
 rm -rf "$app"
 cp -R "$new" "$app"
 mkdir -p "$HOME/.local/bin" && ln -sf "$app/Contents/MacOS/zero-cli" "$HOME/.local/bin/zero"

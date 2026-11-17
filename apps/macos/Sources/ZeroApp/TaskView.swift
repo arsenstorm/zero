@@ -130,11 +130,9 @@ private struct TaskView: View {
         return false
     }
 
-    /// A link from the issues' board: in its app when Zero opens it in one, else in a tab of the side panel, shown.
+    /// A link from the issues' board: where Zero's links go (LinearLinks.open).
     private func openLink(_ url: String) {
-        guard let link = URL(string: url), !SidePanel.outside(link) else { return }
-        Panels.shared.change(lead) { $0.open(url) }
-        navigation.pane = true
+        if let link = URL(string: url) { LinearLinks.open(link) }
     }
 
     /// Another task, from this one (a branch): a worker of the same lead shows under it.

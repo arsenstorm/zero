@@ -60,6 +60,10 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
+      # Zero Browser: CEF's wrapper (cmake, ninja) and the tools page's script (bun).
+      - name: Set up Zero Browser's build tools
+        run: brew install ninja bun
+
       - name: Import the Developer ID certificate
         env:
           CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE }}

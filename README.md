@@ -31,7 +31,7 @@ cargo test -p zerod --test integration e2e -- --ignored   # the daemon against t
                                                          # e2e::codex for one)
 ```
 
-Needs Rust and Xcode.
+Needs Rust and Xcode, and for Zero Browser (the side panel's Chromium) CMake, Ninja and Bun.
 
 ### Building from source
 

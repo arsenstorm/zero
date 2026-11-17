@@ -155,6 +155,68 @@ public enum LinkRoute {
     }
 }
 
+/// Where Zero opens the web links it's asked to (Settings › Browsers › Side panel, "Open links in").
+public enum LinksOpenIn: String, CaseIterable, Sendable {
+    /// The default browser, except development addresses and the user's own hosts (the panel being for development).
+    case development
+    case panel
+    case browser
+
+    public static let key = "openLinksIn"
+    /// The user's own hosts that open in the panel too (a staging domain), with their subdomains.
+    public static let hostsKey = "panelHosts"
+}
+
+/// Where a link goes: its app, the task's side panel, or the default browser.
+public enum LinkPlace: Equatable, Sendable {
+    case app(URL)
+    case panel
+    case browser
+}
+
+extension LinkRoute {
+    /// Where a link Zero opens goes (a conversation's, the details pane's, the issue board's; never a page's own
+    /// navigation in the panel): an app's link to its app; a web page where the user has links open, the other place
+    /// with `other` (Option-click).
+    public static func place(_ url: URL, in setting: LinksOpenIn, hosts: [String], linearApp: Bool, slack: [Slack.State], other: Bool)
+        -> LinkPlace
+    {
+        if let app = app(url, linearApp: linearApp, slack: slack) { return .app(app) }
+        let panel =
+            switch setting {
+            case .panel: true
+            case .browser: false
+            case .development: isDevelopment(url, hosts: hosts)
+            }
+        return panel != other ? .panel : .browser
+    }
+
+    /// A development address: this Mac (localhost, loopback), the local network (private and link-local addresses,
+    /// .local), the reserved .localhost and .test, or one of `hosts` (or under it).
+    public static func isDevelopment(_ url: URL, hosts: [String]) -> Bool {
+        guard var host = url.host?.lowercased(), !host.isEmpty else { return false }
+        host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if host == "localhost" || [".localhost", ".local", ".test"].contains(where: host.hasSuffix) { return true }
+        if host.contains(":") { return host == "::1" || host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe80:") }
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        if octets.count == 4, host.split(separator: ".").count == 4 {
+            switch (octets[0], octets[1]) {
+            case (127, _), (10, _), (0, _), (192, 168), (169, 254): return true
+            case (172, 16...31): return true
+            default: return false
+            }
+        }
+        return hosts.map(hostName).contains { !$0.isEmpty && (host == $0 || host.hasSuffix("." + $0)) }
+    }
+
+    /// A host as the user wrote it, as a host: "https://staging.acme.com:8443/x" is staging.acme.com.
+    private static func hostName(_ written: String) -> String {
+        var host = written.trimmingCharacters(in: .whitespaces).lowercased()
+        if let scheme = host.range(of: "://") { host = String(host[scheme.upperBound...]) }
+        return String(host.prefix { $0 != "/" && $0 != ":" })
+    }
+}
+
 /// Every task's panel tabs, kept in the app's defaults by task, and the panel's width.
 @MainActor @Observable
 public final class Panels {

@@ -15,7 +15,7 @@ enum Setting: String, CaseIterable {
     case subagents, compactWindow, buildCache, placesCommand
     case activity, claudeAccounts, codexAccounts, opencodeAccounts
     case commitAsAgent, signingKey, coauthor, coauthorName, gitFolders
-    case chrome, firefox, safari, pageDialogs, blockedSites
+    case openLinksIn, panelHosts, chrome, firefox, safari, pageDialogs, blockedSites
     case mcpServers
     case workspaces, projects
     case githubConnection, githubLinks, githubToken, githubPush
@@ -160,6 +160,18 @@ enum Setting: String, CaseIterable {
         case .coauthorName: (.git, "Agents' commits", "Your name and email", "Whom the co-author line names.", ["email"])
         case .gitFolders:
             (.git, "Only in these folders", "Only in these folders", "Where agents commit this way: every folder, or those you add.", [])
+        case .openLinksIn:
+            (
+                .chrome, "Side panel", "Open links in",
+                "Where links you click in Zero open. Option-click opens one in the other place.",
+                ["localhost", "development", "default browser", "github", "option"]
+            )
+        case .panelHosts:
+            (
+                .chrome, "Side panel", "Also open in the side panel",
+                "Besides this Mac's and the local network's addresses: hosts like a staging site, with their subdomains.",
+                ["staging", "domain", "host"]
+            )
         case .chrome:
             (
                 .chrome, "Chrome", "Zero for Chrome", "Lets agents use Chrome, each task in tabs of its own",

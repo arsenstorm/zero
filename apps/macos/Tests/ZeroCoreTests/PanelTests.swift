@@ -145,3 +145,61 @@ import Testing
     tabs.select(position: 6)
     #expect(tabs.shown?.url == "https://c.example")
 }
+
+/// Where Zero sends a web link it opens (a conversation's, the details pane's, the issue board's): by the user's
+/// "Open links in", app links to their apps whatever it says.
+@MainActor private func place(
+    _ link: String, _ setting: LinksOpenIn = .development, hosts: [String] = [], other: Bool = false, linear: Bool = true
+) -> LinkPlace {
+    let acme = Slack.State(team: .init(id: "T0AB", name: "Acme", domain: "acme"), channels: [:])
+    return LinkRoute.place(URL(string: link)!, in: setting, hosts: hosts, linearApp: linear, slack: [acme], other: other)
+}
+
+@MainActor @Test func appLinksGoToTheirAppsWhereverLinksOpen() {
+    for setting in LinksOpenIn.allCases {
+        #expect(place("https://linear.app/acme/issue/SHOP-1", setting) == .app(URL(string: "linear://acme/issue/SHOP-1")!))
+        #expect(place("https://acme.slack.com/archives/C0123", setting) == .app(URL(string: "slack://channel?team=T0AB&id=C0123")!))
+        #expect(place("mailto:a@example.com", setting, other: true) == .app(URL(string: "mailto:a@example.com")!))
+    }
+    // Linear's app off: its link is a web page like any other.
+    #expect(place("https://linear.app/acme/issue/SHOP-1", linear: false) == .browser)
+}
+
+@MainActor @Test func byDefaultOnlyDevelopmentAddressesOpenInThePanel() {
+    for link in [
+        "http://localhost:3000/", "http://app.localhost/", "http://127.0.0.1:8080", "http://127.1.2.3/", "http://[::1]:5173/",
+        "http://0.0.0.0:4000", "http://10.0.0.5/", "http://172.16.4.1/", "http://172.31.255.1/", "http://192.168.1.20/",
+        "http://169.254.1.1/", "http://[fd12::1]/", "http://[fe80::1]/", "http://mac.local/", "https://shop.test/",
+    ] {
+        #expect(place(link) == .panel, "\(link)")
+    }
+    for link in [
+        "https://github.com/acme/shop/pull/412", "http://172.32.0.1/", "http://11.0.0.1/", "https://localhost.example.com/",
+        "https://test.com/", "http://[2001:db8::1]/",
+    ] {
+        #expect(place(link) == .browser, "\(link)")
+    }
+}
+
+@MainActor @Test func theUsersOwnHostsOpenInThePanelWithTheirSubdomains() {
+    let hosts = ["staging.acme.com", "https://preview.acme.dev:8443/x", " Review.Acme.io "]
+    #expect(place("https://staging.acme.com/login", hosts: hosts) == .panel)
+    #expect(place("https://eu.staging.acme.com/", hosts: hosts) == .panel)
+    #expect(place("https://preview.acme.dev/", hosts: hosts) == .panel)
+    #expect(place("https://review.acme.io/", hosts: hosts) == .panel)
+    #expect(place("https://acme.com/", hosts: hosts) == .browser)
+    #expect(place("https://notstaging.acme.com/", hosts: hosts) == .browser)
+}
+
+@MainActor @Test func panelAndBrowserSettingsSendEveryWebLinkThere() {
+    #expect(place("https://github.com/acme/shop/pull/412", .panel) == .panel)
+    #expect(place("http://localhost:3000/", .browser) == .browser)
+    #expect(place("https://staging.acme.com/", .browser, hosts: ["staging.acme.com"]) == .browser)
+}
+
+@MainActor @Test func optionClickOpensInTheOtherPlace() {
+    #expect(place("http://localhost:3000/", other: true) == .browser)
+    #expect(place("https://github.com/acme/shop/pull/412", other: true) == .panel)
+    #expect(place("https://github.com/", .panel, other: true) == .browser)
+    #expect(place("http://localhost/", .browser, other: true) == .panel)
+}

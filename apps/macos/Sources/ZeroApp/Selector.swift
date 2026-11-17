@@ -739,12 +739,17 @@ private struct ContextMenuHost: ViewModifier {
 }
 
 @MainActor enum ZeroContextMenu {
-    static func open(_ id: String, _ groups: @escaping () -> [[MenuItem]]) {
+    /// At the pointer, or at `place` (a point in a view, from its top left: where a page says it was right-clicked).
+    static func open(_ id: String, at place: (view: NSView, point: CGPoint)? = nil, _ groups: @escaping () -> [[MenuItem]]) {
         let point = NSEvent.mouseLocation
-        guard let window = NSApp.window(withWindowNumber: NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)),
+        guard
+            let window = place?.view.window
+                ?? NSApp.window(withWindowNumber: NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)),
             let content = window.contentView
         else { return }
-        let inWindow = window.convertPoint(fromScreen: point)
+        let inWindow =
+            place.map { view, p in view.convert(NSPoint(x: p.x, y: view.isFlipped ? p.y : view.bounds.height - p.y), to: nil) }
+            ?? window.convertPoint(fromScreen: point)
         // SwiftUI's global frame (the window's content, from its top left): the menu hangs off the pointer.
         let anchor = CGRect(x: inWindow.x, y: content.bounds.height - inWindow.y, width: 1, height: 1)
         WorkspaceSelector.shared.show("menu-" + id, kind: .menu, anchor: anchor, in: window) { sections(groups()) }

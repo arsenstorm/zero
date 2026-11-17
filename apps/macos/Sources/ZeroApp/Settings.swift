@@ -77,6 +77,7 @@ final class Settings {
     func setLaunchAtLogin(_ on: Bool) {
         launchAtLogin = on
         Task.detached {
+            if DevBuild.on { return }
             if on { try? SMAppService.mainApp.register() } else { try? await SMAppService.mainApp.unregister() }
             await self.readLoginItems()
         }
@@ -93,7 +94,8 @@ final class Settings {
     }
 
     init() {
-        showBar = defaults.object(forKey: "showBar") as? Bool ?? true
+        // Zero Dev has none: the user's Zero's is the one at the screen's edge.
+        showBar = !DevBuild.on && defaults.object(forKey: "showBar") as? Bool ?? true
         followActiveScreen = defaults.bool(forKey: "followActiveScreen")
         barDock = defaults.string(forKey: "barDock").flatMap(BarDock.init) ?? .auto
         agentOrder = defaults.stringArray(forKey: "agentOrder") ?? []
