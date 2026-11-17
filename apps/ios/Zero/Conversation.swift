@@ -712,6 +712,7 @@ struct WorkBlock: View {
     /// fold away and the answer reads on from the heading.
     @State private var answering = false
     @Environment(\.playback) private var playback
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Steps of substance: reading, running, editing. Thought alone isn't work, nor its words.
     private var worked: Bool {
@@ -743,6 +744,9 @@ struct WorkBlock: View {
             }
         }
     }
+
+    /// Its messages giving way to the answer (and back), as the Mac's: eased, not cut.
+    private var fade: Animation? { reduceMotion ? nil : .easeOut(duration: 0.2) }
 
     static let spacing: CGFloat = 10
     /// The first thing under the heading, a message or a step, this far further down.
@@ -865,7 +869,7 @@ struct WorkBlock: View {
                             }
                         }
                         .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
-                        .opacity(0.7).allowsHitTesting(false)
+                        .allowsHitTesting(false)
                     }
                     // Between steps: not under a step still running, which says so itself. Its place kept.
                     if worked {
@@ -877,20 +881,20 @@ struct WorkBlock: View {
         }
         // Ended, its answer right under it, where its words were read out while it was live.
         .padding(.bottom, live ? 0 : lead(steps: items) - (answered ? Self.headed : 0))
-        // A message after it: it folds.
+        // A message after it: it folds, eased, as the page moves for the message anyway.
         .onChange(of: followed) { _, now in
-            if now, !live, expanded { expanded = false }
+            if now, !live, expanded { withAnimation(fade) { expanded = false } }
         }
         // Its words still the last thing a moment and a half after they started (an answer, not a message between
         // steps, which a step follows at once): its messages fold away and the answer reads on from the heading.
         .task(id: streamingWords == nil ? nil : items.last?.id) {
             guard live, streamingWords != nil else {
-                if live, answering { answering = false }
+                if live, answering { withAnimation(fade) { answering = false } }
                 return
             }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled, live, streamingWords != nil, playback?.held != true else { return }
-            if !answering { answering = true }
+            if !answering { withAnimation(fade) { answering = true } }
         }
         .onReceive(NotificationCenter.default.publisher(for: Self.unfold)) { note in
             if let item = note.object as? String, items.contains(where: { $0.id == item }) { expanded = true }
@@ -898,7 +902,8 @@ struct WorkBlock: View {
     }
 }
 
-/// A step on one line, quietly: what the turn is doing now, under its messages.
+/// A step on one line: what the turn is doing now, under its messages. Not dimmed, and spaced as its own row is
+/// (StepView), so opening the turn changes nothing about the line.
 struct StepLine: View {
     let item: ConversationItem
 
@@ -909,7 +914,7 @@ struct StepLine: View {
     }
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             if let named { PixelIcon(named.icon) } else { StatusIcon(status: item.status) }
             text.lineLimit(1).truncationMode(.tail)
         }
@@ -927,7 +932,8 @@ struct StepLine: View {
             } else {
                 Text(description)
             }
-        case let .tool(name, detail): Text(ToolNames.name(name)).fontWeight(.medium) + Text(" " + ToolNames.detail(detail))
+        case let .tool(name, detail):
+            Text(ToolNames.name(name)).fontWeight(.medium) + Text("  " + ToolNames.detail(detail)).foregroundStyle(.tertiary)
         case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))
         case let .agent(text, _), let .reasoning(text), let .plan(text): Text(text.split(separator: "\n").first.map(String.init) ?? "")
         case let .notice(text, _): Text(String(NoticeText.attributed(text).characters))
