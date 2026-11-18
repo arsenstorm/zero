@@ -38,9 +38,35 @@ pub fn clean(reply: &str) -> Option<String> {
     (!name.is_empty() && name.chars().count() <= LONGEST && name.split_whitespace().count() <= 8).then(|| name.to_string())
 }
 
-/// The name for session `id`'s task, asked in its own environment (its sign-in); none if Claude didn't give one in
-/// time.
+/// The name a message gives itself: ticket or issue ids alone (`@issue T-123`, a link to one), the loops that work them
+/// left out, are the whole task, so its name as given.
+pub fn given(message: &str) -> Option<String> {
+    let words = crate::loops::collapse(message);
+    let ids: Vec<&str> = words.split_whitespace().filter(|w| !w.starts_with('@')).map(id).collect::<Option<_>>()?;
+    (!ids.is_empty()).then(|| ids.join(" "))
+}
+
+/// A word that is an id (U-123, #45), or a link with one in its path.
+fn id(word: &str) -> Option<&str> {
+    let is_id = |w: &str| match w.split_once('-') {
+        Some((team, number)) => {
+            team.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && team.chars().all(|c| c.is_ascii_alphanumeric())
+                && !number.is_empty()
+                && number.chars().all(|c| c.is_ascii_digit())
+        }
+        None => w.len() > 1 && w.starts_with('#') && w[1..].chars().all(|c| c.is_ascii_digit()),
+    };
+    let word = word.trim_end_matches(['.', ',']);
+    if word.starts_with("http") { word.split('/').find(|part| is_id(part)) } else { is_id(word).then_some(word) }
+}
+
+/// The name for session `id`'s task: as given (`given`), else asked in its own environment (its sign-in); none if
+/// Claude didn't give one in time.
 pub async fn name(message: &str, cwd: &str, id: &str) -> Option<String> {
+    if let Some(name) = given(message) {
+        return Some(name);
+    }
     let argv = command(message);
     let mut claude = tokio::process::Command::new(&argv[0]);
     claude

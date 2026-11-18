@@ -287,6 +287,9 @@ fn a_tool_claudes_classifier_blocks_reads_as_blocked() {
     core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git push --force"}}]}}));
     core.receive(&json!({"type": "system", "subtype": "permission_denied", "tool_name": "Bash", "tool_use_id": "t1",
         "message": "Git Destructive: force-pushing rewrites shared history"}));
+    // Claude then answers the call with the refusal as its error result: still blocked, not failed.
+    core.receive(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": true,
+        "content": "Permission for this action has been denied."}]}, "tool_use_result": "Error: Permission for this action has been denied."}));
     let conversation = core.conversation();
     assert_eq!(conversation.items[0].status, ItemStatus::Declined);
     assert!(
@@ -608,9 +611,16 @@ fn a_limit_claude_code_reports_fills_its_window_until_it_resets() {
 fn a_task_with_an_advisor_starts_claude_with_it_and_its_call_reads_as_a_step() {
     let mut conversation = Conversation::new("s1", Provider::Claude, "/work/project");
     let at = |args: &[String]| args.iter().position(|a| a == "--advisor").map(|i| args[i + 1].clone());
+    let prompt = |args: &[String]| args.iter().position(|a| a == "--append-system-prompt").map(|i| args[i + 1].clone()).unwrap();
     assert_eq!(at(&Provider::Claude.command(&conversation, false, None, None)), None);
+    assert!(!prompt(&Provider::Claude.command(&conversation, false, None, None)).contains("advisor"), "no advisor, no word of one");
     conversation.advisor = Some("claude-fable-5-2".into());
     assert_eq!(at(&Provider::Claude.command(&conversation, true, None, None)).as_deref(), Some("claude-fable-5-2"));
+    // An agent left to it went without, then said it had asked: Zero's prompt says when, and never to claim a call.
+    let said = prompt(&Provider::Claude.command(&conversation, true, None, None));
+    assert!(said.contains("advisor") && said.contains("before") && said.contains("never say"), "{said}");
+    // Its advice comes back encrypted: the agent's own line on it is what the step shows (the app folds it in).
+    assert!(said.contains("\"Advisor: \""), "{said}");
     assert_eq!(
         at(&Provider::Claude.terminal(&Conversation { thread: Some("t".into()), ..conversation.clone() }).unwrap()).as_deref(),
         Some("claude-fable-5-2")
@@ -637,4 +647,54 @@ fn a_task_with_an_advisor_starts_claude_with_it_and_its_call_reads_as_a_step() {
     core.receive(&json!({"type": "assistant", "message": {"id": "m2", "content": [plain]}}));
     let step = core.conversation().item("srvtoolu_2").cloned().unwrap();
     assert!(matches!(&step.kind, ItemKind::Tool { detail, .. } if detail == "Expand, then contract."), "the advice: {:?}", step.kind);
+    // A consult that failed reads as failed, with why: never a tick for advice that never came.
+    let failed = json!({"type": "advisor_tool_result", "tool_use_id": "srvtoolu_3", "content": {"type": "advisor_tool_result_error", "error_code": "max_uses_exceeded"}});
+    core.receive(&json!({"type": "assistant", "message": {"id": "m3", "content": [failed]}}));
+    let step = core.conversation().item("srvtoolu_3").cloned().unwrap();
+    assert_eq!(step.status, ItemStatus::Failed);
+    assert!(matches!(&step.kind, ItemKind::Tool { detail, .. } if detail == "max uses exceeded"), "{:?}", step.kind);
+}
+
+#[test]
+fn the_agents_line_on_its_advisors_advice_goes_to_the_step_not_its_answer() {
+    let mut conversation = Conversation::new("s1", Provider::Claude, "/work/project");
+    conversation.advisor = Some("fable".into());
+    let mut core = Core::new(conversation);
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "plan it"}}));
+    let call = json!({"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}});
+    let redacted = json!({"type": "advisor_tool_result", "tool_use_id": "srvtoolu_1", "content": {"type": "advisor_redacted_result", "encrypted_content": "Eu0O"}});
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [call]}}));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [redacted]}}));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "thinking", "thinking": "Weighing it."}]}}));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "thinking", "thinking": ""}]}}));
+    let line = "Advisor: read the lock file first.\n\nDone: it was stale.";
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": line}]}}));
+    core.receive(&json!({"type": "result", "subtype": "success", "is_error": false, "result": line}));
+    let step = core.conversation().item("srvtoolu_1").cloned().unwrap();
+    assert!(
+        matches!(&step.kind, ItemKind::Tool { name, detail, .. } if name == "advisor-took" && detail == "read the lock file first."),
+        "{:?}",
+        step.kind
+    );
+    // The answer (the board's line, a worker's report, a notification) is the agent's words without it.
+    assert_eq!(core.conversation().answer(), Some("Done: it was stale."));
+}
+
+#[test]
+fn every_thinking_of_a_message_is_kept() {
+    // A message with a server tool in it (the advisor) thinks before the call and again after it, as one message.
+    let mut core = Core::new(Conversation::new("s1", Provider::Claude, "/work/project"));
+    core.sent(&json!({"type": "user", "message": {"role": "user", "content": "plan it"}}));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "thinking", "thinking": "First."}]}}));
+    core.receive(&json!({"type": "assistant", "message": {"id": "m1", "content": [{"type": "thinking", "thinking": "Second."}]}}));
+    let thoughts: Vec<_> = core
+        .conversation()
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Reasoning { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(thoughts, ["First.", "Second."]);
 }

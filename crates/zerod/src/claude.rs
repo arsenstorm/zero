@@ -8,6 +8,13 @@ use std::collections::HashMap;
 use serde_json::{Value, json};
 
 use crate::adapter::instructions;
+
+/// Added to Zero's instructions for a task with an advisor (`--advisor`).
+const ADVISOR: &str = " You have an advisor, a stronger model (the advisor tool): call it before you commit to a plan or \
+an approach, when you are stuck, and before you report work as done or ready for the user. Its calls show to the user as \
+steps. Say you consulted it only after you called it in this conversation; never say you asked it when you did not. \
+Its advice reaches you alone: after each call, start your next words with one line, \"Advisor: \" and what you take from its \
+advice, in a sentence.";
 use crate::adapter::{Adapter, Answers, Effects, after_approval, login_shell};
 use crate::codex::file_title;
 use crate::model::{
@@ -26,6 +33,10 @@ pub struct Claude {
     /// Text blocks seen per Claude message, streamed and finished, so both name the same item.
     streamed: HashMap<String, u32>,
     finished: HashMap<String, u32>,
+    /// Thinking blocks seen per Claude message.
+    thoughts: HashMap<String, u32>,
+    /// The advisor's step whose advice came back unreadable, waiting for the agent's "Advisor: " line on it (ADVISOR).
+    advice: Option<String>,
     /// (message, block index) of a streaming text block → its item.
     blocks: HashMap<(String, u64), String>,
     /// The latest thing Claude said this turn: its answer, once the turn ends.
@@ -51,7 +62,11 @@ pub const NO_IDLE_COMPACTION: &str = r#"{"idleCompaction":false}"#;
 pub const NO_SUBAGENTS: &[&str] = &["--disallowed-tools=Agent"];
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool) -> Vec<String> {
-    let instructions = instructions(conversation.plain_answers);
+    let mut instructions = instructions(conversation.plain_answers);
+    // Left to Claude Code's own words on it, an agent went a whole task without its advisor, then said it had asked.
+    if conversation.advisor.is_some() {
+        instructions.push_str(ADVISOR)
+    }
     let mut args = vec![
         "claude",
         "-p",
@@ -448,18 +463,46 @@ impl Claude {
         let msg = message["message"]["id"].as_str().unwrap_or("message").to_string();
         let turn = self.speaking(conversation, effects);
         for block in message["message"]["content"].as_array().cloned().unwrap_or_default() {
+            let waiting = self.advice.take();
             let (id, kind, status) = match block["type"].as_str() {
                 Some("text") => {
                     let count = self.finished.entry(msg.clone()).or_insert(0);
                     let id = format!("{msg}:{count}");
                     *count += 1;
-                    self.said = Some(id.clone());
-                    (id, ItemKind::Agent { text: block["text"].as_str().unwrap_or("").into(), final_answer: false }, ItemStatus::Done)
+                    let mut text = block["text"].as_str().unwrap_or("").to_string();
+                    // Its line on the advice is the advisor's step's, not its words: the answer, the board's line and a
+                    // worker's report read on without it. (The app hides it as it streams in.)
+                    if let Some(step) = waiting
+                        && let Some(said) = text.trim_start().strip_prefix("Advisor:")
+                    {
+                        let (line, rest) = said.split_once('\n').unwrap_or((said, ""));
+                        let kind = ItemKind::Tool { name: "advisor-took".into(), detail: line.trim().into(), output: String::new() };
+                        effects
+                            .changes
+                            .push(Change::Item { item: Item { at: None, id: step, turn: turn.clone(), kind, status: ItemStatus::Done } });
+                        text = rest.trim().into();
+                    }
+                    if !text.is_empty() {
+                        self.said = Some(id.clone());
+                    } else if self.said.as_ref() == Some(&id) {
+                        self.said = None;
+                    }
+                    (id, ItemKind::Agent { text, final_answer: false }, ItemStatus::Done)
                 }
                 // Claude's thinking comes back empty unless it is set to show it; empty says nothing.
+                // A message thinks again after a server tool's call (the advisor): each thought its own, the first as before.
                 Some("thinking") => match block["thinking"].as_str().filter(|t| !t.is_empty()) {
-                    Some(text) => (format!("{msg}:thinking"), ItemKind::Reasoning { text: text.into() }, ItemStatus::Done),
-                    None => continue,
+                    Some(text) => {
+                        self.advice = waiting;
+                        let count = self.thoughts.entry(msg.clone()).or_insert(0);
+                        let id = if *count == 0 { format!("{msg}:thinking") } else { format!("{msg}:thinking:{count}") };
+                        *count += 1;
+                        (id, ItemKind::Reasoning { text: text.into() }, ItemStatus::Done)
+                    }
+                    None => {
+                        self.advice = waiting;
+                        continue;
+                    }
                 },
                 Some("tool_use") => (
                     block["id"].as_str().unwrap_or("tool").into(),
@@ -474,9 +517,17 @@ impl Claude {
                     ItemStatus::Running,
                 ),
                 Some("advisor_tool_result") => {
-                    let advice = block["content"]["text"].as_str().unwrap_or("").to_string();
-                    let kind = ItemKind::Tool { name: "advisor".into(), detail: advice, output: String::new() };
-                    (block["tool_use_id"].as_str().unwrap_or("advisor").into(), kind, ItemStatus::Done)
+                    let content = &block["content"];
+                    let (detail, status) = match content["error_code"].as_str() {
+                        Some(code) => (code.replace('_', " "), ItemStatus::Failed),
+                        None => (content["text"].as_str().unwrap_or("").to_string(), ItemStatus::Done),
+                    };
+                    let id: String = block["tool_use_id"].as_str().unwrap_or("advisor").into();
+                    if status == ItemStatus::Done && detail.is_empty() {
+                        self.advice = Some(id.clone());
+                    }
+                    let kind = ItemKind::Tool { name: "advisor".into(), detail, output: String::new() };
+                    (id, kind, status)
                 }
                 _ => continue,
             };
@@ -604,7 +655,10 @@ fn results(conversation: &Conversation, message: &Value, effects: &mut Effects, 
             continue;
         }
         let Some(mut item) = block["tool_use_id"].as_str().and_then(|id| conversation.item(id)).cloned() else { continue };
-        item.status = if block["is_error"] == true { ItemStatus::Failed } else { ItemStatus::Done };
+        // Refused by Claude's permission check (permission_denied): its error result is that refusal, still declined.
+        if item.status != ItemStatus::Declined {
+            item.status = if block["is_error"] == true { ItemStatus::Failed } else { ItemStatus::Done };
+        }
         match &mut item.kind {
             ItemKind::Command { output, .. } => {
                 *output = match outcome["stdout"].as_str() {

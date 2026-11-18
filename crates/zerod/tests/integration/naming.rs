@@ -41,3 +41,17 @@ fn a_task_started_with_a_loop_is_named_from_the_users_words_not_the_loops() {
     assert!(prompt.contains("ticket"), "an issue's id stays in the name: {prompt}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_task_started_with_only_ids_is_named_by_them_as_given() {
+    let dir = std::env::temp_dir().join(format!("zerod-naming-ids-{}", std::process::id()));
+    let loops = zerod::loops::Loops::open(&dir);
+    loops.save("issue", "One issue, end to end", "You lead one issue. You never write code.").unwrap();
+    let (expanded, _) = loops.expand("@issue T-22490");
+    assert_eq!(zerod::naming::given(&expanded).as_deref(), Some("T-22490"));
+    assert_eq!(zerod::naming::given("U-12 #45").as_deref(), Some("U-12 #45"));
+    assert_eq!(zerod::naming::given("https://linear.app/acme/issue/T-22490/linked-issue-chevron").as_deref(), Some("T-22490"));
+    assert_eq!(zerod::naming::given("@issue T-22490 the chevron is off"), None, "words to name it by: the model's");
+    assert_eq!(zerod::naming::given("fix it"), None);
+    let _ = std::fs::remove_dir_all(dir);
+}
