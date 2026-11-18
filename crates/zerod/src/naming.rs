@@ -7,10 +7,11 @@ const LONGEST: usize = 60;
 
 /// Claude Code asked for a name, once, on Haiku, the message an argument of its own (never read by a shell).
 pub fn command(message: &str) -> Vec<String> {
-    let message: String = message.chars().take(2000).collect();
+    // The user's own words: a loop's text (an @loop expanded) is how the task works, not what it's about.
+    let message: String = crate::loops::collapse(message).chars().take(2000).collect();
     let prompt = format!(
         "Name this coding task in two to five words, as a short title in sentence case, with no quotes and no \
-full stop. Reply with the name alone.\n\nThe task:\n{message}"
+full stop. Keep a ticket or issue id it names (U-123, #45) at the start. Reply with the name alone.\n\nThe task:\n{message}"
     );
     crate::adapter::login_shell(&[
         "claude",

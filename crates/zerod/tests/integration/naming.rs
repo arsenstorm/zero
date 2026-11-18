@@ -27,3 +27,17 @@ fn a_models_reply_becomes_a_short_name_or_none() {
         "a sentence is no name"
     );
 }
+
+#[test]
+fn a_task_started_with_a_loop_is_named_from_the_users_words_not_the_loops() {
+    let dir = std::env::temp_dir().join(format!("zerod-naming-loops-{}", std::process::id()));
+    let loops = zerod::loops::Loops::open(&dir);
+    loops.save("issue", "One issue, end to end", "You lead one issue. You never write code.").unwrap();
+    let (expanded, _) = loops.expand("@issue U-6376. we're designing this via the Paper MCP");
+    let argv = zerod::naming::command(&expanded);
+    let prompt = argv.last().unwrap();
+    assert!(prompt.contains("@issue U-6376. we're designing this via the Paper MCP"), "{prompt}");
+    assert!(!prompt.contains("You lead one issue"), "the loop's words aren't the task: {prompt}");
+    assert!(prompt.contains("ticket"), "an issue's id stays in the name: {prompt}");
+    let _ = std::fs::remove_dir_all(dir);
+}
