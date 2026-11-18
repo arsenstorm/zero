@@ -8,15 +8,22 @@ use serde_json::{Map, Value, json};
 
 use super::{Event, Poll, first_line, text_diff};
 
-const QUERY: &str = r#"query($id: String!) {
-  viewer { id name }
-  issue(id: $id) {
-    id identifier title description url priorityLabel estimate dueDate
-    state { name type } assignee { id name } project { name } cycle { number name } parent { identifier }
-    labels(first: 50) { nodes { name } }
-    comments(first: 250) { nodes { id body url createdAt updatedAt user { id name } botActor { name } externalUser { name } parent { id } } }
-  }
-}"#;
+/// The newest comments a batch reads of each issue. Linear prices a query by what it could return: 250 make an issue
+/// cost about 1,500 of the 2,000,000 points an hour; with 30, 130 issues fit one query's 10,000. An issue whose
+/// last reading had this many (a followed thread or an edit further back could be outside them) is read alone, whole.
+pub const BATCHED: usize = 30;
+/// The comments a read of one issue alone takes.
+const WHOLE: usize = 250;
+
+/// What is read of an issue, inside `issue(id: …) { … }`, with its newest `comments` (Linear gives them newest first).
+fn fields(comments: usize, labels: usize) -> String {
+    format!(
+        "id identifier title description url priorityLabel estimate dueDate
+    state {{ name type }} assignee {{ id name }} project {{ name }} cycle {{ number name }} parent {{ identifier }}
+    labels(first: {labels}) {{ nodes {{ name }} }}
+    comments(first: {comments}) {{ nodes {{ id body url createdAt updatedAt user {{ id name }} botActor {{ name }} externalUser {{ name }} parent {{ id }} }} }}"
+    )
+}
 
 const FIELDS: [(&str, &str); 9] = [
     ("state", "status"),
@@ -71,7 +78,26 @@ pub fn from_url(url: &str) -> Option<String> {
 }
 
 pub fn query(issue: &str) -> Value {
-    json!({"query": QUERY, "variables": {"id": issue}})
+    let fields = fields(WHOLE, 50);
+    json!({"query": format!("query($id: String!) {{ viewer {{ id name }} issue(id: $id) {{ {fields} }} }}"), "variables": {"id": issue}})
+}
+
+/// Several issues in one query, `i0`, `i1`, … in the order given.
+pub fn batch_query(issues: &[&str]) -> Value {
+    let reads: Vec<String> =
+        issues.iter().enumerate().map(|(i, id)| format!("i{i}: issue(id: {}) {{ {} }}", Value::from(*id), fields(BATCHED, 20))).collect();
+    json!({"query": format!("query {{ viewer {{ id name }} {} }}", reads.join(" "))})
+}
+
+/// A query of several, as each would have been read alone, saying it read BATCHED comments.
+pub fn split(reply: &Value, n: usize) -> Vec<Value> {
+    let data = &reply["data"];
+    (0..n).map(|i| json!({"data": {"viewer": data["viewer"], "issue": data[format!("i{i}")], "read": BATCHED}})).collect()
+}
+
+/// Whether the issue's newest BATCHED comments hold all it had when last read.
+pub fn batchable(state: &Value) -> bool {
+    state["comments"].as_object().is_some_and(|c| c.len() < BATCHED)
 }
 
 pub fn poll(reply: &Value, state: Option<&Value>, key: &str) -> Result<Poll, String> {
@@ -115,7 +141,7 @@ pub fn snapshot(data: &Value) -> Option<Value> {
         "cycle": if cycle.is_object() { cycle["name"].as_str().map(String::from).or_else(|| cycle["number"].as_i64().map(|n| format!("Cycle {n}"))).into() } else { Value::Null },
         "estimate": issue["estimate"], "due": issue["dueDate"], "parent": issue["parent"]["identifier"],
         "labels": labels(issue),
-        "truncated": comments.len() >= 250, "comments": comments,
+        "truncated": comments.len() as u64 >= data["read"].as_u64().unwrap_or(WHOLE as u64), "comments": comments,
     }))
 }
 
@@ -207,7 +233,7 @@ pub fn diff(old: &Value, new: &Value, key: &str) -> Vec<Event> {
         let mine = !new["viewer"].is_null() && c["author_id"] == new["viewer"];
         let topic = thread_topic(key, &root(news, id));
         match olds.get(id) {
-            // An old comment that slid into the newest-250 window after a deletion isn't news.
+            // An old comment that slid into the newest comments read after a deletion isn't news.
             None if !(old["truncated"] == true && str(&c["created"]) < oldest) => ev.push(Event {
                 topic,
                 kind: "comment".into(),

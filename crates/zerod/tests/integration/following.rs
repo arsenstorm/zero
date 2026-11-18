@@ -719,3 +719,233 @@ async fn a_follow_lists_its_things_name_state_and_whether_it_closed() {
         ]
     );
 }
+
+/// Several of one service's things due together, in one read: gh's answer with each pull request under its alias.
+fn prs(replies: Vec<Value>) -> Value {
+    let mut data = json!({"viewer": {"login": "arsen"}});
+    for (i, reply) in replies.into_iter().enumerate() {
+        data[format!("p{i}")] = reply["data"]["repository"].clone();
+    }
+    json!({"data": data})
+}
+
+/// Linear's answer with each issue under its alias.
+fn issues(replies: Vec<Value>) -> Value {
+    let mut data = json!({"viewer": {"id": "me", "name": "Arsen"}});
+    for (i, reply) in replies.into_iter().enumerate() {
+        data[format!("i{i}")] = reply["data"]["issue"].clone();
+    }
+    json!({"data": data})
+}
+
+fn linear_home(name: &str) -> std::path::PathBuf {
+    let home = temp_dir(name);
+    std::fs::write(home.join("linear.json"), r#"{"name":"Acme","url_key":"acme","access":"lin_tok","refresh":null,"expires":9999999999}"#)
+        .unwrap();
+    home
+}
+
+/// What has ended (a pull request merged or closed, an issue completed or canceled) is polled every quarter hour,
+/// and doesn't slow what's open: twenty merged pull requests followed, the open one is still read every 30 seconds.
+/// One that reopens is open again from its next poll.
+#[tokio::test]
+async fn what_has_ended_is_polled_every_quarter_hour_and_doesnt_slow_the_rest() {
+    let mut answers: Vec<Result<Value, &str>> = (0..20).map(|_| Ok(merged(vec![], 0))).collect();
+    answers.push(Ok(pr(vec![], vec![], vec![], "aaa", "OPEN")));
+    answers.push(Ok(pr(vec![], vec![], vec![], "aaa", "OPEN")));
+    let following = open("following-ended", canned(answers));
+    for n in 100..120 {
+        following.follow("s1", &format!("github/o/r/{n}"), false, vec![]).await.unwrap();
+    }
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    let every = |topic: &str| {
+        let f = following.list(None).into_iter().find(|f| f.follow.topic == topic).unwrap();
+        f.next_poll - f.last_poll
+    };
+    assert_eq!(every("github/o/r/100"), 900);
+    assert_eq!(every("github/o/r/42"), 30, "the merged ones aren't counted in the open one's share");
+
+    // Reopened: open again at its next poll.
+    let following = open("following-reopened", canned(vec![Ok(merged(vec![], 0)), Ok(pr(vec![], vec![], vec![], "aaa", "OPEN"))]));
+    following.follow("s1", "github/o/r/43", false, vec![]).await.unwrap();
+    let told: Told = Arc::default();
+    following.hurry();
+    following.tick(|_| true, |_| false, listener(&told)).await;
+    let f = &following.list(None)[0];
+    assert_eq!((f.closed, f.next_poll - f.last_poll), (false, 30));
+    assert!(told.lock().unwrap()[0].1.contains("PR reopened"), "{:?}", told.lock().unwrap());
+}
+
+/// Pull requests due together are read in one gh call, each under its alias; a call that fails (one of them gone)
+/// reads them one by one, so only the one gone keeps the trouble.
+#[tokio::test]
+async fn pull_requests_due_together_are_read_in_one_call() {
+    let open_pr = || pr(vec![], vec![], vec![], "aaa", "OPEN");
+    let commented = || pr(vec![("c1", "sam", "Looks off")], vec![], vec![], "aaa", "OPEN");
+    let fetcher = canned(vec![
+        Ok(open_pr()),
+        Ok(open_pr()),
+        Ok(prs(vec![open_pr(), commented()])),
+        Err("gh: Could not resolve to a PullRequest with the number of 42."),
+        Err("gh: Could not resolve to a PullRequest with the number of 42."),
+        Ok(commented()),
+    ]);
+    let following = open("following-batch-gh", fetcher.clone());
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    following.follow("s1", "github/o/r/43", false, vec![]).await.unwrap();
+    let told: Told = Arc::default();
+    following.hurry();
+    following.tick(|_| true, |_| false, listener(&told)).await;
+    let asked = fetcher.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 3, "one call for both");
+    let query = asked[2].join(" ");
+    assert!(query.contains(r#"p0: repository(owner: "o", name: "r")"#) && query.contains("pullRequest(number: 42)"), "{query}");
+    assert!(query.contains(r#"p1: repository(owner: "o", name: "r")"#) && query.contains("pullRequest(number: 43)"), "{query}");
+    let words = told.lock().unwrap()[0].1.clone();
+    assert!(words.starts_with("1 new event") && words.contains("github/o/r/43") && words.contains("Looks off"), "{words}");
+
+    following.hurry();
+    following.tick(|_| true, |_| false, listener(&told)).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 6, "the failed call, then one by one");
+    let errors: Vec<(String, Option<String>)> = following.list(None).into_iter().map(|f| (f.follow.topic, f.error)).collect();
+    assert_eq!(
+        errors,
+        [
+            ("github/o/r/42".into(), Some("gh: Could not resolve to a PullRequest with the number of 42.".into())),
+            ("github/o/r/43".into(), None)
+        ]
+    );
+}
+
+/// A batch the service turns away for its rate limit isn't read one by one, which would only make it worse; it's
+/// read as one batch again when due.
+#[tokio::test]
+async fn a_rate_limited_batch_isnt_read_one_by_one() {
+    let open_pr = || Ok(pr(vec![], vec![], vec![], "aaa", "OPEN"));
+    let fetcher = canned(vec![
+        open_pr(),
+        open_pr(),
+        Err("gh: API rate limit exceeded for user ID 1."),
+        Ok(prs(vec![pr(vec![], vec![], vec![], "aaa", "OPEN"); 2])),
+    ]);
+    let following = open("following-limited", fetcher.clone());
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    following.follow("s1", "github/o/r/43", false, vec![]).await.unwrap();
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3, "no single reads after the limit");
+    assert!(
+        following
+            .list(None)
+            .iter()
+            .all(|f| f.error.as_deref() == Some("gh: API rate limit exceeded for user ID 1.") && f.next_poll > f.last_poll)
+    );
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 4, "one batch again");
+    assert!(following.list(None).iter().all(|f| f.error.is_none()));
+}
+
+/// Linear issues due together are read in one request, with their comments as one alone is.
+#[tokio::test]
+async fn linear_issues_due_together_are_read_in_one_request() {
+    let mut second = issue("Todo", vec![]);
+    second["data"]["issue"]["identifier"] = json!("ENG-2");
+    let mut moved = second.clone();
+    moved["data"]["issue"]["state"]["name"] = json!("In Progress");
+    let fetcher =
+        canned(vec![Ok(issue("Todo", vec![])), Ok(second.clone()), Ok(issues(vec![issue("Todo", vec![("c1", "u2", "Ping")]), moved]))]);
+    let home = linear_home("following-batch-linear");
+    let following = Following::open(&home, fetcher.clone(), Integrations::open(&home, fetcher.clone()));
+    following.follow("s1", "linear/ENG-1", false, vec![]).await.unwrap();
+    following.follow("s1", "linear/ENG-2", false, vec![]).await.unwrap();
+    let told: Told = Arc::default();
+    following.hurry();
+    following.tick(|_| true, |_| false, listener(&told)).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3, "one request for both");
+    let fed = fetcher.fed.lock().unwrap()[2].clone();
+    assert!(fed.contains("i0: issue(id: ") && fed.contains("i1: issue(id: ") && fed.contains("ENG-2"), "{fed}");
+    let words = told.lock().unwrap()[0].1.clone();
+    assert!(words.starts_with("2 new events") && words.contains("Ping") && words.contains("Todo → In Progress"), "{words}");
+}
+
+/// A task's own step on what it follows (a push, a merge, a comment) has that polled at once when the step ends,
+/// not at its next turn: only what that task follows, and what has ended only when the step names it.
+#[tokio::test]
+async fn a_tasks_own_step_has_what_it_touched_polled_at_once() {
+    let open_pr = || Ok(pr(vec![], vec![], vec![], "aaa", "OPEN"));
+    let fetcher = canned(vec![open_pr(), Ok(merged(vec![], 0)), open_pr(), open_pr(), Ok(merged(vec![], 0))]);
+    let following = open("following-acted", fetcher.clone());
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    following.follow("s1", "github/o/r/43", false, vec![]).await.unwrap();
+    following.follow("s2", "github/o/r/44", false, vec![]).await.unwrap();
+    let command = |command: &str| ItemKind::Command {
+        command: command.into(),
+        cwd: "/tmp".into(),
+        output: String::new(),
+        exit_code: Some(0),
+        duration_ms: None,
+        description: String::new(),
+    };
+    let polled = || {
+        let asked = fetcher.asked.lock().unwrap();
+        asked[3..].iter().map(|argv| argv.iter().find_map(|a| a.strip_prefix("number=")).unwrap_or("?").to_string()).collect::<Vec<_>>()
+    };
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert!(polled().is_empty(), "nothing due yet");
+    following.acted("s1", &command("git push origin fix-vitals"));
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(polled(), ["42"], "its open pull request, not the merged one, nor s2's");
+    following.acted("s1", &command("gh pr reopen 43 -R o/r"));
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(polled(), ["42", "43"], "the merged one, named");
+}
+
+/// A batch reads an issue's newest 30 comments. An issue with that many or more (a followed thread or an edit further
+/// back could be outside them) is read on its own with all 250, as one alone always is; and a batch's 30 cut short
+/// isn't taken for comments deleted.
+#[tokio::test]
+async fn an_issue_with_many_comments_is_read_on_its_own_in_full() {
+    let ids: Vec<String> = (0..30).map(|i| format!("c{i:02}")).collect();
+    let many = |extra: Option<&str>| {
+        let mut comments: Vec<(&str, &str, &str)> = ids.iter().map(|id| (id.as_str(), "u2", "Old")).collect();
+        comments.extend(extra.map(|id| (id, "u2", "New")));
+        issue("Todo", comments)
+    };
+    let short = |id: &str, comments: Vec<(&str, &str, &str)>| {
+        let mut short = issue("Todo", comments);
+        short["data"]["issue"]["identifier"] = json!(id);
+        short
+    };
+    // Two new on ENG-2's 29: the batch's newest 30 leave out its oldest, c00, which isn't deleted.
+    let mut cut = short("ENG-2", ids[1..29].iter().map(|id| (id.as_str(), "u2", "Old")).collect());
+    for id in ["c98", "c99"] {
+        cut["data"]["issue"]["comments"]["nodes"].as_array_mut().unwrap().insert(
+            0,
+            json!({"id": id, "body": "Newest", "url": "",
+            "createdAt": "2026-11-13T11:00:00Z", "updatedAt": "2026-11-13T11:00:00Z", "user": {"id": "u2", "name": "u2"}, "parent": null}),
+        );
+    }
+    let fetcher = canned(vec![
+        Ok(many(None)),
+        Ok(short("ENG-2", ids.iter().map(|id| (id.as_str(), "u2", "Old")).take(29).collect())),
+        Ok(short("ENG-3", vec![])),
+        Ok(issues(vec![cut, short("ENG-3", vec![])])),
+        Ok(many(Some("c30"))),
+    ]);
+    let home = linear_home("following-long-issue");
+    let following = Following::open(&home, fetcher.clone(), Integrations::open(&home, fetcher.clone()));
+    for id in ["ENG-1", "ENG-2", "ENG-3"] {
+        following.follow("s1", &format!("linear/{id}"), false, vec![]).await.unwrap();
+    }
+    assert!(fetcher.fed.lock().unwrap()[0].contains("comments(first: 250)"), "following reads it whole");
+    let told: Told = Arc::default();
+    following.hurry();
+    following.tick(|_| true, |_| false, listener(&told)).await;
+    let fed = fetcher.fed.lock().unwrap()[3..].to_vec();
+    assert_eq!(fed.len(), 2, "{fed:?}");
+    assert!(fed[0].contains("i0: issue(id: ") && fed[0].contains("comments(first: 30)") && !fed[0].contains("ENG-1"), "{}", fed[0]);
+    assert!(fed[1].contains("comments(first: 250)") && fed[1].contains("ENG-1"), "{}", fed[1]);
+    let words = told.lock().unwrap().iter().map(|t| t.1.clone()).collect::<Vec<_>>().join("\n");
+    assert!(words.contains("Newest") && words.contains("New") && !words.contains("deleted"), "{words}");
+}

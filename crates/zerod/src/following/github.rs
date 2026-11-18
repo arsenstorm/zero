@@ -7,11 +7,8 @@ use serde_json::{Map, Value, json};
 
 use super::{Event, Poll, text_diff};
 
-const QUERY: &str = r#"query($owner: String!, $repo: String!, $number: Int!) {
-  viewer { login }
-  repository(owner: $owner, name: $repo) {
-    deployments(first: 1) { totalCount }
-    pullRequest(number: $number) {
+/// What is read of a pull request, inside `pullRequest(number: N) { … }`.
+const PULL: &str = r#"
       title url state isDraft body baseRefName headRefName headRefOid mergeable reviewDecision
       author { login }
       mergedBy { login }
@@ -24,9 +21,12 @@ const QUERY: &str = r#"query($owner: String!, $repo: String!, $number: Int!) {
       reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 50) { nodes { id author { login __typename } body url createdAt updatedAt state } } } }
       commits(last: 30) { totalCount nodes { commit { oid messageHeadline statusCheckRollup { state contexts(first: 100) { nodes {
         __typename ... on CheckRun { name status conclusion detailsUrl } ... on StatusContext { context state targetUrl } } } } } } }
-    }
-  }
-}"#;
+"#;
+
+/// A repository's part of the read: `repo` its arguments, `number` the pull request's.
+fn repository(repo: &str, number: &str) -> String {
+    format!("repository({repo}) {{ deployments(first: 1) {{ totalCount }} pullRequest(number: {number}) {{ {PULL} }} }}")
+}
 
 const FAILED: [&str; 6] = ["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"];
 const PASSED: [&str; 4] = ["SUCCESS", "NEUTRAL", "SKIPPED", "STALE"];
@@ -62,7 +62,10 @@ pub fn argv(key: &[&str]) -> Vec<String> {
         "api",
         "graphql",
         "-f",
-        &format!("query={QUERY}"),
+        &format!(
+            "query=query($owner: String!, $repo: String!, $number: Int!) {{ viewer {{ login }} {} }}",
+            repository("owner: $owner, name: $repo", "$number")
+        ),
         "-f",
         &format!("owner={}", key[0]),
         "-f",
@@ -72,6 +75,25 @@ pub fn argv(key: &[&str]) -> Vec<String> {
     ]
     .map(String::from)
     .to_vec()
+}
+
+/// The `gh` command that reads several pull requests at once, `p0`, `p1`, … in the order given.
+pub fn batch_argv(keys: &[Vec<&str>]) -> Vec<String> {
+    let reads: Vec<String> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| {
+            let repo = format!("owner: {}, name: {}", Value::from(k[0]), Value::from(k[1]));
+            format!("p{i}: {}", repository(&repo, &k[2].parse::<u64>().unwrap_or(0).to_string()))
+        })
+        .collect();
+    ["gh", "api", "graphql", "-f", &format!("query=query {{ viewer {{ login }} {} }}", reads.join(" "))].map(String::from).to_vec()
+}
+
+/// A read of several, as each would have been read alone.
+pub fn split(reply: &Value, n: usize) -> Vec<Value> {
+    let data = &reply["data"];
+    (0..n).map(|i| json!({"data": {"viewer": data["viewer"], "repository": data[format!("p{i}")]}})).collect()
 }
 
 /// What `gh` answered, diffed against the last snapshot into events on `topic`.

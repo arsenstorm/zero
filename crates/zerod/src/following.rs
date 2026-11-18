@@ -35,6 +35,15 @@ pub const REPORT_FAILS: u32 = 3;
 /// (six issues moved, each polled on its own) is one turn, not six.
 pub const BATCH: i64 = 30;
 
+/// What has ended (a pull request merged or closed and its deploys settled, an issue completed or canceled) is polled
+/// this often, outside its source's share: it's kept followed for what may still come, a reopen or a late comment.
+pub const ENDED_EVERY: i64 = 15 * 60;
+
+/// How many of one source's things due together are read in one request: gh's answer for 20 pull requests took 6
+/// seconds (of its 30) and half a megabyte; Linear took 130 issues in one query (of 10,000 complexity points).
+const GITHUB_BATCH: usize = 10;
+const LINEAR_BATCH: usize = 20;
+
 /// How long what a step did is remembered, to know the events it causes as the task's own.
 pub const OWN_FOR: i64 = 300;
 
@@ -168,6 +177,8 @@ pub struct Followed {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub last_poll: i64,
+    #[serde(default)]
+    pub next_poll: i64,
     /// Whether this call made the follow (`follow`), rather than finding it there.
     #[serde(default)]
     pub new: bool,
@@ -203,18 +214,19 @@ impl Source {
             )),
         }
     }
-    /// Seconds between polls of one key, and the least between any two polls of this source (its rate limit's share):
-    /// with n keys followed each is polled at most every n × spacing seconds.
+    /// Seconds between polls of one open key, and the milliseconds of the source's rate limit each open key takes:
+    /// with n open keys each is polled every n × spacing, at most every interval. GitHub: a pull request costs 1.4 of
+    /// GraphQL's 5,000 points an hour when batched, so 2.5 s each is about 2,000 an hour. Linear: an issue is at most 77
+    /// of the OAuth app's 2,000,000 complexity points an hour (130 fit one query), so 0.3 s each is at most 920,000;
+    /// one read alone, whole, takes WHOLE_SPACING_MS. Both leave the rest to the user's and agents' own reads. Slack: a channel's history call each, Tier 3 (50 a minute).
     fn interval(self) -> i64 {
-        match self {
-            Source::Slack => 30,
-            _ => 60,
-        }
+        30
     }
-    fn spacing(self) -> i64 {
+    fn spacing_ms(self) -> i64 {
         match self {
-            Source::GitHub => 2,
-            _ => 3,
+            Source::GitHub => 2500,
+            Source::Linear => 300,
+            Source::Slack => 3000,
         }
     }
 }
@@ -318,6 +330,7 @@ impl Following {
                     closed,
                     error: target.error,
                     last_poll: target.last_poll,
+                    next_poll: target.next_poll,
                     new: false,
                     detail: String::new(),
                 }
@@ -332,7 +345,7 @@ impl Following {
         let key = poll_key(&topic);
         let source = Source::of(&topic)?;
         let target = self.kept.lock().unwrap().targets.get(&key).cloned();
-        let stale = |t: &Target| t.state.is_none() || now() - t.last_poll > 2 * self.interval(source);
+        let stale = |t: &Target| t.state.is_none() || now() - t.last_poll > 2 * every(&self.kept.lock().unwrap(), &key);
         if target.as_ref().is_none_or(stale) {
             self.poll(&key).await;
             let mut kept = self.kept.lock().unwrap();
@@ -370,6 +383,7 @@ impl Following {
             closed,
             error: target.error,
             last_poll: target.last_poll,
+            next_poll: target.next_poll,
             new,
             detail,
         })
@@ -457,9 +471,24 @@ impl Following {
         }
     }
 
-    fn interval(&self, source: Source) -> i64 {
-        let n = self.kept.lock().unwrap().targets.keys().filter(|k| Source::of(k) == Ok(source)).count() as i64;
-        source.interval().max(n * source.spacing())
+    /// A step of `session`'s has ended: what it touched that the session follows is polled on the next tick, so what
+    /// it did comes back now, not a poll later. What has ended only when the step names it (`gh pr reopen 43`), not
+    /// for a push to whatever branch.
+    pub fn acted(&self, session: &str, kind: &ItemKind) {
+        let touches = own::touches(kind);
+        if touches.is_empty() {
+            return;
+        }
+        let mut kept = self.kept.lock().unwrap();
+        let keys: HashSet<String> = kept.follows.iter().filter(|f| f.session == session).map(|f| poll_key(&f.topic)).collect();
+        for key in keys {
+            let Some(target) = kept.targets.get_mut(&key) else { continue };
+            let segments = key.split('/').count();
+            let on: Vec<&own::Touch> = touches.iter().filter(|t| own::on(t, &key)).collect();
+            if on.iter().any(|t| t.topic.split('/').count() == segments) || (!on.is_empty() && !ended(&key, target.state.as_ref())) {
+                target.next_poll = 0
+            }
+        }
     }
 
     /// Targets nobody follows go.
@@ -484,16 +513,36 @@ impl Following {
             let now = now();
             kept.targets.iter().filter(|(_, t)| t.next_poll <= now).map(|(k, _)| k.clone()).collect()
         };
-        // ponytail: one after another; poll several at once if a tick gets slow with many follows.
+        // What has been read and reads well goes in batches; the rest, and Slack, one by one.
+        // A rate limit is the service's, not the thing's: it keeps its batch.
+        let healthy = |key: &String| {
+            self.kept.lock().unwrap().targets.get(key).is_some_and(|t| {
+                t.state.as_ref().is_some_and(|s| batchable(key, s)) && (t.fails == 0 || t.error.as_deref().is_some_and(limited))
+            })
+        };
+        let mut groups: Vec<Vec<String>> = vec![];
+        for (source, size) in [(Source::GitHub, GITHUB_BATCH), (Source::Linear, LINEAR_BATCH)] {
+            let keys: Vec<String> = due.iter().filter(|k| Source::of(k) == Ok(source) && healthy(k)).cloned().collect();
+            groups.extend(keys.chunks(size).map(<[String]>::to_vec));
+        }
+        let grouped: HashSet<&String> = groups.iter().flatten().collect();
+        let singles: Vec<Vec<String>> = due.iter().filter(|k| !grouped.contains(k)).map(|k| vec![k.clone()]).collect();
+        groups.extend(singles);
+        // ponytail: one group after another; poll several at once if a tick gets slow.
         let mut events = vec![];
-        for key in due {
-            let (polled, trouble) = self.poll(&key).await;
-            events.extend(polled);
-            if let Some(error) = trouble {
-                let sessions: HashSet<String> =
-                    self.kept.lock().unwrap().follows.iter().filter(|f| covers(&f.topic, &key)).map(|f| f.session.clone()).collect();
-                for session in sessions {
-                    tell(&session, &format!("Zero can't read {}: {error}. Fix its connection, or unfollow it.", name(&key)), Heard::Trouble)
+        for group in groups {
+            for (key, (polled, trouble)) in group.iter().zip(self.poll_group(&group).await) {
+                events.extend(polled);
+                if let Some(error) = trouble {
+                    let sessions: HashSet<String> =
+                        self.kept.lock().unwrap().follows.iter().filter(|f| covers(&f.topic, key)).map(|f| f.session.clone()).collect();
+                    for session in sessions {
+                        tell(
+                            &session,
+                            &format!("Zero can't read {}: {error}. Fix its connection, or unfollow it.", name(key)),
+                            Heard::Trouble,
+                        )
+                    }
                 }
             }
         }
@@ -501,21 +550,42 @@ impl Following {
         self.flush(&idle, &tell);
     }
 
+    fn state(&self, key: &str) -> Option<Value> {
+        self.kept.lock().unwrap().targets.get(key).and_then(|t| t.state.clone())
+    }
+
     /// Polls `key`, keeps the reading, and gives the events, and the error once it's one for the user (needs_user).
     async fn poll(&self, key: &str) -> (Vec<Event>, Option<String>) {
-        let (state, fails) = {
-            let kept = self.kept.lock().unwrap();
-            let t = kept.targets.get(key).cloned().unwrap_or_default();
-            (t.state, t.fails)
+        let Ok(source) = Source::of(key) else { return (vec![], None) };
+        let result = self.fetch(source, key, self.state(key).as_ref()).await;
+        self.apply(key, result)
+    }
+
+    /// Polls `keys`, of one source, in one read when there are several. A read that fails (one of them gone, which
+    /// fails the whole of gh's) reads them one by one, so only the one in trouble keeps it; unless the service is
+    /// limiting the rate, which one by one would only make worse.
+    async fn poll_group(&self, keys: &[String]) -> Vec<(Vec<Event>, Option<String>)> {
+        let [key] = keys else {
+            let states: Vec<Option<Value>> = keys.iter().map(|k| self.state(k)).collect();
+            match self.fetch_many(keys, &states).await {
+                Ok(results) => return keys.iter().zip(results).map(|(key, result)| self.apply(key, result)).collect(),
+                Err(error) if limited(&error) => return keys.iter().map(|key| self.apply(key, Err(error.clone()))).collect(),
+                Err(error) => eprintln!("zerod: following {} at once: {error}", keys.len()),
+            }
+            let mut out = vec![];
+            for key in keys {
+                out.push(self.poll(key).await)
+            }
+            return out;
         };
-        let source = match Source::of(key) {
-            Ok(source) => source,
-            Err(_) => return (vec![], None),
-        };
-        let interval = self.interval(source);
-        let result = self.fetch(source, key, state.as_ref()).await;
+        vec![self.poll(key).await]
+    }
+
+    /// Keeps what a poll of `key` found, and gives its events, and the error once it's one for the user.
+    fn apply(&self, key: &str, result: Result<Poll, String>) -> (Vec<Event>, Option<String>) {
         let mut kept = self.kept.lock().unwrap();
         let target = kept.targets.entry(key.into()).or_default();
+        let (state, fails) = (target.state.clone(), target.fails);
         let before = (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails);
         let (mut events, mut trouble) = (vec![], None);
         match result {
@@ -523,17 +593,14 @@ impl Following {
                 if state.is_some() {
                     events = poll.events
                 }
-                *target = Target {
-                    state: Some(poll.state),
-                    summary: poll.summary,
-                    last_poll: now(),
-                    next_poll: now() + interval,
-                    error: None,
-                    fails: 0,
-                };
+                *target = Target { state: Some(poll.state), summary: poll.summary, last_poll: now(), next_poll: 0, error: None, fails: 0 };
+                let interval = every(&kept, key);
+                kept.targets.get_mut(key).unwrap().next_poll = now() + interval;
             }
             Err(error) => {
                 eprintln!("zerod: following {key}: {error}");
+                let interval = every(&kept, key);
+                let target = kept.targets.get_mut(key).unwrap();
                 target.fails = fails + 1;
                 target.next_poll = now() + (interval << fails.min(6)).min(900);
                 if state.is_some() && target.fails == REPORT_FAILS && needs_user(&error) {
@@ -544,6 +611,7 @@ impl Following {
         }
         // Written only when what it found is new: the times of the polls aren't worth the file (hundreds of kilobytes
         // with many things followed) after every poll of every one; lost with a restart, it's polled again, early.
+        let target = &kept.targets[key];
         if (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails) != before {
             self.keep(&kept)
         }
@@ -562,6 +630,33 @@ impl Following {
             Source::Linear => linear::poll(&self.integrations.linear(linear::query(parts[0])).await?, state, key),
             Source::Slack => slack::poll(&self.integrations, &parts, state).await,
         }
+    }
+
+    /// Several pull requests or issues in one read, each under its alias, as each alone reads.
+    async fn fetch_many(&self, keys: &[String], states: &[Option<Value>]) -> Result<Vec<Result<Poll, String>>, String> {
+        let parts: Vec<Vec<&str>> = keys.iter().map(|k| k.split('/').skip(1).collect()).collect();
+        let source = Source::of(&keys[0])?;
+        let replies = match source {
+            Source::GitHub => {
+                let argv = crate::adapter::on_login_path(&github::batch_argv(&parts).iter().map(String::as_str).collect::<Vec<_>>());
+                let reply: Value =
+                    serde_json::from_str(&self.fetcher.run(argv, None).await?).map_err(|e| format!("gh answered oddly: {e}"))?;
+                github::split(&reply, keys.len())
+            }
+            Source::Linear => {
+                let ids: Vec<&str> = parts.iter().map(|p| p[0]).collect();
+                linear::split(&self.integrations.linear(linear::batch_query(&ids)).await?, keys.len())
+            }
+            Source::Slack => return Err("Slack is read a channel at a time".into()),
+        };
+        Ok(replies
+            .iter()
+            .zip(keys.iter().zip(states))
+            .map(|(reply, (key, state))| match source {
+                Source::GitHub => github::poll(reply, state.as_ref(), key),
+                _ => linear::poll(reply, state.as_ref(), key),
+            })
+            .collect())
     }
 
     /// What changed, held for each follower that wants it, once; a filtered follow hears only what it asked for.
@@ -649,6 +744,45 @@ impl Following {
         }
         self.keep(&kept);
     }
+}
+
+/// Whether nothing more is to come of the thing (github::ended, linear::ended): polled every ENDED_EVERY.
+fn ended(key: &str, state: Option<&Value>) -> bool {
+    match (Source::of(key), state) {
+        (Ok(Source::GitHub), Some(s)) => github::ended(s),
+        (Ok(Source::Linear), Some(s)) => linear::ended(s),
+        _ => false,
+    }
+}
+
+/// Seconds between polls of `key`: ENDED_EVERY once it has ended; else its source's interval, or its share of the
+/// source's rate limit among the open keys, whichever is longer.
+fn every(kept: &Kept, key: &str) -> i64 {
+    let Ok(source) = Source::of(key) else { return ENDED_EVERY };
+    if ended(key, kept.targets.get(key).and_then(|t| t.state.as_ref())) {
+        return ENDED_EVERY;
+    }
+    let share: i64 = kept
+        .targets
+        .iter()
+        .filter(|(k, t)| Source::of(k) == Ok(source) && !ended(k, t.state.as_ref()))
+        .map(|(k, t)| if t.state.as_ref().is_none_or(|s| batchable(k, s)) { source.spacing_ms() } else { WHOLE_SPACING_MS })
+        .sum();
+    source.interval().max(share / 1000)
+}
+
+/// The share of an issue read alone, whole (linear::BATCHED): about 1,550 points, 20 times a batched one's.
+const WHOLE_SPACING_MS: i64 = 6000;
+
+/// Whether `key` can be read in a batch, as last read: a Linear issue only with fewer than linear::BATCHED comments.
+fn batchable(key: &str, state: &Value) -> bool {
+    Source::of(key) != Ok(Source::Linear) || linear::batchable(state)
+}
+
+/// The service is limiting the rate of reads.
+fn limited(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.contains("rate limit") || error.contains("ratelimited") || error.contains("429")
 }
 
 /// An error retrying won't end: signed out, no access, or the thing gone. Not the network, a timeout or a 5xx.

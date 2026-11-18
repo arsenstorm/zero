@@ -32,11 +32,15 @@ impl Touch {
     }
 }
 
+/// Whether `topic` is what `touch` was on, or under it.
+pub fn on(touch: &Touch, topic: &str) -> bool {
+    let (pattern, topic): (Vec<&str>, Vec<&str>) = (touch.topic.split('/').collect(), topic.split('/').collect());
+    pattern.len() <= topic.len() && pattern.iter().zip(&topic).all(|(p, t)| *p == "*" || p.eq_ignore_ascii_case(t))
+}
+
 /// Whether `event` is what `touch` did.
 pub fn matches(touch: &Touch, event: &Event) -> bool {
-    let (pattern, topic): (Vec<&str>, Vec<&str>) = (touch.topic.split('/').collect(), event.topic.split('/').collect());
-    pattern.len() <= topic.len()
-        && pattern.iter().zip(&topic).all(|(p, t)| *p == "*" || p.eq_ignore_ascii_case(t))
+    on(touch, &event.topic)
         && touch.kinds.contains(&event.kind.as_str())
         && touch.to.as_ref().is_none_or(|to| event.summary.to_lowercase().trim_end().ends_with(&format!("→ {to}")))
         && touch.text.as_ref().is_none_or(|text| words(&event.body).chars().take(80).collect::<String>() == *text)
