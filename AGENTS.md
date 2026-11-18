@@ -54,6 +54,9 @@ user's Zero or zerod, nor they it.
   items to `PageQuestions.devMenuPick`, and no selector opens while the harness drives. Zero Dev's window stays off
   every display under `--e2e` (`DevWindow`), and the last check fails if any of its windows was on one. If something
   can only be checked on screen, leave that check to the user.
+- A one-off probe that touches AppKit (a window, accessibility, window order) runs through
+  `apps/macos/scripts/probe.sh file.swift`, never on its own: it keeps every window the probe makes off every display
+  and stops it activating. macOS moves a window placed off-screen back onto a display, so placing it away isn't enough.
 - What leaves Zero is caught in a dev build: a link opened (`LinearLinks.left`), the open panel (`PageQuestions.devFiles`),
   downloads (`~/.zero-dev/downloads`). Keep new ways out behind `DevBuild.on` the same way.
 - Never build a dev zerod or app into the shared build folders: `make install` copies from them into the user's Zero.

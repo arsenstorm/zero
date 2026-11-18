@@ -890,11 +890,21 @@ static bool Above(NSWindow *w, NSInteger below, bool moved = false) {
 }
 
 // Part of Zero's window, not a window of its own: left out of Mission Control and Exposé, and of the window cycle.
+static const void *kMeant = &kMeant;
+// Zero Dev's: stationary instead, which Mission Control and App Exposé leave where it is (off every display), where they
+// show any other window of the Space as a thumbnail on the user's screen, off-screen or not. What Zero's would get is
+// kept for the checks (DevDialogState).
+static NSWindowCollectionBehavior DevStays(NSWindowCollectionBehavior b) {
+  return (b & ~(NSWindowCollectionBehaviorManaged | NSWindowCollectionBehaviorTransient)) | NSWindowCollectionBehaviorStationary;
+}
 static void Attached(NSWindow *w) {
   NSWindowCollectionBehavior b = NSWindowCollectionBehaviorTransient | NSWindowCollectionBehaviorIgnoresCycle;
-  if ((w.collectionBehavior & b) != b)
-    w.collectionBehavior = (w.collectionBehavior & ~(NSWindowCollectionBehaviorManaged | NSWindowCollectionBehaviorStationary |
-                                                     NSWindowCollectionBehaviorParticipatesInCycle)) | b;
+  NSWindowCollectionBehavior meant = (w.collectionBehavior & ~(NSWindowCollectionBehaviorManaged | NSWindowCollectionBehaviorStationary |
+                                                               NSWindowCollectionBehaviorTransient |
+                                                               NSWindowCollectionBehaviorParticipatesInCycle)) | b;
+  if (gDev) objc_setAssociatedObject(w, kMeant, @(meant), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  NSWindowCollectionBehavior want = gDev ? DevStays(meant) : meant;
+  if (w.collectionBehavior != want) w.collectionBehavior = want;
 }
 
 // Takes clicks and the keyboard without making this app the active one, as a non-activating panel does (AppKit's own
@@ -1069,18 +1079,32 @@ static void DevDialog(int tab, bool open, bool hooked) {
                                              backing:NSBackingStoreBuffered
                                                defer:NO];
   gDevDialog.releasedWhenClosed = NO;
+  gDevDialog.collectionBehavior = DevStays(gDevDialog.collectionBehavior) | NSWindowCollectionBehaviorIgnoresCycle;
   if (hooked) ExpectDialog(tab, 10);
   if (!OnADisplay(gDevDialog.frame)) [gDevDialog orderFront:nil];
   // Placed where it shows, as Chrome does its dialog (off every display still).
   if (!hooked) [gDevDialog setFrameOrigin:NSMakePoint(gDevDialog.frame.origin.x + 10, gDevDialog.frame.origin.y)];
 }
 
+// Zero Dev only: any window of this app found on a display, or in Mission Control's reach, is put back off every display
+// and out of it, and logged (DevE2E's sampler fails the run on it).
+static void DevKeepOff(NSWindow *w) {
+  if (![w isKindOfClass:NSWindow.class]) return;
+  if (!(w.collectionBehavior & NSWindowCollectionBehaviorStationary)) w.collectionBehavior = DevStays(w.collectionBehavior);
+  if (!w.isVisible || !OnADisplay(w.frame)) return;
+  NSRect all = NSZeroRect;
+  for (NSScreen *s in NSScreen.screens) all = NSUnionRect(all, s.frame);
+  Log([NSString stringWithFormat:@"Zero Dev: a window was on a display at %@, put back", NSStringFromRect(w.frame)]);
+  [w setFrameOrigin:NSMakePoint(NSMaxX(all) + 8000, NSMaxY(all) + 8000)];
+}
+
 // Zero Dev only: how the dialog and the shield take part in Mission Control and activation, for the checks.
 static void DevDialogState() {
   auto state = ^NSDictionary *(NSWindow *w) {
     if (!w) return @{};
-    NSWindowCollectionBehavior b = w.collectionBehavior;
-    return @{@"transient": @((b & NSWindowCollectionBehaviorTransient) != 0), @"managed": @((b & NSWindowCollectionBehaviorManaged) != 0),
+    NSNumber *meant = objc_getAssociatedObject(w, kMeant);
+    NSWindowCollectionBehavior b = meant ? meant.unsignedIntegerValue : w.collectionBehavior;
+    return @{@"stationaryInDev": @((w.collectionBehavior & NSWindowCollectionBehaviorStationary) != 0), @"transient": @((b & NSWindowCollectionBehaviorTransient) != 0), @"managed": @((b & NSWindowCollectionBehaviorManaged) != 0),
              @"ignoresCycle": @((b & NSWindowCollectionBehaviorIgnoresCycle) != 0), @"level": @(w.level),
              @"keepsZeroActive": @(KeepsZeroActive(w))};
   };
@@ -1676,6 +1700,7 @@ int main(int argc, char *argv[]) {
     // place for the page): centred on the tab again in the same turn, before a frame shows it elsewhere.
     for (NSNotificationName name in @[NSWindowDidChangeOcclusionStateNotification, NSWindowDidMoveNotification, NSWindowDidResizeNotification])
       [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *note) {
+        if (gDev) DevKeepOff(note.object);
         if (note.object == gShield) return;
         if (gWatch || gDialogShown || Shown().count) CheckDialogs();
         if (gDialogShown) PlaceDialogs(nil);

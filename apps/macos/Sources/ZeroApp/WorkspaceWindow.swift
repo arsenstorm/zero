@@ -288,19 +288,108 @@ extension Transaction {
         static var driven = false
         override var isKeyWindow: Bool { Self.driven || super.isKeyWindow }
 
-        /// Off every display (`--e2e`): nothing of Zero Dev's shows on the user's screen while it's tested.
+        /// Off every display (`--e2e`): nothing of Zero Dev's shows on the user's screen while it's tested. Every way
+        /// AppKit places a window is held away, and the window can't be dragged: a click posted in its title bar starts
+        /// the window server's own drag, which follows the user's real pointer and calls none of these (it put the
+        /// window on the user's second display). Whatever still moves it is put back at once and reported (`sighted`).
         static let offscreen = CommandLine.arguments.contains("--e2e")
         static var away: NSPoint {
             let all = NSScreen.screens.reduce(NSRect.zero) { $0.union($1.frame) }
             return NSPoint(x: all.maxX + 4000, y: all.maxY + 4000)
         }
+        /// Told how, the moment the window was found on a display (DevE2E fails the run's check there).
+        static var sighted: ((String) -> Void)?
+
         override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
             Self.offscreen ? NSRect(origin: Self.away, size: frameRect.size) : super.constrainFrameRect(frameRect, to: screen)
         }
         override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+            _ = Self.watching
+            stay()
             super.setFrame(Self.offscreen ? NSRect(origin: Self.away, size: frameRect.size) : frameRect, display: flag)
         }
-        override func setFrameOrigin(_ point: NSPoint) { super.setFrameOrigin(Self.offscreen ? Self.away : point) }
+        override func setFrame(_ frameRect: NSRect, display flag: Bool, animate: Bool) {
+            _ = Self.watching
+            super.setFrame(Self.offscreen ? NSRect(origin: Self.away, size: frameRect.size) : frameRect, display: flag, animate: false)
+        }
+        override func setFrameOrigin(_ point: NSPoint) {
+            _ = Self.watching
+            stay()
+            super.setFrameOrigin(Self.offscreen ? Self.away : point)
+        }
+        override func setFrameTopLeftPoint(_ point: NSPoint) {
+            Self.offscreen ? setFrameOrigin(Self.away) : super.setFrameTopLeftPoint(point)
+        }
+        override func cascadeTopLeft(from point: NSPoint) -> NSPoint {
+            guard Self.offscreen else { return super.cascadeTopLeft(from: point) }
+            setFrameOrigin(Self.away)
+            return point
+        }
+        override func center() { Self.offscreen ? setFrameOrigin(Self.away) : super.center() }
+        override func zoom(_ sender: Any?) { if !Self.offscreen { super.zoom(sender) } }
+        override func toggleFullScreen(_ sender: Any?) { if !Self.offscreen { super.toggleFullScreen(sender) } }
+        override func performDrag(with event: NSEvent) { if !Self.offscreen { super.performDrag(with: event) } }
+        override var isMovable: Bool {
+            get { !Self.offscreen && super.isMovable }
+            set { super.isMovable = newValue }
+        }
+        override var isMovableByWindowBackground: Bool {
+            get { !Self.offscreen && super.isMovableByWindowBackground }
+            set { super.isMovableByWindowBackground = newValue }
+        }
+        override var tabbingMode: NSWindow.TabbingMode {
+            get { Self.offscreen ? .disallowed : super.tabbingMode }
+            set { super.tabbingMode = newValue }
+        }
+        /// Stationary: Mission Control and App Exposé leave it where it is, off every display. They show any other
+        /// window of the Space as a thumbnail on the user's screen, off-screen or not.
+        override var collectionBehavior: NSWindow.CollectionBehavior {
+            get { super.collectionBehavior }
+            set {
+                super.collectionBehavior =
+                    Self.offscreen ? newValue.subtracting([.managed, .transient]).union([.stationary, .ignoresCycle]) : newValue
+            }
+        }
+        override var isRestorable: Bool {
+            get { !Self.offscreen && super.isRestorable }
+            set { super.isRestorable = newValue }
+        }
 
+        /// Put back off every display if it's on one, with why.
+        private func stay() {
+            if Self.offscreen && !collectionBehavior.contains(.stationary) { collectionBehavior = collectionBehavior }
+        }
+
+        func putBack(_ why: String) {
+            stay()
+            guard Self.offscreen, isVisible || isMiniaturized, NSScreen.screens.contains(where: { $0.frame.intersects(frame) }) else {
+                return
+            }
+            let was = frame
+            super.setFrameOrigin(Self.away)
+            Self.sighted?("\(why) at \(was)")
+        }
+
+        /// Moves the window server makes (a drag, a display added or rearranged, a space) and AppKit's own: each checked.
+        private static let watching: Void = {
+            guard offscreen else { return }
+            let moves: [Notification.Name] = [
+                NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.didChangeScreenNotification,
+                NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification, NSWindow.didDeminiaturizeNotification,
+                NSWindow.didBecomeKeyNotification, NSWindow.didChangeOcclusionStateNotification,
+            ]
+            for name in moves {
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                    MainActor.assumeIsolated { (note.object as? DevWindow)?.putBack(name.rawValue) }
+                }
+            }
+            NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main)
+            {
+                _ in
+                MainActor.assumeIsolated {
+                    for case let window as DevWindow in NSApp.windows { window.putBack("the displays changed") }
+                }
+            }
+        }()
     }
 #endif
