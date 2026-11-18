@@ -151,6 +151,8 @@ pub struct Daemon {
     pub mcp_servers: crate::mcp_servers::McpServers,
     /// Sign-ins to MCP servers tasks' CLIs say need one (mcp_auth.rs).
     pub mcp_auth: Arc<crate::mcp_auth::McpAuth>,
+    /// Zero's own sign-ins to its remote MCP servers (integrations/mcp_oauth.rs), once given.
+    pub integrations: std::sync::OnceLock<Arc<crate::integrations::Integrations>>,
     /// The CLIs' sign-ins, handed to each as a task starts.
     pub signins: crate::signins::SignIns,
     /// A lock per session held while its agent starts (resume).
@@ -280,10 +282,14 @@ fn hear_sessions(daemon: &Arc<Daemon>) {
                             if let Some(following) = daemon.following.get() {
                                 following.touched(&event.session, &item.kind)
                             }
-                            if item.status == crate::model::ItemStatus::Done
-                                && let Some(url) = crate::following::opened(&item.kind)
-                            {
-                                daemon.follow_opened(&event.session, &url)
+                            if item.status == crate::model::ItemStatus::Done {
+                                // Ended: what it did to things followed is read now, not a poll later.
+                                if let Some(following) = daemon.following.get() {
+                                    following.acted(&event.session, &item.kind)
+                                }
+                                if let Some(url) = crate::following::opened(&item.kind) {
+                                    daemon.follow_opened(&event.session, &url)
+                                }
                             }
                         }
                         daemon.heard(&event.session)
@@ -389,6 +395,7 @@ impl Daemon {
             workspaces: crate::workspaces::Workspaces::open(home),
             mcp_servers: crate::mcp_servers::McpServers::open(home),
             mcp_auth: crate::mcp_auth::McpAuth::new(crate::mcp_auth::runner()),
+            integrations: Default::default(),
             signins: crate::signins::SignIns::open(home),
             resuming: Mutex::new(HashMap::new()),
             watches: Mutex::new(crate::watches::load(home).into_iter().map(|w| (w.id.clone(), w)).collect()),

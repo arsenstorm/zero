@@ -250,3 +250,27 @@ func about() -> Ask.About? { flag("about").map { Ask.About(anchor: $0) } }
         )
     }
 }
+
+/// `zero mcp add <name> --why "…" (-- command args… | --url URL)`: an MCP server proposed for the user to approve, new
+/// or a change of the one there of that name; `zero mcp list`: the servers there are, without their values.
+@MainActor func mcpCommand() async {
+    guard positional.first != "list" else {
+        printJSON(await zerod { try await $0.call("agentAsk", ["session": targetSession(), "args": ["tool": "mcp_list"]]) })
+        return
+    }
+    guard positional.count >= 2 else { usage() }
+    guard let why = flag("why") else {
+        fail("zero mcp add needs --why: say what the server is for, so the user knows what they are adding")
+    }
+    let run = Array(positional.dropFirst(2))
+    guard run.isEmpty != (flag("url") == nil) else { fail("zero mcp add takes a command after -- or a --url, one of them") }
+    var args: [String: Any] = [
+        "tool": "mcp", "name": positional[1], "why": why, "lazy": flag("lazy") != nil,
+        "env": flags["env"] ?? [], "headers": flags["header"] ?? [],
+    ]
+    if let workspaces = flag("workspaces") { args["workspaces"] = workspaces }
+    if let url = flag("url") { args["url"] = url } else { (args["command"], args["args"]) = (run[0], Array(run.dropFirst())) }
+    let made = await zerod { try await $0.call("agentAsk", ["session": targetSession(), "args": args]) }
+    guard let id = (made as? [String: Any])?["id"] as? String else { fail("zero: Zero made no ask of it") }
+    print("Asked as \(id). End your turn with [zero: asked \(id)]; the answer comes to you as a message.")
+}

@@ -21,6 +21,7 @@ mod common;
 mod compact;
 mod compare;
 mod coordination;
+mod desktop;
 mod e2e;
 mod endings;
 mod events;

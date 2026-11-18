@@ -304,6 +304,7 @@ public final class Workspace {
                 link = fresh
                 if (try? await fresh.subscribe()) != nil {
                     connected = true
+                    onLink?(fresh)
                     updating = nil
                     // Opened while zerod restarts (an install reopens the app first): said straight away.
                     if (try? await fresh.restartStatus())?.restarting == true { followUpdate() }
@@ -324,6 +325,8 @@ public final class Workspace {
         }
     }
     @ObservationIgnored private var closed: CheckedContinuation<Void, Never>?
+    /// Each new connection, once it follows zerod: the app's desktop attaches to it (ZeroApp's Desktop).
+    @ObservationIgnored public var onLink: ((ZerodLink) -> Void)?
 
     func receive(_ message: ZerodMirror.Message) {
         if !mirror.receive(message) { onBehind() }
@@ -572,6 +575,11 @@ public final class Workspace {
     /// Claude Code's sign-in page for one of its own servers (`cwd`: a project's), or nil with lastError said.
     public func mcpSignIn(_ server: String, cwd: String?) async -> URL? {
         await attempt { try await $0.mcpSignIn(server, cwd: cwd) } ?? nil
+    }
+
+    /// Started again in the running tasks that have it (a new build of it, say).
+    public func reloadMcpServer(_ server: ZerodLink.McpServer) async {
+        _ = await attempt { try await $0.reloadMcpServer(server.id) }
     }
 
     /// Gone, with the values it kept in the Keychain.

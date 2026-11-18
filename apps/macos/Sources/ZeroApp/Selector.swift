@@ -75,7 +75,31 @@ final class SelectorState {
     @ObservationIgnored var advisor: (String) -> String? = { _ in nil }
     @ObservationIgnored var setAdvisor: (String, String) -> Void = { _, _ in }
     @ObservationIgnored var rebuild: () -> [SelectorSection] = { [] }
+    /// Levels and advisors picked while it's open, by model: what opened it gave `level` and `advisor` as they were
+    /// then (a task's composer, its body's values), and they don't follow a pick.
+    private var levels: [String: String] = [:]
+    private var advisors: [String: String] = [:]
     init(kind: SelectorKind) { self.kind = kind }
+
+    /// The row's effort level as the slider shows it: picked here, else the one in effect, else the model's default.
+    func level(of row: SelectorRow) -> String? {
+        row.modelID.flatMap { levels[$0] ?? level($0) } ?? row.defaultLevel
+    }
+    /// A level picked on the slider: kept, then the row picked with it (for a running agent the pick sends both).
+    func slide(to picked: String, on row: SelectorRow) {
+        if let id = row.modelID { levels[id] = picked; setLevel(id, picked) }
+        row.pick()
+        sections = rebuild()
+    }
+    /// The row's advisor ("" for none), as `level(of:)` is.
+    func advisor(of row: SelectorRow) -> String {
+        row.modelID.flatMap { advisors[$0] ?? advisor($0) } ?? ""
+    }
+    func pickAdvisor(_ picked: String, on row: SelectorRow) {
+        if let id = row.modelID { advisors[id] = picked; setAdvisor(id, picked) }
+        row.pick()
+        sections = rebuild()
+    }
 
     /// The rows shown: a menu's, all its sections'; a list's, its tab's.
     var rows: [SelectorRow] {
@@ -450,7 +474,7 @@ struct SelectorView: View {
     /// Moving the slider also picks the model and leaves the selector open.
     @ViewBuilder private var details: some View {
         if let row = highlightedRow {
-            let picked = row.modelID.flatMap(state.level) ?? row.defaultLevel
+            let picked = state.level(of: row)
             VStack(spacing: 0) {
                 if let icon = row.providerIcon {
                     icon.resizable().aspectRatio(contentMode: .fit).frame(width: 36, height: 36).clipShape(
@@ -476,14 +500,12 @@ struct SelectorView: View {
                     .frame(height: 14)
                     .padding(.top, 16)
                     EffortSlider(levels: row.levels.map(\.id), picked: picked) { level in
-                        if let id = row.modelID { state.setLevel(id, level) }
-                        row.pick() // after the level is saved: for a running agent the pick sends it along
-                        state.sections = state.rebuild()
+                        state.slide(to: level, on: row)
                     }
                     .padding(.top, 6)
                 }
                 if !row.advisors.isEmpty {
-                    let advisor = row.modelID.flatMap(state.advisor) ?? ""
+                    let advisor = state.advisor(of: row)
                     HStack {
                         Text("Advisor").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         Spacer()
@@ -491,9 +513,7 @@ struct SelectorView: View {
                     .frame(height: 14)
                     .padding(.top, 16)
                     AdvisorPicker(advisors: row.advisors, picked: advisor) { picked in
-                        if let id = row.modelID { state.setAdvisor(id, picked) }
-                        row.pick()
-                        state.sections = state.rebuild()
+                        state.pickAdvisor(picked, on: row)
                     }
                     .padding(.top, 6)
                 }

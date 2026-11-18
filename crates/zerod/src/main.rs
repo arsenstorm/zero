@@ -150,6 +150,7 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> Arc<zerod::in
     zerod::bridge::Bridge::start(daemon.clone(), inbox.clone());
     zerod::mcp_auth::start(daemon.clone(), inbox.clone());
     zerod::recap::start(daemon.clone(), inbox.clone());
+    zerod::server::apply_mcp_asks(daemon, &inbox);
     zerod::server::hold_while_blocked(daemon, &inbox);
     zerod::server::know_what_wakes(daemon, &inbox);
     zerod::server::know_workers(daemon, &inbox);
@@ -169,6 +170,7 @@ fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod:
         zerod::vault::Vault::File(home.join("secrets.json"))
     };
     let integrations = zerod::integrations::Integrations::open_in(home, Arc::new(zerod::integrations::Commands::default()), vault);
+    zerod::server::mcp_sign_ins(daemon, &integrations);
     let peers: zerod::server::Peers = if own { Arc::new(zerod::peer::is_zero_app) } else { Arc::new(|_| true) };
     let pads = Arc::new(zerod::pads::Pads::open(&beside.join("scratchpads")));
     let later = Arc::new(zerod::later::Later::open(&beside.join("later")));
@@ -188,6 +190,7 @@ fn zerod_for(args: &Args, daemon: &Arc<zerod::daemon::Daemon>, inbox: Arc<zerod:
         loops,
         following,
         browsers,
+        desktop: Default::default(),
         places,
         notices: tokio::sync::broadcast::channel(64).0,
         peers,

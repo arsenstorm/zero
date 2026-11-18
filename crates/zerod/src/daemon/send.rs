@@ -105,6 +105,16 @@ impl Daemon {
         {
             return self.queue_as(id, message.text, message.images, message.sent).map(|_| ());
         }
+        // A local server changed since the task was given it starts again before the message (Codex's process stops
+        // between turns, and the message starts it again).
+        let busy_codex = session.summary().provider == Provider::Codex && session.summary().turn.is_some();
+        if session.is_attached()
+            && !busy_codex
+            && self.mcp_stale(&session)
+            && let Err(error) = self.push_mcp(id).await
+        {
+            eprintln!("zerod: couldn't give {id} its MCP servers again: {error}")
+        }
         // The folder as it is before the agent reads the message: what rewinding to it brings back.
         let kept = self.keep_folder(&session).await;
         let conversation = session.snapshot();

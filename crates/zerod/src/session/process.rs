@@ -181,7 +181,7 @@ impl Session {
             }
         };
         if !piece && !repeated {
-            inner.record(json!({"in": message, "at": at}));
+            inner.record(json!({"in": crate::mcp_servers::redacted(&message).as_ref().unwrap_or(&message), "at": at}));
         }
         inner.core().at(at);
         inner.heard = Instant::now();
@@ -550,7 +550,7 @@ impl Inner {
     pub(super) fn send(&mut self, message: Value) -> Result<(), String> {
         let out = self.out.clone().ok_or_else(|| format!("{} isn't running", self.core().conversation().provider.title()))?;
         let at = now_ms();
-        self.record(json!({"out": message, "at": at}));
+        self.record(json!({"out": crate::mcp_servers::redacted(&message).as_ref().unwrap_or(&message), "at": at}));
         self.core().at(at);
         let changes = self.core().sent(&message);
         self.broadcast(changes);

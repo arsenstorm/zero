@@ -1280,7 +1280,8 @@ struct ConversationView: View {
             let catalogue = ComposerRows.catalogue(current)
             // Claude's task carries the version Claude Code resolved ("claude-opus-5-5"): checked on the row it runs on,
             // the alias it was started on ("Opus 5.5") or the version picked.
-            let row = current == .claude ? chosen.map { ClaudeModels.row(for: $0, in: catalogue) } : chosen
+            // None chosen, the provider's first: the row shown, checked, and whose level and advisor are the task's.
+            let row = (current == .claude ? chosen.map { ClaudeModels.row(for: $0, in: catalogue) } : chosen) ?? catalogue.first?.id
             let name =
                 catalogue.first { $0.id == row }?.name ?? chosen.map(ModelNames.readable) ?? catalogue.first?.name ?? current.title
             // Its advisor (Claude's alone), the one kept for the next turn while one runs; "" kept is none.
@@ -1339,6 +1340,8 @@ struct ConversationView: View {
                 busy && next?.permissions != nil
                     ? "From the next turn" : busy ? "Picked now, it applies from the next turn" : "What the agent may do without asking")
         }
+        // The user's voice and settings: agents reach a task with zero send, never as the user through the desktop tools.
+        .agentProof()
         // Its shell's place, inside the column (which spans the page, margins and all).
         .modifier(ComposerPlace(foot: foot))
         // A little narrower than the conversation.

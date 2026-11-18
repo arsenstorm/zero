@@ -86,7 +86,7 @@ struct NewTaskView: View {
                                     if !ClaudeModels.advisors(for: shownModel).contains(where: { $0.id == advisor }) { advisor = "" }
                                     NewTaskChoice.keep(chosen, model: model, effort: effort, advisor: advisor)
                                 })
-                        }, level: { id in id == "\(chosen.rawValue)/\(model)" && !effort.isEmpty ? effort : nil },
+                        }, level: { id in id == "\(chosen.rawValue)/\(shownModel)" && !effort.isEmpty ? effort : nil },
                         setLevel: { _, level in
                             effort = level
                             NewTaskChoice.keep(chosen, model: model, effort: effort, advisor: advisor)
@@ -112,6 +112,8 @@ struct NewTaskView: View {
                             ])
                     }
                 }
+                // Starting a task is the user's: an agent starts one with zero spawn, never through the desktop tools.
+                .agentProof()
             }
             .onGeometryChange(for: CGRect.self) {
                 $0.frame(in: .global)

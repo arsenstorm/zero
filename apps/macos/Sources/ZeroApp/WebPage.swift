@@ -600,7 +600,7 @@ struct WebPageView: View {
             if let question = page.questions.first {
                 // The page waits under it, as under a browser's own dialog.
                 Color.black.opacity(0.06).contentShape(Rectangle()).onTapGesture {}
-                PageQuestionCard(question: question, page: page).id(question.id)
+                PageQuestionCard(question: question, page: page).id(question.id).agentProof()
                     .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }

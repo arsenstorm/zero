@@ -285,6 +285,11 @@ impl Session {
         self.lock().plain_answers = conversation.plain_answers;
     }
 
+    /// The MCP servers its CLI was last given.
+    pub fn mcp(&self) -> Vec<crate::mcp_servers::Resolved> {
+        self.lock().mcp.clone()
+    }
+
     /// The MCP servers its CLI is to be started with, from now on.
     pub fn set_mcp(&self, servers: Vec<crate::mcp_servers::Resolved>) {
         let mut inner = self.lock();

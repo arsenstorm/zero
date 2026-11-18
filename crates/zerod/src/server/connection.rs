@@ -70,6 +70,8 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
     });
     let (mut subscription, mut inbox, mut feed) = (None, None, None);
     let mut browser: Option<String> = None;
+    let mut desktop: Option<u64> = None;
+    let mut calls = vec![];
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         // An unknown provider is refused here, as a bad request: zerod only starts what it has an adapter for. The
@@ -112,6 +114,16 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             }
             continue;
         }
+        // Zero.app as the desktop: the desktop_ tools' calls go down this connection, its answers come up it.
+        if request.op == "desktopAttach" {
+            desktop = Some(zerod.desktop.attach(out.clone()));
+            let _ = out.send(json!({"id": request.id, "ok": true, "result": null}));
+            continue;
+        }
+        if request.op == "desktopAnswer" {
+            zerod.desktop.answer(request.args.as_ref().unwrap_or(&Value::Null));
+            continue;
+        }
         if request.op == "inbox" {
             if inbox.is_none() {
                 inbox = Some(tokio::spawn(follow_inbox(zerod.inbox.clone(), out.clone())))
@@ -120,7 +132,8 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             continue;
         }
         let (zerod, out) = (zerod.clone(), out.clone());
-        tokio::spawn(async move {
+        let desktop_call = request.op == "desktopCall";
+        let handling = tokio::spawn(async move {
             let id = request.id.clone();
             let answer = match handle(&zerod, request).await {
                 Ok(result) => json!({"id": id, "ok": true, "result": result}),
@@ -128,12 +141,20 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             };
             let _ = out.send(answer);
         });
+        // A desktop call ends with its caller: no action done for no one (its card stays, for the next call).
+        if desktop_call {
+            calls.retain(|c: &tokio::task::JoinHandle<()>| !c.is_finished());
+            calls.push(handling)
+        }
     }
-    for task in [subscription, inbox, feed].into_iter().flatten() {
+    for task in [subscription, inbox, feed].into_iter().flatten().chain(calls) {
         task.abort()
     }
     if let Some(browser) = browser {
         zerod.browsers.detach(&browser)
+    }
+    if let Some(desktop) = desktop {
+        zerod.desktop.detach(desktop)
     }
     drop(out);
     let _ = writer.await;

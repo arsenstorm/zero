@@ -1,0 +1,321 @@
+[
+  {
+    "name": "desktop_apps",
+    "description": "The Mac's running apps, through Zero.app: each one's name, bundle id and whether it's frontmost, and the windows (id, title, frame) of the apps this task may use. Call it first. Also says whether Zero has the Accessibility and Screen Recording permissions and whether the screen is locked. Using an app asks the user on a card the first time, for this task or once.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "desktop_screenshot",
+    "description": "A picture of one app's window, taken in the background (the app isn't brought forward), at one pixel per point so its pixels are the x and y the other tools take. Without app (or with screen), the whole screen, which the user approves on its own.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "screen": {
+          "type": "boolean",
+          "description": "The whole screen: every app's windows."
+        },
+        "save": {
+          "type": "boolean",
+          "description": "Also save it as a PNG file, its path in the answer."
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "desktop_read",
+    "description": "An app window's accessibility tree, one line per element: its ref, role, name or value, and frame in the window. Interactive elements only unless all; refs hold until this window's next read. Prefer it to a screenshot to find what to act on.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Read only this element's part of the tree."
+        },
+        "all": {
+          "type": "boolean",
+          "description": "Every element, not just the ones you can act on."
+        }
+      },
+      "required": [
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "desktop_click",
+    "description": "Clicks in an app, in the background where it can: an element by ref is pressed through accessibility (no pointer); x and y are clicked as an event sent to the app alone. Says when it had to use the real pointer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "ref": {
+          "type": "string",
+          "description": "An element's ref from desktop_read, like e12."
+        },
+        "x": {
+          "type": "number",
+          "description": "Left, in points from the window's top-left corner: the pixels of desktop_screenshot's picture of that window."
+        },
+        "y": {
+          "type": "number",
+          "description": "Top, in points from the window's top-left corner."
+        },
+        "button": {
+          "type": "string",
+          "description": "left (the default) or right.",
+          "enum": [
+            "left",
+            "right"
+          ]
+        },
+        "count": {
+          "type": "number",
+          "description": "2 for a double click."
+        },
+        "modifiers": {
+          "type": "string",
+          "description": "Keys held, like cmd+shift."
+        },
+        "pointer": {
+          "type": "boolean",
+          "description": "Use the real pointer: brings the app forward and moves the pointer, after waiting for the user to be idle. Only when the background way did nothing."
+        }
+      },
+      "required": [
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "desktop_type",
+    "description": "Types text into an app: into the element by ref (its value set through accessibility, or typed after focusing it), else where its focus is. In a terminal the user approves each typing. Refused while a password field has the keyboard.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "ref": {
+          "type": "string",
+          "description": "An element's ref from desktop_read, like e12."
+        },
+        "text": {
+          "type": "string",
+          "description": "What to type."
+        },
+        "replace": {
+          "type": "boolean",
+          "description": "Replace the element's value instead of typing at its cursor."
+        }
+      },
+      "required": [
+        "app",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "desktop_key",
+    "description": "Presses keys in an app, sent to it alone (it isn't brought forward): a chord like cmd+shift+p, return, escape, tab, arrows, f1-f12. A shortcut of one of the app's menu items presses that item instead (the answer names it), as a background app ignores menu shortcuts sent as keys.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "keys": {
+          "type": "string",
+          "description": "The chord, like cmd+s or shift+tab."
+        },
+        "repeat": {
+          "type": "number",
+          "description": "How many times; 1 unless said."
+        }
+      },
+      "required": [
+        "app",
+        "keys"
+      ]
+    }
+  },
+  {
+    "name": "desktop_scroll",
+    "description": "Scrolls in an app at an element or point, sent to the app alone; by ref, the element is first scrolled into view. The answer says how the scroll position changed, or that it didn't.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "ref": {
+          "type": "string",
+          "description": "An element's ref from desktop_read, like e12."
+        },
+        "x": {
+          "type": "number",
+          "description": "Left, in points from the window's top-left corner: the pixels of desktop_screenshot's picture of that window."
+        },
+        "y": {
+          "type": "number",
+          "description": "Top, in points from the window's top-left corner."
+        },
+        "dx": {
+          "type": "number",
+          "description": "Points right (negative: left)."
+        },
+        "dy": {
+          "type": "number",
+          "description": "Points down (negative: up)."
+        }
+      },
+      "required": [
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "desktop_drag",
+    "description": "Drags from one place in an app to another (a ref or x and y each), as events sent to the app; with pointer, the real pointer. The answer says what changed (the selection, a value, the scroll, the window's place), or that nothing did; a background drag across one text field that changes nothing selects that text through accessibility.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "from": {
+          "type": "object",
+          "description": "A ref, or x and y in the window.",
+          "properties": {
+            "ref": {
+              "type": "string",
+              "description": "An element's ref from desktop_read, like e12."
+            },
+            "x": {
+              "type": "number",
+              "description": "Left, in points from the window's top-left corner: the pixels of desktop_screenshot's picture of that window."
+            },
+            "y": {
+              "type": "number",
+              "description": "Top, in points from the window's top-left corner."
+            }
+          }
+        },
+        "to": {
+          "type": "object",
+          "description": "A ref, or x and y in the window.",
+          "properties": {
+            "ref": {
+              "type": "string",
+              "description": "An element's ref from desktop_read, like e12."
+            },
+            "x": {
+              "type": "number",
+              "description": "Left, in points from the window's top-left corner: the pixels of desktop_screenshot's picture of that window."
+            },
+            "y": {
+              "type": "number",
+              "description": "Top, in points from the window's top-left corner."
+            }
+          }
+        },
+        "pointer": {
+          "type": "boolean",
+          "description": "Use the real pointer: brings the app forward and moves the pointer, after waiting for the user to be idle. Only when the background way did nothing."
+        }
+      },
+      "required": [
+        "app",
+        "from",
+        "to"
+      ]
+    }
+  },
+  {
+    "name": "desktop_record",
+    "description": "Records one app's window (or the whole screen) to a video file, up to 60 frames a second, for flicker and animation hunts. start, do the steps, then stop: the answer gives the file. Read it with zero video (frames you can see, cut to a time range).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "start or stop.",
+          "enum": [
+            "start",
+            "stop"
+          ]
+        },
+        "app": {
+          "type": "string",
+          "description": "The app: its name or bundle id, as desktop_apps lists them."
+        },
+        "window": {
+          "type": "number",
+          "description": "Which of its windows, by the id desktop_apps or desktop_read gives; left out, its frontmost."
+        },
+        "screen": {
+          "type": "boolean",
+          "description": "The whole screen."
+        },
+        "fps": {
+          "type": "number",
+          "description": "Frames a second, 60 unless said."
+        },
+        "max": {
+          "type": "number",
+          "description": "Seconds before it stops by itself, 60 unless said."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  }
+]

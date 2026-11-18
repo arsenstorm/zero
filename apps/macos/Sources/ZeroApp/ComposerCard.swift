@@ -41,14 +41,19 @@ struct ReplyBox: View {
     @State private var told = false
 
     var body: some View {
+        // Pasted images' paths stay in the text, for the agent; the field shows the words, the images as tiles.
+        let (words, images) = PastedImages.split(text, folder: Attachments.folder.path)
         ZStack(alignment: .bottomTrailing) {
-            TextField(placeholder, text: $text, axis: .vertical)
-                .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(1...8)
-                .focused(focus, equals: key)
-                .onSubmit(onSend)
-                .padding(.trailing, 31)
-                // Same inner height as an option row's key cap, so a row turning into an input doesn't change size.
-                .frame(minHeight: 18, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                if !images.isEmpty { PastedTiles(images: images) { gone in text = PastedImages.join(words, images.filter { $0 != gone }) } }
+                TextField(placeholder, text: Binding(get: { words }, set: { text = PastedImages.join($0, images) }), axis: .vertical)
+                    .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(1...8)
+                    .focused(focus, equals: key)
+                    .onSubmit(onSend)
+                    .padding(.trailing, 31)
+                    // Same inner height as an option row's key cap, so a row turning into an input doesn't change size.
+                    .frame(minHeight: 18, alignment: .leading)
+            }
             Button(action: onSend) {
                 NucleoIcon("paper-plane", size: 15).foregroundStyle(.secondary)
             }.buttonStyle(.plain)
@@ -56,16 +61,16 @@ struct ReplyBox: View {
         .padding(.horizontal, 10).padding(.vertical, 8)
         // The whole box is the field: a click on its padding focuses it too.
         .contentShape(Rectangle()).onTapGesture { focus.wrappedValue = key }
-        // An image pasted (⌘V) while it's focused: kept as the composer's are, its path in the words, for the agent to
-        // open. The field alone drops an image.
+        // An image pasted (⌘V) while it's focused: kept as the composer's are, its path after the words, for the agent
+        // to open, and a tile here. The field alone drops an image.
         .onAppear {
             let (focus, key, text) = (focus, key, $text)
             pasting = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 guard focus.wrappedValue == key, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                     event.charactersIgnoringModifiers == "v", let urls = Attachments.fromPasteboard(), !urls.isEmpty
                 else { return event }
-                let words = text.wrappedValue
-                text.wrappedValue = words + (words.isEmpty || words.hasSuffix(" ") ? "" : " ") + urls.map(\.path).joined(separator: " ")
+                let (words, images) = PastedImages.split(text.wrappedValue, folder: Attachments.folder.path)
+                text.wrappedValue = PastedImages.join(words, images + urls.map(\.path))
                 return nil
             }
         }
@@ -78,6 +83,24 @@ struct ReplyBox: View {
         }
         // A moment after appearing: in the same update, the field can't take focus yet and it's dropped.
         .task { if autofocus { try? await Task.sleep(for: .milliseconds(50)); focus.wrappedValue = key } }
+    }
+}
+
+/// Images pasted into a reply box, or sent with an answer, as the composer's strip shows them: a click opens one;
+/// with `remove`, its × takes it out.
+struct PastedTiles: View {
+    let images: [String]
+    var remove: ((String) -> Void)?
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(images, id: \.self) { path in
+                    Thumbnail(path: path, side: 56, among: images, remove: remove.map { remove in { remove(path) } })
+                }
+            }
+        }
+        .scrollIndicators(.never)
     }
 }
 

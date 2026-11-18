@@ -256,6 +256,11 @@ final class WorkspaceSelector {
     /// The chip whose selector is open.
     private(set) var open: String?
     @ObservationIgnored private var closed: (chip: String, at: Date)?
+    #if ZERO_DEV
+        /// Zero Dev's checks: the selector a chip would have opened, and each composer chip's way to open its own.
+        @ObservationIgnored var devShown: SelectorState?
+        @ObservationIgnored var devChips: [String: () -> Void] = [:]
+    #endif
 
     /// `window`: the one the chip is in, when it isn't the key window (the control bar's panel never is).
     func toggle(
@@ -278,11 +283,6 @@ final class WorkspaceSelector {
         level: @escaping (String) -> String? = { _ in nil }, setLevel: @escaping (String, String) -> Void = { _, _ in },
         advisor: @escaping (String) -> String? = { _ in nil }, setAdvisor: @escaping (String, String) -> Void = { _, _ in }
     ) {
-        guard let window = window ?? NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
-        #if ZERO_DEV
-            // A menu is a panel of its own, drawn on a display whatever its window: never while the harness drives.
-            if DevWindow.driven { return }
-        #endif
         let state = SelectorState(kind: kind)
         state.sections = rows()
         state.rebuild = rows
@@ -291,6 +291,12 @@ final class WorkspaceSelector {
         state.advisor = advisor
         state.setAdvisor = setAdvisor
         state.close = { [weak self] in self?.close() }
+        #if ZERO_DEV
+            // A menu is a panel of its own, drawn on a display whatever its window: never while the harness drives,
+            // which reads what it would show from its state instead.
+            if DevWindow.driven { devShown = state; return }
+        #endif
+        guard let window = window ?? NSApp.keyWindow, let app = NSApp.delegate as? AppDelegate else { return }
         open = chip
         app.presentSelector(state, chip: anchor, in: window, returning: window)
     }
@@ -351,6 +357,9 @@ struct ComposerChip: View {
             WorkspaceSelector.shared.toggle(
                 id, kind: kind, anchor: anchor, rows: rows, level: level, setLevel: setLevel, advisor: advisor, setAdvisor: setAdvisor)
         }
+        #if ZERO_DEV
+            let _ = WorkspaceSelector.shared.devChips[id] = toggle
+        #endif
         Button(action: unlessClicked(toggle)) {
             HStack(spacing: 5) {
                 if let icon {

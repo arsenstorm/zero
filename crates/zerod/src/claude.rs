@@ -64,6 +64,9 @@ pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, e
         // applies to terminal sessions alone); Claude connects to the extension if Chrome has it.
         "--include-partial-messages",
         "--no-chrome",
+        // Print mode leaves Claude's thinking out (only its signature comes back): its summaries, to show them.
+        "--thinking-display",
+        "summarized",
         "--permission-prompt-tool",
         "stdio",
         "--permission-mode",
@@ -105,26 +108,37 @@ pub fn mcp_config(servers: &[crate::mcp_servers::Resolved]) -> Option<(String, V
         return None;
     }
     let mut env = vec![];
+    let config = entries(servers, |server, name, value| {
+        let var = format!("ZERO_MCP_{}_{}", variable(&server.id), variable(name));
+        env.push((var.clone(), value.to_string()));
+        json!(format!("${{{var}}}"))
+    });
+    Some((json!({"mcpServers": config}).to_string(), env))
+}
+
+/// Zero's MCP servers as `mcp_set_servers` takes them, over stdin, mid-session: the values themselves, since Claude
+/// expands no `${…}` there. A server given the same values as it started with isn't restarted.
+pub fn mcp_servers(servers: &[crate::mcp_servers::Resolved]) -> Value {
+    Value::Object(entries(servers, |_, _, value| json!(value)))
+}
+
+/// Each server's entry by its id, each value (an env var's, a header's) as `value` gives it.
+fn entries(
+    servers: &[crate::mcp_servers::Resolved], mut value: impl FnMut(&crate::mcp_servers::Resolved, &str, &str) -> Value,
+) -> serde_json::Map<String, Value> {
     let mut config = serde_json::Map::new();
     for server in servers {
-        let mut refer = |values: &[(String, String)]| -> serde_json::Map<String, Value> {
-            values
-                .iter()
-                .map(|(name, value)| {
-                    let var = format!("ZERO_MCP_{}_{}", variable(&server.id), variable(name));
-                    env.push((var.clone(), value.clone()));
-                    (name.clone(), json!(format!("${{{var}}}")))
-                })
-                .collect()
+        let mut values = |pairs: &[(String, String)]| -> serde_json::Map<String, Value> {
+            pairs.iter().map(|(name, v)| (name.clone(), value(server, name, v))).collect()
         };
         let entry = match (&server.command, &server.url) {
-            (Some(command), _) => json!({"command": command, "args": server.args, "env": refer(&server.env)}),
-            (None, Some(url)) => json!({"type": "http", "url": url, "headers": refer(&server.headers)}),
+            (Some(command), _) => json!({"command": command, "args": server.args, "env": values(&server.env)}),
+            (None, Some(url)) => json!({"type": "http", "url": url, "headers": values(&server.headers)}),
             (None, None) => continue,
         };
         config.insert(server.id.clone(), entry);
     }
-    Some((json!({"mcpServers": config}).to_string(), env))
+    config
 }
 
 fn variable(name: &str) -> String {

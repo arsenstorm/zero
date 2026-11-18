@@ -16,6 +16,7 @@ enum Setting: String, CaseIterable {
     case activity, claudeAccounts, codexAccounts, opencodeAccounts
     case commitAsAgent, signingKey, coauthor, coauthorName, gitFolders
     case openLinksIn, panelHosts, chrome, firefox, safari, pageDialogs, blockedSites
+    case accessibility, screenRecording
     case mcpServers
     case workspaces, projects
     case githubConnection, githubLinks, githubToken, githubPush
@@ -189,6 +190,16 @@ enum Setting: String, CaseIterable {
                 .chrome, "Dialogs", "Replace pages' dialogs in agents' tabs (experimental)",
                 "A page's alert, confirm or prompt answers at once and is told to the agent, so its window never comes forward",
                 ["popup"]
+            )
+        case .accessibility:
+            (
+                .desktop, "Permissions", "Accessibility", "Lets agents read apps' windows and act in them, each app as you allow it.",
+                ["desktop", "apps", "click", "computer use"]
+            )
+        case .screenRecording:
+            (
+                .desktop, "Permissions", "Screen Recording", "Lets agents take pictures and videos of apps' windows you allow.",
+                ["desktop", "screenshot", "video", "capture"]
             )
         case .blockedSites: (.chrome, "Blocked sites", "Blocked sites", "Sites no task may open.", ["block", "deny", "domains"])
         case .mcpServers: (.mcp, "Servers", "Servers", "The MCP servers your agents use, and the workspaces they're in.", ["tools", "add"])

@@ -107,7 +107,7 @@ struct CardView: View {
     }
 
     var body: some View {
-        if ask.kind == .message { messageBubble } else { card.opensPaths() }
+        if ask.kind == .message { messageBubble } else { card.opensPaths().agentProof() }
     }
 
     /// The user's message to the agent: a bubble on the right with a small time beside it, no header and no
@@ -195,7 +195,8 @@ struct CardView: View {
             }
             Spacer(minLength: 8)
             // No time and no dismiss: a finished card folds into Earlier, or leaves the inbox when it next opens.
-            if ask.state == .running {
+            // A run's: an approved MCP server is also running for a moment, while Zero gives it out.
+            if ask.state == .running && ask.kind == .run {
                 // Its output followed in the user's terminal app, as it comes.
                 if let log = ask.runLog {
                     Button("Terminal") { TerminalApp.follow(log, title: ask.title) }
@@ -430,15 +431,20 @@ struct CardView: View {
                     .foregroundStyle(chosen ? .white : .primary)
                     .background(cap).clipShape(RoundedRectangle(cornerRadius: 5))
             }
-            // A text option reads like a placeholder: pick it and the input appears with the same wording.
-            Text(text).font(.system(size: 13))
-                .foregroundStyle(
-                    !chosen && Ask.expectsText(text)
-                        ? (done ? AnyShapeStyle(Theme.doneMuted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary)
-                )
-                // The reply box's room at the end (its 56 pt, less the state icon and the gap before it).
-                .padding(.trailing, boxLike ? 56 - 15 - 10 : 0)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // An answer with images pasted into the box: their tiles over its words, as the box had them.
+            let (words, images) = PastedImages.split(text, folder: Attachments.folder.path)
+            VStack(alignment: .leading, spacing: 8) {
+                if !images.isEmpty { PastedTiles(images: images) }
+                // A text option reads like a placeholder: pick it and the input appears with the same wording.
+                Text(words).font(.system(size: 13))
+                    .foregroundStyle(
+                        !chosen && Ask.expectsText(text)
+                            ? (done ? AnyShapeStyle(Theme.doneMuted) : AnyShapeStyle(.secondary)) : AnyShapeStyle(.primary)
+                    )
+                    // The reply box's room at the end (its 56 pt, less the state icon and the gap before it).
+                    .padding(.trailing, boxLike ? 56 - 15 - 10 : 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if chosen {
                 ZStack {
                     if failed {

@@ -205,7 +205,7 @@ struct PillView: View {
                 VStack(spacing: -barKnob / 2) {
                     if inbox { inboxKnob.zIndex(1) }
                     barBody(groups: groups, dots: looks)
-                    if barFoot { settingsKnob.zIndex(1) }
+                    if Desktop.shared.driving != nil { desktopKnob.zIndex(1) } else if barFoot { settingsKnob.zIndex(1) }
                 }
             }
         }
@@ -411,7 +411,13 @@ struct PillView: View {
     private var slimPair: some View {
         VStack(spacing: BarPeak.gap) {
             inboxKnob
-            if barFoot { settingsKnob } else { BarKnob(out: false, outline: joined) { _ in EmptyView() }.allowsHitTesting(false) }
+            if Desktop.shared.driving != nil {
+                desktopKnob
+            } else if barFoot {
+                settingsKnob
+            } else {
+                BarKnob(out: false, outline: joined) { _ in EmptyView() }.allowsHitTesting(false)
+            }
         }
         .frame(width: 44)
         .background {
@@ -464,6 +470,22 @@ struct PillView: View {
         .onTapGesture(perform: customiseBar)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Customise bar")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// A task using the Mac's apps (the desktop tools): out in the bottom hollow, in the settings button's place, for as
+    /// long as it acts. Its tip says which task and which app; a click takes the desktop back from the task.
+    private var desktopKnob: some View {
+        let driving = Desktop.shared.driving
+        let said = "\(driving?.task ?? "A task") is using \(driving?.app ?? "an app")"
+        return BarKnob(out: true, waiting: true, outline: joined) { _ in
+            NucleoIcon("cursor-rays", size: 16).foregroundStyle(.primary)
+        }
+        .onTapGesture { Desktop.shared.stop() }
+        .tip(said + ". Click to stop it.", side: .left)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(said)
+        .accessibilityAction(named: "Stop") { Desktop.shared.stop() }
         .accessibilityAddTraits(.isButton)
     }
 

@@ -317,7 +317,7 @@ struct StepOrAsk: View {
     var body: some View {
         if let inbox, let session, let ask = AgentAskCard.made(by: item, in: inbox.store.asks(of: session), session: session) {
             // A line: its card, to answer it by, is above the composer.
-            AgentAskCard(ask: ask, inbox: inbox, compact: true)
+            AgentAskCard(ask: ask, inbox: inbox, compact: true).agentProof()
         } else {
             ItemView(item: item, cwd: cwd, until: until)
         }

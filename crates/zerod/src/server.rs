@@ -7,6 +7,7 @@
 
 mod browser;
 mod connection;
+mod desktop;
 mod inbox;
 mod integrations;
 mod notes;
@@ -287,6 +288,8 @@ pub struct Zerod {
     pub loops: Arc<crate::loops::Loops>,
     pub following: Arc<crate::following::Following>,
     pub browsers: Arc<crate::browser::Browsers>,
+    /// Zero.app as the desktop, for the desktop_ tools, and what the user allowed each task there.
+    pub desktop: Arc<crate::desktop::Desktop>,
     pub places: Arc<crate::board::Places>,
     /// Changes that aren't a session's, for subscribers: "pads" when a scratchpad changes.
     pub notices: broadcast::Sender<&'static str>,
@@ -318,12 +321,16 @@ pub(crate) const APP_ONLY: &[&str] = &[
     "setPermissions",
     "saveMcpServer",
     "deleteMcpServer",
+    "reloadMcpServer",
     "saveWorkspace",
     "deleteWorkspace",
     "reorderWorkspaces",
     "gitKey",
     "saveBrowserSettings",
     "zeroBrowser",
+    "desktopAttach",
+    "desktopAnswer",
+    "desktopStop",
     "saveSignIn",
     "codexSignIn",
     "claudeSignIn",
@@ -414,6 +421,62 @@ pub fn link_asks(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
             inbox.keep_reply(&conversation.items)
         }
     }));
+}
+
+/// An MCP server the user approves on an agent's ask (`zero mcp add`) is kept and given to the running tasks; the
+/// ask's answer says what the asking task got.
+pub fn apply_mcp_asks(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    let daemon = Arc::downgrade(daemon);
+    inbox.on_mcp(Arc::new(move |ask| {
+        let daemon = daemon.upgrade();
+        Box::pin(async move {
+            let daemon = daemon.ok_or("zerod is stopping")?;
+            let server = ask.mcp.clone().ok_or("no server in it")?;
+            let asker = ask.agent.reference.clone().filter(|_| ask.agent.runtime.as_deref() == Some("zerod"));
+            daemon.apply_mcp(server, asker.as_deref()).await
+        })
+    }));
+}
+
+/// Zero signs in to the remote MCP servers it keeps itself (integrations/mcp_oauth.rs), in place of a task's CLI: a
+/// server signed in to is changed for the running tasks (its token their header), and its token is refreshed before it
+/// runs out.
+pub fn mcp_sign_ins(daemon: &Arc<Daemon>, integrations: &Arc<crate::integrations::Integrations>) {
+    let _ = daemon.integrations.set(integrations.clone());
+    let weak = Arc::downgrade(daemon);
+    let remote = |daemon: &Daemon, id: &str| daemon.mcp_servers.list().into_iter().find(|s| s.id == id).and_then(|s| s.url);
+    let owns: crate::mcp_auth::Owns = {
+        let weak = weak.clone();
+        Arc::new(move |server: &str| weak.upgrade().is_some_and(|d| remote(&d, server).is_some()))
+    };
+    let (tokens, signing) = (integrations.clone(), weak.clone());
+    let run: crate::mcp_auth::Runner = Arc::new(move |job, page| {
+        let (tokens, weak) = (tokens.clone(), signing.clone());
+        Box::pin(async move {
+            let daemon = weak.upgrade().ok_or("zerod is stopping")?;
+            let url = remote(&daemon, &job.server).ok_or("it isn't at a URL")?;
+            if tokens.mcp_access(&job.server, &url).is_none() {
+                tokens.mcp_waiting(&job.server, &url)
+            }
+            tokens.mcp_sign_in(&job.server, &url, page).await?;
+            daemon.mcp_changed(&job.server);
+            daemon.push_mcp_everywhere();
+            Ok(())
+        })
+    });
+    daemon.mcp_auth.zero_signs_in(owns, run);
+    let tokens = integrations.clone();
+    tokio::spawn(async move {
+        loop {
+            let wait = tokens.mcp_refresh_due().map_or(60, |due| (due - crate::now()).clamp(1, 60));
+            tokio::time::sleep(std::time::Duration::from_secs(wait as u64)).await;
+            let changed = tokens.refresh_mcp().await;
+            let Some(daemon) = weak.upgrade() else { return };
+            if !changed.is_empty() {
+                daemon.push_mcp_everywhere()
+            }
+        }
+    });
 }
 
 /// A task with a blocking ask open (`zero ask --block`) hears nothing else until it's answered: the inbox tells the
@@ -527,14 +590,15 @@ async fn handle(zerod: &Zerod, request: Request) -> Result<Value, String> {
         | "saveBrowserSettings"
         | "browserSetup"
         | "zeroBrowser" => browser::handle(zerod, request).await,
+        "desktopCall" | "desktopStop" => desktop::handle(zerod, request).await,
         "signIns" | "saveSignIn" | "codexSignIn" | "claudeSignIn" | "deleteSignIn" | "defaultSignIn" | "readUsage" | "accountActivity"
         | "claudeModels" => signins::handle(zerod, request).await,
         "agentAsk" | "create" | "asks" | "choose" | "answerAsk" | "reply" | "takeBack" | "withdraw" | "dismiss" | "cancelRun"
         | "deliver" | "message" | "close" | "switchModel" => inbox::handle(zerod, request).await,
         "gitAccount" | "gitCheck" | "gitTokenStatus" => git(zerod, request).await,
         "mcpSignIn" => mcp_sign_in(zerod, request).await,
-        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace" | "reorderWorkspaces"
-        | "settings" | "configure" | "gitKey" => setup(zerod, request),
+        "mcpServers" | "saveMcpServer" | "deleteMcpServer" | "reloadMcpServer" | "workspaces" | "saveWorkspace" | "deleteWorkspace"
+        | "reorderWorkspaces" | "settings" | "configure" | "gitKey" => setup(zerod, request),
         other => unknown(other),
     }
 }
@@ -584,11 +648,28 @@ fn setup(zerod: &Zerod, request: Request) -> Result<Value, String> {
                 serde_json::from_value(request.server.clone().ok_or("Which server?")?).map_err(|e| format!("Not a server: {e}"))?;
             let saved = daemon.mcp_servers.save(server)?;
             let _ = zerod.notices.send("mcp");
+            // As it is now, to the tasks running: not skipped for what it was.
+            daemon.mcp_changed(&saved.id);
+            let (daemon, server) = (daemon.clone(), saved.clone());
+            tokio::spawn(async move {
+                daemon.mcp_waits(&server).await;
+                daemon.push_mcp_everywhere()
+            });
             Ok(json!(saved))
         }
+        "reloadMcpServer" => {
+            daemon.mcp_servers.reload(request.server.as_ref().and_then(|s| s.as_str()).ok_or("Which server?")?);
+            daemon.push_mcp_everywhere();
+            Ok(Value::Null)
+        }
         "deleteMcpServer" => {
-            daemon.mcp_servers.delete(request.server.as_ref().and_then(|s| s.as_str()).ok_or("Which server?")?)?;
+            let id = request.server.as_ref().and_then(|s| s.as_str()).ok_or("Which server?")?;
+            daemon.mcp_servers.delete(id)?;
+            if let Some(integrations) = daemon.integrations.get() {
+                integrations.forget_mcp(id)
+            }
             let _ = zerod.notices.send("mcp");
+            daemon.push_mcp_everywhere();
             Ok(Value::Null)
         }
         "saveWorkspace" => {

@@ -28,6 +28,12 @@ func usage(help: Bool = false) -> Never {
           zero blocked "what blocks it" [--confirm TOKEN]
                        marks the task blocked (red), in two steps as done: only when it can't go on at all until
                        something outside you and the user changes (an outage, another team's access)
+          zero mcp add <name> --why "what it's for" [--workspaces all|ID,...] [--lazy] [--env NAME]... [--header NAME]... (-- command args... | --url URL)
+                       proposes an MCP server for the user to approve: a new one, or a change of the one there of that name.
+                       Once approved, Zero keeps it for this task's workspace and gives it to the running tasks at once
+                       (Codex at its next turn); the answer names its tools. The user sets the values of --env and --header
+                       names in Zero. --lazy: a local server started when first used. End your turn [zero: asked <id>]
+          zero mcp list   (the MCP servers set up in Zero, without their values, as JSON)
           zero withdraw <id> [--reason "why"]   (take back an open ask that no longer needs the user)
           zero wait    <id>
           zero status  <id>
@@ -138,8 +144,9 @@ func usage(help: Bool = false) -> Never {
 
 var args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else { usage() }
-// The MCP server is zerod's own, beside this in Zero.app; it speaks on stdio, so this program becomes it.
-if command == "mcp" {
+// The MCP server is zerod's own, beside this in Zero.app; it speaks on stdio, so this program becomes it. `zero mcp add`
+// and `zero mcp list` are this program's own.
+if command == "mcp" && !["add", "list"].contains(args.dropFirst().first ?? "") {
     let here = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
     let zerod =
         Bundle.main.executableURL?.resolvingSymlinksInPath().deletingLastPathComponent().appendingPathComponent("zerod").path
@@ -161,8 +168,9 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch", "block", "ask"].contains(
-            key)
+        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch", "block", "ask", "lazy"]
+            .contains(
+                key)
         {
             flags[key, default: []].append("1")
         } else {
@@ -236,6 +244,7 @@ case "pause", "unpause": await pauseCommand(command)
 case "following": await followingCommand()
 case "browser": await browserCommand()
 case "slack": await slackCommand()
+case "mcp": await mcpCommand()
 case "linear": await linearCommand()
 case "notify": await notifyCommand()
 case "watch" where positional.first == "list": await watchListCommand()

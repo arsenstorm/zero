@@ -264,6 +264,8 @@ fn claude_runs_unmodified_in_auto_mode_with_zeros_rules_appended() {
         ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
     );
     assert_eq!(at("--permission-prompt-tool"), Some("stdio"));
+    // Print mode leaves thinking out (only its signature comes back): Zero asks for Claude's summaries to show them.
+    assert_eq!(at("--thinking-display"), Some("summarized"));
     // Claude in Chrome off, whatever the user's own default: agents in Zero use Zero for Chrome.
     assert!(args.contains(&"--no-chrome".to_string()) && !args.contains(&"--chrome".to_string()), "{args:?}");
     assert_eq!(at("--permission-mode"), Some("auto"), "The user's own mode: Claude's classifier decides, Zero hears what it can't");

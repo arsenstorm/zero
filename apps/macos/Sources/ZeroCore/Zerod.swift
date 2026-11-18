@@ -1016,6 +1016,7 @@ public final class ZerodLink: @unchecked Sendable {
     private var inboxHandler: (@Sendable (InboxMessage) -> Void)?
     private var closeHandler: (@Sendable () -> Void)?
     private var feedHandler: (@Sendable (Feed) -> Void)?
+    private var desktopHandler: (@Sendable ([String: Any]) -> Void)?
 
     /// What zerod pushes besides sessions, after `subscribe`: the board whenever it changes, and that pads changed.
     public enum Feed: Sendable {
@@ -1062,6 +1063,13 @@ public final class ZerodLink: @unchecked Sendable {
     public var onMessage: (@Sendable (ZerodMirror.Message) -> Void)? {
         get { lock.withLock { messageHandler } }
         set { lock.withLock { messageHandler = newValue } }
+    }
+
+    /// After `desktopAttach`, the desktop tools' calls (`{"call", "tool", "args", "task"}`) and Stops (`{"stop"}`), on
+    /// the link's reading thread.
+    public var onDesktop: (@Sendable ([String: Any]) -> Void)? {
+        get { lock.withLock { desktopHandler } }
+        set { lock.withLock { desktopHandler = newValue } }
     }
 
     /// The connection ended: zerod quit, or `close`.
@@ -1774,6 +1782,8 @@ public final class ZerodLink: @unchecked Sendable {
         return try decode(McpServer.self, from: await call("saveMcpServer", ["server": try JSONSerialization.jsonObject(with: data)]))
     }
     public func deleteMcpServer(_ id: String) async throws { _ = try await call("deleteMcpServer", ["server": id]) }
+    /// A local server started again in every running task that has it.
+    public func reloadMcpServer(_ id: String) async throws { _ = try await call("reloadMcpServer", ["server": id]) }
     /// Claude Code's own sign-in to one of its servers (zerod's mcp_auth.rs): its page to open.
     public func mcpSignIn(_ server: String, cwd: String?) async throws -> URL? {
         let result = try await call("mcpSignIn", ["args": ["server": server, "cwd": cwd as Any]]) as? [String: Any]
@@ -1979,6 +1989,14 @@ public final class ZerodLink: @unchecked Sendable {
         _ = try await call("configure", ["takeBack": takeBack, "ttl": ttl])
     }
 
+    /// A request zerod answers nothing to (`desktopAnswer`).
+    public func post(_ op: String, _ fields: [String: Any] = [:]) {
+        var body = fields
+        body["op"] = op
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        try? writing.withLock { try connection.write(line: String(decoding: data, as: UTF8.self)) }
+    }
+
     /// One request; nil fields are left out.
     public func call(_ op: String, _ fields: [String: Any?] = [:]) async throws -> Any {
         try await withCheckedThrowingContinuation { (answer: CheckedContinuation<Any, Error>) in
@@ -2070,9 +2088,12 @@ public final class ZerodLink: @unchecked Sendable {
                 if let decoded { onMessage?(decoded) } else if let inbox = Self.inbox(event, data) { onInbox?(inbox) }
                 continue
             }
-            guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let id = message["id"] as? Int, let answer = lock.withLock({ waiting.removeValue(forKey: id) })
-            else { continue }
+            guard let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            if let desktop = message["desktop"] as? [String: Any] {
+                onDesktop?(desktop)
+                continue
+            }
+            guard let id = message["id"] as? Int, let answer = lock.withLock({ waiting.removeValue(forKey: id) }) else { continue }
             if message["ok"] as? Bool == true {
                 answer.resume(returning: message["result"] ?? NSNull())
             } else {

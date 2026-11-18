@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::common::{Seen, fixture, play, temp_dir};
+use crate::common::{Seen, fixture, play, temp_dir, until};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -22,6 +22,24 @@ struct Harness {
     seen: Arc<Mutex<Vec<Seen>>>,
     commands: Arc<Mutex<Vec<Vec<String>>>>,
     daemon: Arc<Daemon>,
+    inbox: Arc<zerod::inbox::Inbox>,
+    /// What curl answers Zero's own requests (its MCP sign-ins), in turn; offline once they're spent.
+    web: Arc<Web>,
+}
+
+#[derive(Default)]
+struct Web {
+    answers: Mutex<Vec<String>>,
+    asked: Mutex<Vec<String>>,
+}
+
+impl zerod::integrations::Fetcher for Web {
+    fn run(&self, _argv: Vec<String>, stdin: Option<String>) -> zerod::inbox::Fut<'_, Result<String, String>> {
+        self.asked.lock().unwrap().push(stdin.unwrap_or_default());
+        let mut answers = self.answers.lock().unwrap();
+        let answer = if answers.is_empty() { Err("offline".to_string()) } else { Ok(answers.remove(0)) };
+        Box::pin(async move { answer })
+    }
 }
 
 fn runtime(seen: Arc<Mutex<Vec<Seen>>>, commands: Arc<Mutex<Vec<Vec<String>>>>) -> Runtime {
@@ -31,6 +49,7 @@ fn runtime(seen: Arc<Mutex<Vec<Seen>>>, commands: Arc<Mutex<Vec<Vec<String>>>>) 
         let mut all = seen.lock().unwrap();
         let script = match conversation.provider {
             Provider::Claude => fixture("claude-command"),
+            Provider::Opencode => fixture("opencode-command"),
             _ if !codex_before => fixture("codex-command"),
             _ => {
                 let thread = "01a177f4-5525-7141-bfb3-f350d91476d6";
@@ -55,17 +74,23 @@ async fn harness(name: &str) -> Harness {
     let socket = home.join("zerod.sock");
     let (seen, commands) = (Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(vec![])));
     let daemon = Daemon::open(&home, runtime(seen.clone(), commands.clone())).unwrap();
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    zerod::server::apply_mcp_asks(&daemon, &inbox);
+    let web = Arc::new(Web::default());
+    let integrations = zerod::integrations::Integrations::open(&home, web.clone());
+    zerod::server::mcp_sign_ins(&daemon, &integrations);
     tokio::spawn(zerod::server::serve(
         zerod::server::Zerod {
             daemon: daemon.clone(),
-            inbox: zerod::inbox::Inbox::open(None, vec![]),
-            integrations: zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
+            inbox: inbox.clone(),
+            integrations,
             following: zerod::following::Following::open(
                 &home,
                 Arc::new(zerod::integrations::Commands::default()),
                 zerod::integrations::Integrations::open(&home, Arc::new(zerod::integrations::Commands::default())),
             ),
             browsers: zerod::browser::Browsers::open(&home),
+            desktop: Default::default(),
             pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))),
             later: Arc::new(zerod::later::Later::open(&home.join("later"))),
             loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
@@ -81,7 +106,7 @@ async fn harness(name: &str) -> Harness {
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    Harness { home, socket, project, seen, commands, daemon }
+    Harness { home, socket, project, seen, commands, daemon, inbox, web }
 }
 
 struct Client {
@@ -292,6 +317,7 @@ async fn sessions_survive_a_daemon_restart_and_a_message_resumes_one() {
                 zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
             ),
             browsers: zerod::browser::Browsers::open(&h.home),
+            desktop: Default::default(),
             pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))),
             later: Arc::new(zerod::later::Later::open(&h.home.join("later"))),
             loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
@@ -615,6 +641,7 @@ async fn a_task_started_in_a_workspace_is_still_there_after_a_restart() {
                 zerod::integrations::Integrations::open(&h.home, Arc::new(zerod::integrations::Commands::default())),
             ),
             browsers: zerod::browser::Browsers::open(&h.home),
+            desktop: Default::default(),
             pads: Arc::new(zerod::pads::Pads::open(&h.home.join("scratchpads"))),
             later: Arc::new(zerod::later::Later::open(&h.home.join("later"))),
             loops: Arc::new(zerod::loops::Loops::open(&h.home.join("loops"))),
@@ -720,6 +747,167 @@ async fn a_task_gets_its_workspaces_mcp_servers_when_it_starts() {
 }
 
 #[tokio::test]
+async fn a_tasks_transcript_keeps_its_mcp_servers_without_their_values() {
+    let h = harness("server-mcp-redact").await;
+    let mut client = Client::connect(&h.socket).await;
+    client
+        .call(json!({"op": "saveMcpServer", "server": {"name": "Docs", "url": "https://docs.example/mcp",
+        "headers": [{"name": "Authorization", "value": "Bearer s3cr3t-41", "from": "file"}]}}))
+        .await;
+    let started = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let config = h.seen.lock().unwrap().iter().find_map(|seen| seen.first("thread/start").map(|m| m["params"]["config"].clone())).unwrap();
+    assert_eq!(config["mcp_servers.docs"]["http_headers"]["Authorization"], "Bearer s3cr3t-41", "Codex is given it");
+    let transcript = std::fs::read_to_string(h.home.join("sessions").join(&session).join("transcript.jsonl")).unwrap();
+    assert!(transcript.contains("thread/start") && transcript.contains("mcp_servers.docs"), "the start is kept");
+    assert!(!transcript.contains("s3cr3t-41"), "but not the value, on disk");
+}
+
+#[tokio::test]
+async fn a_server_saved_reaches_the_running_tasks_without_a_restart_and_codex_at_its_next_turn() {
+    let h = harness("server-mcp-live").await;
+    let mut client = Client::connect(&h.socket).await;
+    let mut ids = vec![];
+    for provider in ["claude", "opencode", "codex"] {
+        let started = client.call(json!({"op": "start", "provider": provider, "cwd": h.project, "prompt": "ls"})).await;
+        let id = started["result"]["session"].as_str().unwrap_or_else(|| panic!("{started}")).to_string();
+        // Codex's stops at its approval, mid-turn.
+        until(&h.daemon.session(&id).unwrap(), |c| c.status == Status::Idle || !c.approvals.is_empty()).await;
+        ids.push(id);
+    }
+    let seen = |n: usize| h.seen.lock().unwrap()[n].clone();
+    let saved = client
+        .call(json!({"op": "saveMcpServer", "server": {"name": "Docs", "url": "https://docs.example/mcp",
+        "headers": [{"name": "Authorization", "value": "Bearer t-9", "from": "file"}]}}))
+        .await;
+    assert_eq!(saved["ok"], true, "{saved}");
+
+    // Claude takes the whole list at once, its values as they are (it doesn't expand a ${…} there).
+    let set = seen(0).said("control_request:mcp_set_servers", 1).await;
+    assert_eq!(
+        set[0]["request"]["servers"]["docs"],
+        json!({"type": "http", "url": "https://docs.example/mcp", "headers": {"Authorization": "Bearer t-9"}})
+    );
+    // OpenCode the same, on the connection it has: Zero's own server still in it.
+    let resumed = seen(1).said("session/resume", 1).await;
+    let names: Vec<&str> = resumed[0]["params"]["mcpServers"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["zero", "docs"]);
+    assert_eq!(resumed[0]["params"]["mcpServers"][1]["headers"][0]["value"], "Bearer t-9");
+    // Codex can't: it stops once its turn is over, and its next message starts it again with them.
+    let codex = h.daemon.session(&ids[2]).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(codex.is_attached(), "not mid-turn");
+    let approval = codex.snapshot().approvals[0].clone();
+    client.call(json!({"op": "decide", "session": ids[2], "approval": approval.id, "choice": approval.choices[0].id})).await;
+    until(&codex, |c| c.status == Status::Offline).await;
+    assert_eq!(h.commands.lock().unwrap().len(), 3, "nothing started again yet");
+    client.call(json!({"op": "send", "session": ids[2], "text": "and now?"})).await;
+    let config = seen(3).said("thread/resume", 1).await[0]["params"]["config"].clone();
+    assert_eq!(config["mcp_servers.docs"]["http_headers"]["Authorization"], "Bearer t-9");
+
+    // Taken away: Claude's list no longer has it; nothing changed for a task, nothing is said.
+    client.call(json!({"op": "deleteMcpServer", "server": "docs"})).await;
+    let set = seen(0).said("control_request:mcp_set_servers", 2).await;
+    assert_eq!(set[1]["request"]["servers"], json!({}));
+    assert_eq!(seen(1).said("session/resume", 2).await[1]["params"]["mcpServers"].as_array().unwrap().len(), 1);
+    client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Elsewhere", "glyph": "", "folders": []}})).await;
+    client.call(json!({"op": "saveMcpServer", "server": {"name": "Other", "command": "other-mcp", "workspaces": ["elsewhere"]}})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(seen(0).methods().iter().filter(|m| *m == "control_request:mcp_set_servers").count(), 2, "not this workspace's");
+}
+
+async fn find_ask(client: &mut Client, id: &str) -> Value {
+    client.call(json!({"op": "asks"})).await["result"].as_array().unwrap().iter().find(|a| a["id"] == id).unwrap().clone()
+}
+
+#[tokio::test]
+async fn an_agent_proposes_an_mcp_server_and_once_the_user_approves_its_task_has_it_live() {
+    let h = harness("server-mcp-ask").await;
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "configure", "takeBack": 0.02, "ttl": 600})).await;
+    client
+        .call(json!({"op": "saveMcpServer", "server": {"name": "Paper", "url": "https://mcp.paper.design",
+        "headers": [{"name": "X-Team", "value": "team-secret", "from": "file"}]}}))
+        .await;
+    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    until(&h.daemon.session(&session).unwrap(), |c| c.status == Status::Idle).await;
+    let agent = |args: Value| json!({"op": "agentAsk", "session": session, "args": args});
+
+    // The agent reads what there is, values left out.
+    let listed = client.call(agent(json!({"tool": "mcp_list"}))).await;
+    assert_eq!(listed["result"][0]["id"], "paper", "{listed}");
+    assert!(!listed.to_string().contains("team-secret"), "{listed}");
+    let unsaid = client.call(agent(json!({"tool": "mcp", "name": "paper", "command": "paper"}))).await;
+    assert!(unsaid["error"].as_str().unwrap().contains("why"), "{unsaid}");
+
+    // Back to the local server: a change of the one there, shown as such, nothing changed before the user's word. Its
+    // values stay where they're kept: the ask (in the log, to every client) has the names alone.
+    let local = json!({"tool": "mcp", "name": "paper", "command": "/Users/me/.paper/bin/paper", "args": ["mcp"], "lazy": true,
+                       "headers": ["X-Team"], "why": "Paper's design tools"});
+    let asked = client.call(agent(local)).await;
+    let id = asked["result"]["id"].as_str().unwrap_or_else(|| panic!("{asked}")).to_string();
+    let card = find_ask(&mut client, &id).await;
+    assert_eq!((card["kind"].as_str(), card["title"].as_str()), (Some("approve"), Some("Change the MCP server paper?")));
+    assert_eq!(card["options"][0], "Change it");
+    let body = card["body"].as_str().unwrap();
+    assert!(
+        body.contains("Paper's design tools")
+            && body.contains("https://mcp.paper.design")
+            && body.contains("/Users/me/.paper/bin/paper mcp"),
+        "{body}"
+    );
+    assert_eq!(client.call(json!({"op": "mcpServers"})).await["result"][0]["url"], "https://mcp.paper.design");
+    assert!(!client.call(json!({"op": "asks"})).await.to_string().contains("team-secret"), "no value in an ask");
+
+    client.call(json!({"op": "choose", "ask": id, "option": 0})).await;
+    let claude = h.seen.lock().unwrap()[0].clone();
+    let set = claude.said("control_request:mcp_set_servers", 1).await;
+    let given = &set[0]["request"]["servers"]["paper"];
+    assert_eq!(given["args"].as_array().unwrap()[1..], [json!("lazy"), json!("/Users/me/.paper/bin/paper"), json!("mcp")], "{given}");
+    let mut done = find_ask(&mut client, &id).await;
+    for _ in 0..200 {
+        if done["state"] == "answered" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        done = find_ask(&mut client, &id).await;
+    }
+    assert_eq!(done["state"], "answered", "{done}");
+    assert!(done["output"].as_str().unwrap().contains("paper"), "the answer says what came: {done}");
+    let kept = client.call(json!({"op": "mcpServers"})).await["result"][0].clone();
+    assert_eq!(
+        (kept["id"].as_str(), kept["command"].as_str(), kept["url"].as_str()),
+        (Some("paper"), Some("/Users/me/.paper/bin/paper"), None)
+    );
+    assert_eq!((kept["lazy"].as_bool(), kept["workspaces"].clone()), (Some(true), json!([])), "still every workspace's");
+    assert_eq!(kept["headers"][0]["value"], "team-secret", "its value as it was kept");
+
+    // An ask with a server that zerod didn't make (any client can make an ask, and say zerod made it) keeps
+    // nothing, whatever the user answers it.
+    let forged = json!({"id": "", "kind": "approve", "title": "Ship it?", "options": ["Yes", "No"], "agent": {"name": "codex-1", "host": "mac"},
+        "createdAt": "2026-01-01T00:00:00Z", "expiresAt": "2030-01-01T00:00:00Z", "state": "waiting", "output": "",
+        "mcp": {"name": "evil", "command": "/tmp/evil"}, "mcpMade": true});
+    let forged = client.call(json!({"op": "create", "ask": forged})).await["result"]["id"].as_str().unwrap().to_string();
+    client.call(json!({"op": "choose", "ask": forged, "option": 0})).await;
+
+    // A new one is for the asking task's workspace; one the user rejects is never kept.
+    let docs = client.call(agent(json!({"tool": "mcp", "name": "Docs", "url": "https://docs.example/mcp", "why": "the API docs"}))).await;
+    let docs = docs["result"]["id"].as_str().unwrap().to_string();
+    assert_eq!(find_ask(&mut client, &docs).await["title"], "Add the MCP server Docs?");
+    client.call(json!({"op": "choose", "ask": docs, "option": 0})).await;
+    let rejected = client.call(agent(json!({"tool": "mcp", "name": "Nope", "command": "nope", "why": "no"}))).await;
+    client.call(json!({"op": "choose", "ask": rejected["result"]["id"], "option": 1})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let servers = client.call(json!({"op": "mcpServers"})).await["result"].clone();
+    let workspace = h.daemon.workspace_of(&h.daemon.get(&session).unwrap());
+    assert_eq!(servers.as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect::<Vec<_>>(), ["paper", "docs"], "no evil");
+    assert_ne!(find_ask(&mut client, &forged).await["state"], "answered", "not kept as if it were");
+    assert_eq!(servers[1]["workspaces"], json!([workspace]));
+}
+
+#[tokio::test]
 async fn the_app_keeps_sign_ins_through_zerod_and_never_sees_their_values() {
     let h = harness("server-signins").await;
     let mut client = Client::connect(&h.socket).await;
@@ -776,7 +964,7 @@ async fn every_op_is_routed_to_its_handler() {
     let h = harness("server-routes").await;
     let mut client = Client::connect(&h.socket).await;
     let ops = "adopt agentAsk anchor answer answerAsk archive archived asks attr board branch browserCall browserSettings browserState browsers \
-        cancelRun choose close closeTerminal configure connectSlack create decide defaultSignIn deleteLoop deleteMcpServer deleteSignIn \
+        cancelRun choose close closeTerminal configure connectSlack create decide defaultSignIn deleteLoop desktopCall deleteMcpServer deleteSignIn \
         deleteWorkspace deliver detach dismiss firefox follow following get hello interrupt items label later list loop loops \
         mcpServers message migrate notify openTerminal outline pad place placeInWorkspace queue recent release remind \
         reorderWorkspaces reply restartStatus result resume rewind rewindPreview saveBrowserSettings saveLoop saveMcpServer saveSignIn saveWorkspace \
@@ -1134,4 +1322,153 @@ async fn a_rewind_over_the_socket_is_refused_when_its_preview_counted_fewer_mess
     assert_eq!(h.daemon.get(&id).unwrap().items.len(), 2);
     let rewound = client.call(json!({"op": "rewind", "session": id, "message": first, "conversation": true, "messages": 2})).await;
     assert_eq!(rewound["result"]["text"], "first", "{rewound}");
+}
+
+#[tokio::test]
+async fn zero_signs_in_to_a_remote_server_an_agent_adds_and_its_task_gets_the_token() {
+    let h = harness("server-mcp-oauth").await;
+    zerod::mcp_auth::start(h.daemon.clone(), h.inbox.clone());
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "configure", "takeBack": 0.02, "ttl": 600})).await;
+    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    until(&h.daemon.session(&session).unwrap(), |c| c.status == Status::Idle).await;
+    let challenge = "\n401|Bearer resource_metadata=\"https://docs.example/.well-known/oauth-protected-resource\"";
+    *h.web.answers.lock().unwrap() = vec![
+        challenge.into(),
+        challenge.into(),
+        "{\"authorization_servers\":[\"https://docs.example\"]}\n200|".into(),
+        "{\"authorization_endpoint\":\"https://docs.example/authorize\",\"token_endpoint\":\"https://docs.example/token\",\"registration_endpoint\":\"https://docs.example/register\"}\n200|".into(),
+        "{\"client_id\":\"zero-1\"}\n201|".into(),
+        "{\"access_token\":\"tok-1\",\"refresh_token\":\"ref-1\",\"expires_in\":3600}\n200|".into(),
+    ];
+
+    let asked = client
+        .call(json!({"op": "agentAsk", "session": session, "args": {"tool": "mcp", "name": "Docs", "url": "https://docs.example/mcp", "why": "the API docs"}}))
+        .await;
+    let id = asked["result"]["id"].as_str().unwrap_or_else(|| panic!("{asked}")).to_string();
+    client.call(json!({"op": "choose", "ask": id, "option": 0})).await;
+    let mut done = find_ask(&mut client, &id).await;
+    for _ in 0..200 {
+        if done["state"] == "answered" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        done = find_ask(&mut client, &id).await;
+    }
+    assert!(done["output"].as_str().unwrap_or_default().contains("needs signing in"), "{done}");
+
+    // Zero's own sign-in, asked of the user; until it's made the task isn't given the server.
+    let mut link = None;
+    for _ in 0..300 {
+        let asks = client.call(json!({"op": "asks"})).await["result"].clone();
+        link =
+            asks.as_array().unwrap().iter().find(|a| a["title"] == "Sign in to docs?").and_then(|a| a["link"].as_str().map(String::from));
+        if link.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let link = link.expect("a sign-in ask with its link");
+    assert!(link.starts_with("https://docs.example/authorize?") && link.contains("client_id=zero-1"), "{link}");
+    let claude = h.seen.lock().unwrap()[0].clone();
+    assert!(!claude.methods().iter().any(|m| m == "control_request:mcp_set_servers"), "not given before it's signed in to");
+
+    let query = |key: &str| link.split(&format!("{key}=")).nth(1).unwrap().split('&').next().unwrap().to_string();
+    let redirect = query("redirect_uri").replace("%3A", ":").replace("%2F", "/");
+    let port: u16 = redirect.trim_start_matches("http://127.0.0.1:").trim_end_matches("/callback").parse().unwrap();
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(format!("GET /callback?code=c0de&state={} HTTP/1.1\r\n\r\n", query("state")).as_bytes()).await.unwrap();
+    let mut page = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut stream, &mut page).await.unwrap();
+    assert!(page.contains("Zero signed in to docs"), "{page}");
+
+    // Signed in: the task has it, its token the header.
+    let set = claude.said("control_request:mcp_set_servers", 1).await;
+    assert_eq!(set[0]["request"]["servers"]["docs"]["headers"]["Authorization"], "Bearer tok-1", "{}", set[0]);
+    assert!(!claude.methods().iter().any(|m| m == "control_request:mcp_reconnect"), "changed, not reconnected without it");
+
+    // Deleted, its sign-in goes with it.
+    client.call(json!({"op": "deleteMcpServer", "server": "docs"})).await;
+    let token = std::fs::read_to_string(h.home.join("secrets.json")).unwrap();
+    assert!(!token.contains("tok-1"), "{token}");
+}
+
+#[tokio::test]
+async fn a_local_server_changed_on_disk_or_reloaded_starts_again_in_the_running_tasks() {
+    let h = harness("server-mcp-reload").await;
+    let mut client = Client::connect(&h.socket).await;
+    let program = h.home.join("tool-mcp");
+    std::fs::write(&program, "#!/bin/sh\n").unwrap();
+    client.call(json!({"op": "saveMcpServer", "server": {"name": "Tool", "command": program, "args": ["serve"]}})).await;
+    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    until(&h.daemon.session(&session).unwrap(), |c| c.status == Status::Idle).await;
+    let claude = h.seen.lock().unwrap()[0].clone();
+    let stamp =
+        |set: &Value| set["request"]["servers"]["tool"]["env"]["ZERO_MCP_STAMP"].as_str().unwrap_or_else(|| panic!("{set}")).to_string();
+
+    // Nothing changed: a message goes as it is.
+    client.call(json!({"op": "send", "session": session, "text": "again"})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(!claude.methods().iter().any(|m| m == "control_request:mcp_set_servers"));
+
+    // A new build of it: the next message finds it, and the server starts again (its config changed) before it.
+    std::fs::write(&program, "#!/bin/sh\n# a new build\n").unwrap();
+    client.call(json!({"op": "send", "session": session, "text": "and now?"})).await;
+    let first = stamp(&claude.said("control_request:mcp_set_servers", 1).await[0]);
+    let methods = claude.methods();
+    let set_at = methods.iter().position(|m| m == "control_request:mcp_set_servers").unwrap();
+    assert!(methods[set_at..].iter().any(|m| m == "user"), "before the message: {methods:?}");
+
+    // Reload in Settings: started again, whatever its files say.
+    let reloaded = client.call(json!({"op": "reloadMcpServer", "server": "tool"})).await;
+    assert_eq!(reloaded["ok"], true, "{reloaded}");
+    let second = stamp(&claude.said("control_request:mcp_set_servers", 2).await[1]);
+    assert_ne!(first, second);
+}
+
+#[tokio::test]
+async fn an_agent_says_which_workspaces_a_server_is_for_and_an_edit_keeps_them_unless_it_says() {
+    let h = harness("server-mcp-scope").await;
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "configure", "takeBack": 0.02, "ttl": 600})).await;
+    client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Elsewhere", "glyph": "", "folders": []}})).await;
+    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    until(&h.daemon.session(&session).unwrap(), |c| c.status == Status::Idle).await;
+    let approve = async |client: &mut Client, args: Value| {
+        let asked = client.call(json!({"op": "agentAsk", "session": session, "args": args})).await;
+        let id = asked["result"]["id"].as_str().unwrap_or_else(|| panic!("{asked}")).to_string();
+        let card = find_ask(client, &id).await;
+        client.call(json!({"op": "choose", "ask": id, "option": 0})).await;
+        for _ in 0..200 {
+            if find_ask(client, &id).await["state"] == "answered" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let kept = client.call(json!({"op": "mcpServers"})).await["result"][0]["workspaces"].clone();
+        (card["body"].as_str().unwrap().to_string(), kept)
+    };
+
+    let unknown = client
+        .call(json!({"op": "agentAsk", "session": session, "args": {"tool": "mcp", "name": "Docs", "command": "docs", "why": "docs", "workspaces": "nowhere"}}))
+        .await;
+    assert!(unknown["error"].as_str().unwrap_or_default().contains("elsewhere"), "says which there are: {unknown}");
+
+    let (body, kept) =
+        approve(&mut client, json!({"tool": "mcp", "name": "Docs", "command": "docs", "why": "docs", "workspaces": "all"})).await;
+    assert!(body.contains("for every workspace"), "{body}");
+    assert_eq!(kept, json!([]));
+
+    let (body, kept) = approve(&mut client, json!({"tool": "mcp", "name": "docs", "command": "docs2", "why": "a fix"})).await;
+    assert!(body.contains("Now: `docs2`, for every workspace"), "kept: {body}");
+    assert_eq!(kept, json!([]));
+
+    let (body, kept) =
+        approve(&mut client, json!({"tool": "mcp", "name": "docs", "command": "docs2", "why": "only there", "workspaces": "Elsewhere"}))
+            .await;
+    assert!(body.contains("for Elsewhere") && body.contains("Was: `docs2`, for every workspace"), "{body}");
+    assert_eq!(kept, json!(["elsewhere"]));
 }

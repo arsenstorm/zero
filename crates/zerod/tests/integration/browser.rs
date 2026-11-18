@@ -62,6 +62,7 @@ async fn zerod(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
             later: Arc::new(zerod::later::Later::open(&home.join("later"))),
             loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
             browsers: zerod::browser::Browsers::open(&home),
+            desktop: Default::default(),
             places: Default::default(),
             notices: tokio::sync::broadcast::channel(64).0,
             peers: std::sync::Arc::new(|_| true),

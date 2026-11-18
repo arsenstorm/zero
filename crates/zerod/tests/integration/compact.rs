@@ -42,6 +42,7 @@ async fn configure(home: &std::path::Path, daemon: &Arc<Daemon>, tokens: u64) {
             integrations: zerod::integrations::Integrations::open(home, commands()),
             following: zerod::following::Following::open(home, commands(), zerod::integrations::Integrations::open(home, commands())),
             browsers: zerod::browser::Browsers::open(home),
+            desktop: Default::default(),
             pads: Arc::new(zerod::pads::Pads::open(&home.join("scratchpads"))),
             later: Arc::new(zerod::later::Later::open(&home.join("later"))),
             loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),

@@ -155,6 +155,7 @@ import ZeroCore
     /// zerod's sessions, their notifications, and the phones that see them.
     private func connectWorkspace() {
         workspace = Workspace()
+        workspace.onLink = { link in Desktop.shared.attach(link) }
         // A worker opened by its id, however (a link, a card, a report), shows on its lead's page, as the sidebar opens it;
         // a worker's worker has no row there, and keeps its own page.
         navigation.leadOf = { [weak workspace] id in

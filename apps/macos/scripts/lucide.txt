@@ -38,6 +38,7 @@ command                  command
 compose                  square-pen
 copy                     copy                      outline
 crown                    crown                     outline glyph
+cursor-rays              mouse-pointer-click
 dots                     ellipsis                  glyph outline
 eye                      eye                       outline glyph
 file                     file

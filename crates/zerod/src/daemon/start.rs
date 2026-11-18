@@ -1,6 +1,7 @@
 //! Starting tasks: one of its own, or a lead's worker, checked, given its conversation, and its first turn begun.
 
 use super::*;
+use serde_json::{Value, json};
 
 impl Daemon {
     /// A session of its own (no lead) with `prompt` as its first turn; returns its id at once, while the runtime starts.
@@ -177,6 +178,171 @@ impl Daemon {
             && self.workspaces.list().iter().find(|w| w.id == workspace).is_none_or(|w| w.plain_answers != Some(false))
     }
 
+    /// Every running task given its workspace's MCP servers as they are now (a server saved, changed or deleted): see
+    /// `push_mcp`. Each on its own, so a Codex waiting out its turn holds up no one.
+    pub fn push_mcp_everywhere(self: &Arc<Self>) {
+        for session in self.sessions().into_iter().filter(Session::is_attached) {
+            let (me, id) = (self.clone(), session.id().to_string());
+            tokio::spawn(async move {
+                if let Err(error) = me.push_mcp(&id).await {
+                    eprintln!("zerod: couldn't give {id} its MCP servers: {error}")
+                }
+            });
+        }
+    }
+
+    /// An MCP server the user approved on an agent's ask (`zero mcp add`): kept, given to the asking task (`asker`)
+    /// and every other running task it's for, and what the asker is told of it.
+    pub async fn apply_mcp(self: &Arc<Self>, server: crate::mcp_servers::McpServer, asker: Option<&str>) -> Result<String, String> {
+        let saved = self.mcp_servers.save(server)?;
+        self.mcp_changed(&saved.id);
+        let kept = format!("Zero keeps the MCP server {} ({}).", saved.id, saved.describe());
+        let waits = self.mcp_waits(&saved).await;
+        let told = match (asker, self.session(asker.unwrap_or_default())) {
+            (Some(_), Ok(session)) if waits => {
+                session.change(Change::McpSignIn { server: saved.id.clone(), connector: false });
+                "It needs signing in: Zero asks the user to, and it's in this task's tools once they have.".into()
+            }
+            (Some(id), _) => self.given(id, &saved.id).await,
+            (None, _) => String::new(),
+        };
+        self.push_mcp_everywhere();
+        Ok(format!("{kept} {told}").trim_end().to_string())
+    }
+
+    /// A server's config changed: no stale "needs signing in" (Claude's cache in every home, this zerod's ended
+    /// sign-ins) hides the new one.
+    pub fn mcp_changed(&self, id: &str) {
+        crate::mcp_servers::clear_needs_auth(&self.home().join("claude-homes"), id);
+        self.mcp_auth.forget(id);
+    }
+
+    /// Whether a server waits for the user to sign in to it with Zero (asked of it once per URL): until then tasks
+    /// aren't given it.
+    pub async fn mcp_waits(&self, server: &crate::mcp_servers::McpServer) -> bool {
+        let (Some(url), Some(tokens)) = (&server.url, self.integrations.get()) else { return false };
+        if server.headers.iter().any(|h| h.name.eq_ignore_ascii_case("authorization")) {
+            return false;
+        }
+        match tokens.mcp_access(&server.id, url) {
+            Some(access) => access.is_none(),
+            None if tokens.mcp_needs_sign_in(url).await => {
+                tokens.mcp_waiting(&server.id, url);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether a running task has a local server that changed since it was given (a new build, or the user's Reload):
+    /// read from the files alone, so it's cheap before every message.
+    pub fn mcp_stale(&self, session: &Session) -> bool {
+        session.mcp().iter().any(|server| {
+            let given = server.env.iter().find(|(name, _)| name == crate::mcp_servers::STAMP).map(|(_, stamp)| stamp.clone());
+            given.is_some() && given != self.mcp_servers.stamp(server)
+        })
+    }
+
+    /// What a task is told of a server it was just given: its tools, or why it has none yet.
+    async fn given(&self, id: &str, server: &str) -> String {
+        let Ok(session) = self.session(id) else { return String::new() };
+        let conversation = session.summary();
+        if let Err(error) = self.push_mcp(id).await {
+            return format!("It didn't reach this task: {error}.");
+        }
+        if !self.mcp_for(&conversation).is_ok_and(|s| s.iter().any(|s| s.id == server)) {
+            return "It isn't for this task's workspace, so this task doesn't have it.".into();
+        }
+        match conversation.provider {
+            Provider::Codex => "Codex takes MCP servers only as it starts: Zero starts this task again with it at its next turn, \
+                                so its tools are yours from the message that brings you this."
+                .into(),
+            Provider::Opencode => format!("It's in this task's tools now, as {server}_<tool>."),
+            Provider::Claude if !session.is_attached() => "This task has it when it next starts.".into(),
+            Provider::Claude => {
+                let listed = claude_status(&session).await.into_iter().find(|s| s["name"] == server);
+                let Some(listed) = listed else { return "It's in this task's MCP servers now.".into() };
+                match listed["status"].as_str().unwrap_or_default() {
+                    "connected" => {
+                        let tools: Vec<String> = listed["tools"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|t| t["name"].as_str())
+                            .map(|t| format!("mcp__{server}__{t}"))
+                            .collect();
+                        if tools.is_empty() {
+                            "It's connected, and lists no tools.".into()
+                        } else {
+                            format!("Its tools are yours now: {}.", tools.join(", "))
+                        }
+                    }
+                    "needs-auth" => "It needs signing in: Zero asks the user to, and it connects once they have.".into(),
+                    other => {
+                        format!("It didn't connect ({other}){}.", listed["error"].as_str().map(|e| format!(": {e}")).unwrap_or_default())
+                    }
+                }
+            }
+        }
+    }
+
+    /// A running task's CLI given its workspace's MCP servers as they are now, if they changed: Claude Code and
+    /// OpenCode take the whole list mid-session (a server given as before keeps running); Codex can't, so its process
+    /// stops once its turn is over, and its next message starts it again with them. True if they changed.
+    pub async fn push_mcp(&self, id: &str) -> Result<bool, String> {
+        let session = self.session(id)?;
+        let conversation = session.summary();
+        if !session.is_attached() {
+            return Ok(false);
+        }
+        let servers = self.mcp_for(&conversation)?;
+        if servers == session.mcp() {
+            return Ok(false);
+        }
+        match conversation.provider {
+            Provider::Claude => {
+                let list = claude::mcp_servers(&servers);
+                let answer = session
+                    .request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "mcp_set_servers", "servers": list}}))
+                    .await?;
+                if let Some(errors) = answer["errors"].as_object().filter(|e| !e.is_empty()) {
+                    eprintln!("zerod: {id}'s Claude Code couldn't take some MCP servers: {}", Value::Object(errors.clone()))
+                }
+                // A server given mid-session that needs signing in says so only here, never on its own.
+                for listed in claude_status(&session).await {
+                    if listed["status"] == "needs-auth"
+                        && let Some(name) = listed["name"].as_str().filter(|n| servers.iter().any(|s| s.id == *n))
+                    {
+                        session.change(Change::McpSignIn { server: name.into(), connector: false });
+                    }
+                }
+            }
+            Provider::Opencode => {
+                let thread = conversation.thread.clone().ok_or("OpenCode has no session yet")?;
+                let params = json!({"sessionId": thread, "cwd": conversation.cwd, "mcpServers": crate::acp::mcp_servers(&servers)});
+                session.request(|id| json!({"jsonrpc": "2.0", "id": id, "method": "session/resume", "params": params})).await?;
+            }
+            Provider::Codex => {
+                let mut events = self.subscribe();
+                while self.summary(id).is_some_and(|c| c.turn.is_some()) {
+                    if let Err(broadcast::error::RecvError::Closed) = events.recv().await {
+                        return Ok(false);
+                    }
+                }
+                // Its turn may have ended in a stop, or a newer push already taken it offline with the same list.
+                if !session.is_attached() || self.mcp_for(&self.summary(id).unwrap_or(conversation))? == session.mcp() {
+                    return Ok(false);
+                }
+                // ponytail: a message that starts a turn between this check and the stop is cut short; a lock on the
+                // session's sends would close it if that's ever seen.
+                self.take_offline(&session).await;
+                return Ok(true);
+            }
+        }
+        session.set_mcp(servers);
+        Ok(true)
+    }
+
     /// What a session's CLI starts with: its sign-in (signins.rs) and its workspace's MCP servers, their values read
     /// (the Keychain's now). Both go in its process's environment alone: the sign-in as its CLI reads one, Claude's
     /// MCP values for its `--mcp-config` to refer to. A sign-in gone from the Keychain stops the start, said.
@@ -184,6 +350,11 @@ impl Daemon {
         let workspace = self.workspace_of(conversation);
         let mut servers: Vec<_> =
             self.mcp_servers.for_workspace(&workspace).iter().map(|s| s.resolve(&crate::mcp_servers::keychain)).collect();
+        for server in &mut servers {
+            if let Some(stamp) = self.mcp_servers.stamp(server) {
+                server.env.push((crate::mcp_servers::STAMP.into(), stamp))
+            }
+        }
         // Zero's own tools (scratchpads, the browser: `zerod mcp`), for the CLIs that don't have them from Zero's plugin
         // as Claude Code does. Told which task it serves; Codex gives a server only the variables it's given.
         if conversation.provider != Provider::Claude
@@ -201,6 +372,22 @@ impl Daemon {
                     headers: vec![],
                 },
             );
+        }
+        // Zero's sign-ins: a server's token as its header, for the URL it was made for; one waiting for the user left
+        // out until it's made.
+        if let Some(tokens) = self.integrations.get() {
+            servers.retain_mut(|server| {
+                let Some(url) = server.url.clone().filter(|_| !server.headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("authorization")))
+                else {
+                    return true;
+                };
+                match tokens.mcp_access(&server.id, &url) {
+                    Some(Some(token)) => server.headers.push(("Authorization".into(), format!("Bearer {token}"))),
+                    Some(None) => return false,
+                    None => {}
+                }
+                true
+            });
         }
         let mut env = match conversation.signin.as_deref().and_then(|id| self.signins.get(id)) {
             Some(signin) => self.signins.environment(&signin)?,
@@ -329,4 +516,10 @@ fn new_folder(base: &Path, prompt: &str) -> std::io::Result<std::path::PathBuf> 
         }
     }
     unreachable!()
+}
+
+/// Claude Code's MCP servers as it has them now (`mcp_status`): settled, as `mcp_set_servers` waits for them.
+async fn claude_status(session: &Session) -> Vec<Value> {
+    let status = session.request(|id| json!({"type": "control_request", "request_id": id, "request": {"subtype": "mcp_status"}})).await;
+    status.ok().and_then(|s| s["mcpServers"].as_array().cloned()).unwrap_or_default()
 }

@@ -468,6 +468,8 @@ struct AskDock: View, Equatable {
         }
         .id(id)
         .environment(\.askDocked, true)
+        // The user's to answer: never an agent's, through the desktop tools.
+        .agentProof()
     }
 }
 

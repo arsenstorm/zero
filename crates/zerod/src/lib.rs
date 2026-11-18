@@ -16,6 +16,7 @@ pub mod codex;
 pub mod codex_login;
 pub mod core;
 pub mod daemon;
+pub mod desktop;
 pub mod firefox;
 pub mod following;
 pub mod git;

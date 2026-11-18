@@ -138,7 +138,7 @@
             Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     for w in NSApp.windows where w.isVisible && NSScreen.screens.contains(where: { $0.frame.intersects(w.frame) }) {
-                        self?.seenOnScreen.insert("\(type(of: w)) \(w.title)")
+                        self?.seenOnScreen.insert("\(type(of: w)) \(w.title) \(w.frame) after \"\(self?.results.last?.0 ?? "the start")\"")
                     }
                     // Zero Dev Browser's too (its dialogs), from the window server, in its coordinates.
                     var count: UInt32 = 0
@@ -243,6 +243,15 @@
             app.navigation.place = .task(id)
             app.navigation.pane = false
             DevWindow.driven = true
+            // Found on a display: failed here at once, named by the check it came after (and put back by DevWindow).
+            var sighted = false
+            DevWindow.sighted = { [weak self] how in
+                guard let self, !sighted else { return }
+                sighted = true
+                let after = results.last?.0 ?? "the start"
+                check("Zero Dev's window stayed off every display", false, "\(how), after \"\(after)\"", how: "event")
+            }
+            (window as? DevWindow)?.putBack("before the checks")
             await pause(1.5)
             check(
                 "The workspace window is key to Zero Dev, which never becomes the active app", window.isKeyWindow && !NSApp.isActive,
@@ -255,13 +264,19 @@
             await keys(window)
             await linkGroups(workspace, window)
             bareReferences(workspace)
+            await effortSlider()
+            await askPaste(window)
             await agentDrives()
+            await desktopDrives(window)
             check("Zero Dev never became the active app", !NSApp.isActive, "active \(NSApp.isActive)", how: "call")
             // Nothing of Zero Dev's on any display: its windows, panels and menus.
             let shown = NSApp.windows.filter { w in w.isVisible && NSScreen.screens.contains { $0.frame.intersects(w.frame) } }
+            // Stationary too: Mission Control and App Exposé show any other window of the Space on the user's screen.
+            let stays = window.collectionBehavior.contains(.stationary)
             check(
-                "No Zero Dev window was on any display", shown.isEmpty && seenOnScreen.isEmpty,
-                "now: \(shown.map { "\(type(of: $0)) \($0.frame)" }); during: \(seenOnScreen)", how: "call")
+                "No Zero Dev window was on any display, and its window stays out of Mission Control",
+                shown.isEmpty && seenOnScreen.isEmpty && stays,
+                "now: \(shown.map { "\(type(of: $0)) \($0.frame)" }); during: \(seenOnScreen); stationary \(stays)", how: "call")
             resetTabs()
             await workspace.archive(task)
             finish()
@@ -973,11 +988,14 @@
             guard let window = page.view.window else { return }
             let height = NSScreen.screens.first?.frame.height ?? 0
             let pageRect = page.view.convert(page.view.bounds, to: nil)
+            // On the tab shown, by its icon (clear of its ×): the strip is in the title bar's row, where a click beside a
+            // tab would start a window drag.
+            let tab = PanelTabStrip.devSelected
             let spots: [(String, NSPoint)] = [
                 ("conversation", NSPoint(x: pageRect.minX - 200, y: pageRect.midY)),
                 ("composer", NSPoint(x: pageRect.minX - 200, y: 40)),
                 ("sidebar", NSPoint(x: 40, y: pageRect.midY - 120)),
-                ("panel tabs", NSPoint(x: pageRect.maxX - 40, y: window.frame.height - 12)),
+                ("panel tabs", NSPoint(x: tab.minX + 14, y: (window.contentView?.bounds.height ?? 0) - tab.midY)),
             ]
             var lines: [String] = []
             var allGood = true
@@ -1003,10 +1021,17 @@
                     d?["transient"] as? Bool == true && sh?["transient"] as? Bool == true && d?["managed"] as? Bool == false
                     && sh?["managed"] as? Bool == false && d?["level"] as? Int == 0 && sh?["level"] as? Int == 0
                 let keeps = d?["keepsZeroActive"] as? Bool == true && sh?["keepsZeroActive"] as? Bool == true
+                // Zero Dev's own are stationary instead, out of Mission Control (transient is what Zero's get).
+                let stays = d?["stationaryInDev"] as? Bool == true && sh?["stationaryInDev"] as? Bool == true
                 var line =
-                    "round \(round) (\(hooked ? "reported" : "unreported")): placed \(placed), transient \(transient), non-activating \(keeps)"
-                var good = placed && transient && keeps
+                    "round \(round) (\(hooked ? "reported" : "unreported")): placed \(placed), transient \(transient), non-activating \(keeps), stationary in Zero Dev \(stays)"
+                var good = placed && transient && keeps && stays
                 for (name, spot) in spots {
+                    if name == "panel tabs" && tab.isEmpty {
+                        line += "; panel tabs: no tab's place known"
+                        good = false
+                        continue
+                    }
                     let place = app.navigation.place, selected = Panels.shared.tabs(task).selected
                     guard let dialog = dialogNumber() else {
                         line += "; \(name): no dialog"
@@ -1042,7 +1067,8 @@
             }
             check(
                 "Five rounds of a dialog: placed on its tab, transient, non-activating; no sample covered or off the tab after clicks around Zero",
-                allGood, lines.joined(separator: " | "), how: "event, window list")
+                allGood, lines.joined(separator: " | ") + " | panel tabs clicked at \(spots[3].1), on the tab shown \(tab)",
+                how: "event, window list")
         }
 
         // MARK: Keys and mouse buttons
@@ -1234,6 +1260,267 @@
         }
 
         // MARK: Agents
+
+        /// A desktop_ call of this task's, through zerod to Zero Dev (attached as its desktop): what zerod answers.
+        func desktop(_ tool: String, _ args: [String: Any] = [:]) async -> (ok: Bool, text: String) {
+            guard let link = try? ZerodLink() else { return (false, "no zerod") }
+            defer { link.close() }
+            do {
+                let r = try await link.call("desktopCall", ["session": task, "tool": tool, "args": args]) as? [String: Any]
+                return (true, (r?["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n"))
+            } catch { return (false, "\(error)") }
+        }
+
+        /// The ref of the first line of a desktop_read with all these words.
+        func ref(in lines: String, _ words: String...) -> String? {
+            guard
+                let line = lines.split(separator: "\n").first(where: { line in
+                    words.allSatisfy { line.localizedCaseInsensitiveContains($0) }
+                }),
+                let found = line.range(of: #"\[e\d+\]"#, options: .regularExpression)
+            else { return nil }
+            return String(line[found].dropFirst().dropLast())
+        }
+
+        /// An agent uses Zero Dev's own window through the desktop tools: allowed on the card, it reads the window and
+        /// moves around it through accessibility (no permission needed for an app's own tree, so nothing asks the
+        /// system); the composer, an ask's card and Settings refuse it. Nothing here posts events or captures the screen.
+        func desktopDrives(_ window: NSWindow) async {
+            app.navigation.place = .task(task)
+            let listed = await desktop("desktop_apps")
+            check(
+                "Zero Dev is zerod's desktop: desktop_apps answers",
+                listed.ok && listed.text.contains("Accessibility:") && listed.text.contains("Screen: unlocked"),
+                String(listed.text.prefix(120)), how: "call")
+            let started = Date()
+            var took = 0
+            let reading = Task {
+                let read = await self.desktop("desktop_read", ["app": "com.arsen.zero.dev"])
+                took = Int(Date().timeIntervalSince(started) * 1000)
+                return read
+            }
+            var card: Ask?
+            _ = await until(5) {
+                card = self.app.store.open.first { $0.title.contains("use Zero Dev") }
+                return card != nil
+            }
+            if let card, let allow = card.options.firstIndex(of: "Allow for this task") { app.store.choose(card.id, option: allow) }
+            let read = await reading.value
+            check(
+                "The user allows Zero Dev for the task on a card, and desktop_read gives its window's tree",
+                card != nil && read.ok && read.text.contains("[e"),
+                "card \(card?.title ?? "none"); card to tree \(took) ms, \(read.text.split(separator: "\n").count) lines; \(read.text.prefix(160))",
+                how: "call")
+            // The composer is the user's voice: agents reach a task with zero send, never by typing as the user.
+            let composer = ref(in: read.text, "text area") ?? ref(in: read.text, "text field")
+            let typed = await desktop(
+                "desktop_type", ["app": "com.arsen.zero.dev", "ref": composer ?? "e0", "text": "typed by the desktop"])
+            let landed = views(NSTextView.self, in: window.contentView).contains { $0.string.contains("typed by the desktop") }
+            check(
+                "An agent can't type into the user's composer", composer != nil && typed.text.contains("act on Zero") && !landed,
+                "ref \(composer ?? "none"): \(typed.text.prefix(100)), landed \(landed)", how: "call")
+            // Navigation stays the agent's: the sidebar's Scratchpads, pressed through accessibility, opens them.
+            let pads = ref(in: read.text, "Scratchpads")
+            let went = await desktop("desktop_click", ["app": "com.arsen.zero.dev", "ref": pads ?? "e0"])
+            let moved = await until(3) { self.app.navigation.place == .pads }
+            check(
+                "An agent can still move around Zero: a sidebar link pressed opens its page", pads != nil && went.ok && moved,
+                "ref \(pads ?? "none"): \(went.text.prefix(100)), at \(self.app.navigation.place)", how: "call")
+            app.navigation.place = .task(task)
+            await pause(0.3)
+            let asked = try? await ZerodLink().call(
+                "agentAsk",
+                ["session": task, "args": ["tool": "ask", "question": "Ship the desktop check?", "options": ["Ship it", "Hold"]]])
+            _ = await until(5) { self.app.store.open.contains { $0.title == "Ship the desktop check?" } }
+            await pause(0.5)
+            let again = await desktop("desktop_read", ["app": "com.arsen.zero.dev"])
+            let ship = ref(in: again.text, "Ship it")
+            let pressed = await desktop("desktop_click", ["app": "com.arsen.zero.dev", "ref": ship ?? "e0"])
+            let open = app.store.open.contains { $0.title == "Ship the desktop check?" && $0.state == .waiting }
+            check(
+                "An agent can't press an ask's own buttons in Zero",
+                ship != nil && !pressed.ok && pressed.text.contains("act on Zero") && open,
+                "ref \(ship ?? "none"), \(pressed.text.prefix(120)), still open \(open)", how: "call")
+            // By where it is, as much as by its ref: x and y on the card refuse too, before any event is made.
+            let at = center(in: again.text, "Ship it")
+            let clicked = await desktop("desktop_click", ["app": "com.arsen.zero.dev", "x": at?.x ?? 0, "y": at?.y ?? 0])
+            check(
+                "Nor click it by x and y", at != nil && clicked.text.contains("act on Zero"),
+                "at \(String(describing: at)): \(clicked.text.prefix(100))",
+                how: "call")
+            // Nor drag onto it: both ends are checked before anything moves.
+            let dragged = await desktop(
+                "desktop_drag", ["app": "com.arsen.zero.dev", "from": ["x": 40, "y": 200], "to": ["x": at?.x ?? 0, "y": at?.y ?? 0]])
+            check("Nor drag onto it", at != nil && dragged.text.contains("act on Zero"), String(dragged.text.prefix(100)), how: "call")
+            if let id = (asked as? [String: Any])?["id"] as? String { app.store.choose(id, option: 1) }
+
+            // A picture of Zero Dev's own window, drawn by itself (no permission), one pixel per point.
+            let shot =
+                try? await ZerodLink().call(
+                    "desktopCall", ["session": task, "tool": "desktop_screenshot", "args": ["app": "com.arsen.zero.dev"]]) as? [String: Any]
+            let parts = shot?["content"] as? [[String: Any]] ?? []
+            let image = (parts.first { $0["type"] as? String == "image" }?["data"] as? String).flatMap { Data(base64Encoded: $0) }
+                .flatMap(NSBitmapImageRep.init(data:))
+            let colours =
+                image.map { rep in
+                    Set(
+                        stride(from: 0, to: rep.pixelsWide, by: 37).flatMap { x in
+                            stride(from: 0, to: rep.pixelsHigh, by: 41).compactMap {
+                                rep.colorAt(x: x, y: $0)?.usingColorSpace(.deviceRGB)?.redComponent
+                            }
+                        }
+                    ).count
+                } ?? 0
+            let frame = window.frame.size
+            check(
+                "desktop_screenshot gives Zero Dev's window as Zero draws it, a pixel a point",
+                image?.pixelsWide == Int(frame.width) && image?.pixelsHigh == Int(frame.height) && colours > 3,
+                "\(image.map { "\($0.pixelsWide)x\($0.pixelsHigh)" } ?? "no image") for a \(Int(frame.width))x\(Int(frame.height)) window, \(colours) shades; \(parts.compactMap { $0["text"] as? String }.joined().prefix(100))",
+                how: "call")
+            // A film needs Screen Recording, which Zero Dev never has: it says so, and asks the system nothing.
+            let film = await desktop("desktop_record", ["app": "com.arsen.zero.dev", "action": "start"])
+            check(
+                "desktop_record without Screen Recording says to ask the user", film.text.contains("Screen Recording permission"),
+                String(film.text.prefix(120)), how: "call")
+
+            // Settings are the user's: read, yes; pressed, no.
+            app.navigation.place = .settings
+            var settings = (ok: false, text: "")
+            var button: String?
+            _ = await until(5) {
+                settings = await self.desktop("desktop_read", ["app": "com.arsen.zero.dev"])
+                button = self.ref(in: settings.text, "button")
+                return button != nil
+            }
+            let inSettings = await desktop("desktop_click", ["app": "com.arsen.zero.dev", "ref": button ?? "e0"])
+            check(
+                "An agent can't act in Zero's Settings", button != nil && inSettings.text.contains("act on Zero"),
+                "ref \(button ?? "none, read: \(settings.text.prefix(300))"): \(inSettings.text.prefix(100))", how: "call")
+            app.navigation.place = .task(task)
+            await pause(0.3)
+
+            // The control bar's Stop: what drives is shown, Stop takes the desktop back, and the task is told once.
+            _ = await desktop("desktop_read", ["app": "com.arsen.zero.dev"])
+            let shown = Desktop.shared.driving
+            Desktop.shared.stop()
+            await pause(0.3)
+            let stopped = await desktop("desktop_read", ["app": "com.arsen.zero.dev"])
+            check(
+                "Stop takes the desktop back from the task", shown?.app == "Zero Dev" && stopped.text.contains("stopped"),
+                "driving \(shown.map { "\($0.task) in \($0.app)" } ?? "nothing"): \(stopped.text.prefix(100))", how: "call")
+        }
+
+        /// The middle of the first element with these words in a desktop_read, in the window's points.
+        func center(in lines: String, _ words: String...) -> (x: Double, y: Double)? {
+            guard
+                let line = lines.split(separator: "\n").first(where: { line in
+                    words.allSatisfy { line.localizedCaseInsensitiveContains($0) }
+                }),
+                let found = line.range(of: #"(-?\d+),(-?\d+) (\d+)x(\d+)"#, options: .regularExpression)
+            else { return nil }
+            let n = line[found].split(whereSeparator: { $0 == "," || $0 == " " || $0 == "x" }).compactMap { Double($0) }
+            return n.count == 4 ? (n[0] + n[2] / 2, n[1] + n[3] / 2) : nil
+        }
+
+        /// The model selector's effort slider, read from what the selector would show (it never opens here): the level
+        /// its chip names, and a level slid to, on the new task page with no model picked and on a task.
+        func effortSlider() async {
+            let selector = WorkspaceSelector.shared
+            func shown(_ chip: String) -> (state: SelectorState, row: SelectorRow)? {
+                selector.devShown = nil
+                selector.devChips[chip]?()
+                guard let state = selector.devShown, let row = state.sections.flatMap(\.rows).first(where: \.selected) else { return nil }
+                return (state, row)
+            }
+            // Levels that aren't the model's default, so the default showing instead fails.
+            let first = ComposerRows.catalogue(.claude).first
+            let others = (first?.levels ?? []).map(\.id).filter { $0 != first?.defaultLevel }
+            guard others.count >= 2 else {
+                return check("Claude's first model has effort levels", false, "\(first?.id ?? "none")", how: "call")
+            }
+            let defaults = UserDefaults.standard
+            let provider = defaults.string(forKey: "workspaceProvider"), kept = NewTaskChoice.kept(for: .claude)
+            defaults.set("claude", forKey: "workspaceProvider")
+            NewTaskChoice.keep(.claude, model: "", effort: others[0])
+            app.navigation.place = .home
+            await pause(0.8)
+            let new = shown("new.agent")
+            let opened = new.flatMap { $0.state.level(of: $0.row) }
+            new.map { $0.state.slide(to: others[1], on: $0.row) }
+            let slid = new.flatMap { $0.state.level(of: $0.row) }
+            check(
+                "New task, no model picked: the effort slider shows the chip's level and slides",
+                opened == others[0] && slid == others[1] && NewTaskChoice.kept(for: .claude).effort == others[1],
+                "\(new?.row.id ?? "no selector (chips: \(selector.devChips.keys.sorted()))"): opened at \(opened ?? "nil") (chip \(others[0])), slid to \(slid ?? "nil"), kept \(NewTaskChoice.kept(for: .claude).effort)",
+                how: "call")
+            NewTaskChoice.keep(.claude, model: kept.model, effort: kept.effort, advisor: kept.advisor)
+            if let provider {
+                defaults.set(provider, forKey: "workspaceProvider")
+            } else {
+                defaults.removeObject(forKey: "workspaceProvider")
+            }
+
+            app.navigation.place = .task(task)
+            await pause(0.8)
+            let chip = "task.\(task).agent"
+            let open = shown(chip)
+            let level = open.flatMap { s in s.row.levels.map(\.id).first { $0 != s.state.level(of: s.row) } }
+            if let open, let level { open.state.slide(to: level, on: open.row) }
+            let moved = open.flatMap { $0.state.level(of: $0.row) }
+            await pause(0.3)
+            let again = shown(chip).flatMap { $0.state.level(of: $0.row) }
+            check(
+                "A task's effort slider moves to the level slid to, and opens on it again",
+                level != nil && moved == level && again == level,
+                "\(open?.row.id ?? "no selector"): slid to \(level ?? "nil"), shows \(moved ?? "nil"), reopened at \(again ?? "nil")",
+                how: "call")
+        }
+
+        /// An image pasted (⌘V) into an ask's "Something else…": a tile over the words in the box, not its path; the
+        /// answer the agent reads keeps the path. The paste reads a pasteboard of the checks' own, never the user's.
+        func askPaste(_ window: NSWindow) async {
+            app.navigation.place = .task(task)
+            let asked =
+                try? await ZerodLink().call(
+                    "agentAsk",
+                    [
+                        "session": task,
+                        "args": ["tool": "ask", "question": "Paste a picture?", "options": ["All right", "Something else…"]],
+                    ])
+                as? [String: Any]
+            guard let id = asked?["id"] as? String, await until(5, { self.app.store.ask(id) != nil }) else {
+                return check("An ask to paste into", false, "\(String(describing: asked))", how: "call")
+            }
+            app.inbox.drafts[id] = "broken:"
+            app.inbox.choose(1, on: id)
+            await pause(0.6)
+            let board = NSPasteboard(name: .init("com.arsen.zero.dev.e2e"))
+            board.clearContents()
+            board.writeObjects([
+                NSImage(size: NSSize(width: 8, height: 8), flipped: false) {
+                    NSColor.red.setFill(); $0.fill(); return true
+                }
+            ])
+            Attachments.pasteboard = board
+            await key(9, "v", .command)
+            Attachments.pasteboard = .general
+            let draft = app.inbox.drafts[id] ?? ""
+            let pasted = PastedImages.split(draft, folder: Attachments.folder.path)
+            let fields =
+                views(NSTextView.self, in: window.contentView).map(\.string)
+                + views(NSTextField.self, in: window.contentView).map(\.stringValue)
+            let field = fields.first { $0.contains("broken:") }
+            check(
+                "An image pasted into an ask's Something else… is a tile, its path not in the field",
+                pasted.words == "broken:" && pasted.images.count == 1 && field != nil && field?.contains("/attachments/") == false,
+                "draft \(draft); field \(field ?? "not found")", how: "event")
+            app.inbox.send(id)
+            _ = await until(3) { self.app.store.ask(id)?.answer != nil }
+            let answer = app.store.ask(id)?.answer ?? ""
+            check(
+                "The answer the agent reads keeps the pasted image's path", !pasted.images.isEmpty && answer.contains(pasted.images[0]),
+                answer, how: "call")
+        }
 
         /// An agent of this task drives Zero Browser through zerod, and its tab shows in the task's panel.
         func agentDrives() async {

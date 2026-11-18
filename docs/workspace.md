@@ -90,6 +90,33 @@ What each one taught:
   in the workspace's privacy settings; `opencode-go/beam-free` works as configured. Models and effort are session
   config options.
 
+## MCP servers
+
+The user keeps MCP servers in Zero (`mcp_servers.rs`). Each task's CLI gets its workspace's servers as it starts, and
+again whenever they change while it runs (`push_mcp` in `daemon/start.rs`). zerod gives the whole list each time, and
+a server given the same as before keeps running:
+
+| | Mid-session | Tool names |
+|---|---|---|
+| Claude Code | control request `mcp_set_servers`, mid-turn too; a changed entry restarts that server | `mcp__<server>__<tool>` |
+| OpenCode | `session/resume` with `mcpServers` on the live connection | `<server>_<tool>` |
+| Codex | none: its process stops after its turn, and the next message resumes it with the new list | `mcp__<server>__<tool>` |
+
+- **Agents ask for them.** `zero mcp add` (and the `zero_mcp` tool) proposes a new server or a change to one on an
+  ask. Once the user approves, zerod saves it and gives it to every running task of that workspace. The ask's answer
+  names the tools that arrived. Only asks that zerod made are applied (`Inbox::create_mcp`).
+- **Local servers that change start again.** A local server's environment has `ZERO_MCP_STAMP`, made from its
+  command's and arguments' files and the user's Reloads. A new build, or Reload in Settings, changes the stamp, so the
+  server starts again before the task's next message.
+- **Zero signs in to remote servers** (`integrations/mcp_oauth.rs`), in place of the CLIs (`claude -p` can't): MCP's
+  OAuth with dynamic client registration and PKCE. The token is kept in the vault for the server's URL alone, and
+  the CLIs get it as an `Authorization` header. A server that waits for a sign-in isn't given to tasks. A server given
+  without a token makes Claude Code note it in `mcp-needs-auth-cache.json` (shared by every Claude home, by name) and
+  skip it for 15 minutes. A changed server's name is cleared from that file. Tokens are refreshed before they run out.
+  The token is in each CLI's environment, as Keychain values are; a zerod stdio bridge would keep it from agents.
+- **Transcripts keep no values.** Environment and header values are taken out of every recorded line that carries
+  servers (`mcp_servers::redacted`).
+
 ## Order of work
 
 1. **Done.** The monorepo layout (README.md). zerod with Codex, Claude Code and OpenCode behind one adapter trait:

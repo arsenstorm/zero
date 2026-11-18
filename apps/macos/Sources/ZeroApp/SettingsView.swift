@@ -17,7 +17,8 @@ struct SettingsView: View {
 
     enum Page: String, CaseIterable, Identifiable {
         case general = "General", inbox = "Inbox", bar = "Control bar", devices = "Phone"
-        case agents = "Agents", signins = "Accounts and models", git = "Git", chrome = "Browsers", mcp = "MCP servers"
+        case agents = "Agents", signins = "Accounts and models", git = "Git", chrome = "Browsers", desktop = "Desktop"
+        case mcp = "MCP servers"
         case workspaces = "Workspaces", github = "GitHub", linear = "Linear", slack = "Slack"
         var id: String { rawValue }
         /// One each, none shared: the sidebar is scanned by its icons.
@@ -31,6 +32,7 @@ struct SettingsView: View {
             case .signins: "circle-user"
             case .git: "code-branch"
             case .chrome: "globe"
+            case .desktop: "cursor-rays"
             case .mcp: "plug"
             case .workspaces: "suitcase"
             case .github, .linear, .slack: ""
@@ -44,7 +46,8 @@ struct SettingsView: View {
         /// Then what agents run with (the tools they use among them), how the work is laid out, and the services Zero
         /// connects to.
         static let groups: [(String, [Page])] = [
-            ("Agents", [.agents, .signins, .git, .chrome, .mcp]), ("Work", [.workspaces]), ("Connections", [.github, .linear, .slack]),
+            ("Agents", [.agents, .signins, .git, .chrome, .desktop, .mcp]), ("Work", [.workspaces]),
+            ("Connections", [.github, .linear, .slack]),
         ]
     }
     /// The page open, kept in the window's history (Navigation) so back and forward go between pages; on its own
@@ -187,6 +190,7 @@ struct SettingsView: View {
         case .signins: SignInsPage(workspace: workspace)
         case .git: GitPage()
         case .chrome: if let workspace { BrowserRows(workspace: workspace) }
+        case .desktop: DesktopPage()
         case .mcp: McpServersPage(workspace: workspace)
         case .workspaces:
             Sections {

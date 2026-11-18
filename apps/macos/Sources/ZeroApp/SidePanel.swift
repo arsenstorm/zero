@@ -11,6 +11,11 @@ import ZeroCore
 /// Details, the task's browser tabs, +: from the panel's left edge, in the title bar's row.
 struct PanelTabStrip: View {
     let task: String
+    #if ZERO_DEV
+        /// The tab shown, in the window's content (top-left origin): where DevE2E clicks the strip, on a tab, never on
+        /// the title bar around it (a drag).
+        static var devSelected = CGRect.zero
+    #endif
 
     var body: some View {
         let tabs = Panels.shared.tabs(task)
@@ -102,6 +107,13 @@ private struct PanelTabButton: View {
         .buttonStyle(.plain).onHover { hovered = $0 }
         .fixedSize(horizontal: fixed, vertical: false)
         .tip(agent ? "Opened by its agent" : "")
+        #if ZERO_DEV
+            .onGeometryChange(for: CGRect?.self) {
+                selected ? $0.frame(in: .global) : nil
+            } action: {
+                if let frame = $0 { PanelTabStrip.devSelected = frame }
+            }
+        #endif
     }
 }
 
