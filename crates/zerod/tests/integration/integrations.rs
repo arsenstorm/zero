@@ -212,6 +212,7 @@ async fn connected_as(
             later: Arc::new(zerod::later::Later::open(&home.join("later"))),
             loops: Arc::new(zerod::loops::Loops::open(&home.join("loops"))),
             browsers: zerod::browser::Browsers::open(&home),
+            desktop: Default::default(),
             places: Default::default(),
             notices: tokio::sync::broadcast::channel(64).0,
             peers,
@@ -589,4 +590,94 @@ fn an_approval_spent_stays_spent_across_a_restart() {
     assert!(!integrations.spend("abc123"));
     assert!(!Integrations::open(&home, canned(vec![])).spend("abc123"), "a restarted zerod remembers it");
     assert!(Integrations::open(&home, canned(vec![])).spend("def456"));
+}
+
+/// What curl prints for a request Zero's MCP sign-in makes: the body, then its status and WWW-Authenticate.
+fn printed(body: &str, status: u16, authenticate: &str) -> Result<String, String> {
+    Ok(format!("{body}\n{status}|{authenticate}"))
+}
+
+#[tokio::test]
+async fn zero_signs_in_to_an_mcp_server_and_keeps_its_token_for_that_url_alone() {
+    let fetcher = Arc::new(Canned {
+        answers: Mutex::new(vec![
+            // The server asks for a token (asked once to know, again as the sign-in starts), and says where its
+            // sign-in is described.
+            printed("", 401, r#"Bearer resource_metadata="https://mcp.example/.well-known/oauth-protected-resource/mcp""#),
+            printed("", 401, r#"Bearer resource_metadata="https://mcp.example/.well-known/oauth-protected-resource/mcp""#),
+            printed(
+                r#"{"resource":"https://mcp.example/mcp","authorization_servers":["https://auth.example/tenant"],"scopes_supported":["read","write"]}"#,
+                200,
+                "",
+            ),
+            printed(
+                r#"{"issuer":"https://auth.example/tenant","authorization_endpoint":"https://auth.example/authorize","token_endpoint":"https://auth.example/token","registration_endpoint":"https://auth.example/register"}"#,
+                200,
+                "",
+            ),
+            printed(r#"{"client_id":"zero-1"}"#, 201, ""),
+            printed(r#"{"access_token":"tok-1","refresh_token":"ref-1","expires_in":60}"#, 200, ""),
+            // Refreshed before it runs out: a new access token, the refresh token kept.
+            printed(r#"{"access_token":"tok-2","expires_in":120}"#, 200, ""),
+            // Refused: the token is let go, and the next sign-in starts afresh.
+            printed(r#"{"error":"invalid_grant"}"#, 400, ""),
+        ]),
+        ..Default::default()
+    });
+    let home = temp_dir("integrations-mcp-oauth");
+    let integrations = Integrations::open(&home, fetcher.clone());
+    let url = "https://mcp.example/mcp";
+    assert!(integrations.mcp_needs_sign_in(url).await, "a 401 with a Bearer challenge");
+    integrations.mcp_waiting("docs", url);
+    assert_eq!(integrations.mcp_access("docs", url), Some(None), "waiting for the user");
+
+    let (page, opened) = tokio::sync::oneshot::channel();
+    let signing = tokio::spawn({
+        let integrations = integrations.clone();
+        async move { integrations.mcp_sign_in("docs", url, page).await }
+    });
+    let link = opened.await.unwrap();
+    assert!(link.starts_with("https://auth.example/authorize?"), "{link}");
+    for part in ["client_id=zero-1", "code_challenge_method=S256", "resource=https%3A%2F%2Fmcp.example%2Fmcp", "scope=read%20write"] {
+        assert!(link.contains(part), "{part} in {link}");
+    }
+    let query = |key: &str| link.split(&format!("{key}=")).nth(1).unwrap().split('&').next().unwrap().to_string();
+    let redirect = query("redirect_uri").replace("%3A", ":").replace("%2F", "/");
+    assert!(redirect.starts_with("http://127.0.0.1:") && redirect.ends_with("/callback"), "{redirect}");
+    let port: u16 = redirect.trim_start_matches("http://127.0.0.1:").trim_end_matches("/callback").parse().unwrap();
+    let visit = |state: String| async move {
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut stream, format!("GET /callback?code=c0de&state={state} HTTP/1.1\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut page = String::new();
+        tokio::io::AsyncReadExt::read_to_string(&mut stream, &mut page).await.unwrap();
+        page
+    };
+    assert!(visit("forged".into()).await.contains("didn't sign in"), "another state is turned away");
+    assert!(visit(query("state")).await.contains("signed in to docs"));
+    signing.await.unwrap().unwrap();
+
+    assert_eq!(integrations.mcp_access("docs", url), Some(Some("tok-1".into())));
+    assert_eq!(integrations.mcp_access("docs", "https://elsewhere.example/mcp"), None, "never sent to another URL");
+    let asked = fetcher.asked.lock().unwrap().clone();
+    assert!(asked[0].1.as_deref().unwrap().contains("url = \"https://mcp.example/mcp\""));
+    assert!(asked[2].1.as_deref().unwrap().contains("https://mcp.example/.well-known/oauth-protected-resource/mcp"));
+    assert!(asked[3].1.as_deref().unwrap().contains("https://auth.example/.well-known/oauth-authorization-server/tenant"));
+    assert!(asked[4].1.as_deref().unwrap().contains(&redirect));
+    let exchange = asked[5].1.clone().unwrap();
+    for part in
+        ["code=c0de", "code_verifier=", "client_id=zero-1", "resource=https%3A%2F%2Fmcp.example%2Fmcp", "grant_type=authorization_code"]
+    {
+        assert!(exchange.contains(part), "{part} in {exchange}");
+    }
+    assert!(asked.iter().all(|(argv, _)| !argv.iter().any(|a| a.contains("tok-") || a.contains("c0de"))), "nothing on a command line");
+    assert_eq!(Integrations::open(&home, canned(vec![])).mcp_access("docs", url), Some(Some("tok-1".into())), "kept in the vault");
+
+    assert_eq!(integrations.refresh_mcp().await, vec!["docs".to_string()], "it ran out within the minute");
+    assert_eq!(integrations.mcp_access("docs", url), Some(Some("tok-2".into())));
+    let refresh = fetcher.asked.lock().unwrap()[6].1.clone().unwrap();
+    assert!(refresh.contains("grant_type=refresh_token") && refresh.contains("refresh_token=ref-1"), "{refresh}");
+    assert_eq!(integrations.refresh_mcp().await, vec!["docs".to_string()]);
+    assert_eq!(integrations.mcp_access("docs", url), None, "refused: forgotten, so the next start says it needs signing in");
 }

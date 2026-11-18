@@ -74,6 +74,11 @@ impl Kept {
     }
 }
 
+/// The server's identity in short: what changes when its command, its arguments or the files they name do.
+pub fn stamp(command: &str, args: &[String]) -> String {
+    format!("{:016x}", hash(&key(command, args)))
+}
+
 /// The server's identity: its command and arguments, and when the files they name last changed.
 fn key(command: &str, args: &[String]) -> String {
     let program = if command.contains('/') {

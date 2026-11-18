@@ -144,3 +144,63 @@ fn a_server_that_starts_when_first_used_is_given_as_zerods_stand_in_for_it() {
     assert!(!old.lazy);
     assert_eq!(serde_json::to_value(McpServer { lazy: true, ..server("Icons", &[]) }).unwrap()["lazy"], true);
 }
+
+#[test]
+fn what_a_cli_is_told_of_a_servers_values_is_kept_without_them() {
+    use serde_json::json;
+    let codex = json!({"id": 3, "method": "thread/start", "params": {"cwd": "/p", "config": zerod::codex::mcp_config(&resolved())}});
+    let kept = redacted(&codex).expect("a thread's servers carry values");
+    assert_eq!(kept["params"]["config"]["mcp_servers.cve-lookup"]["env"]["API_KEY"], HIDDEN);
+    assert_eq!(kept["params"]["config"]["mcp_servers.docs"]["http_headers"]["Authorization"], HIDDEN);
+    assert_eq!(kept["params"]["config"]["mcp_servers.docs"]["url"], "https://docs.example/mcp", "only the values");
+    assert_eq!(kept["id"], 3);
+    let acp =
+        json!({"id": 1, "method": "session/resume", "params": {"sessionId": "s", "mcpServers": zerod::acp::mcp_servers(&resolved())}});
+    let kept = redacted(&acp).unwrap();
+    assert_eq!(kept["params"]["mcpServers"][0]["env"][0], json!({"name": "API_KEY", "value": HIDDEN}));
+    assert_eq!(kept["params"]["mcpServers"][1]["headers"][0], json!({"name": "Authorization", "value": HIDDEN}));
+    let claude = json!({"type": "control_request", "request_id": "r", "request": {"subtype": "mcp_set_servers", "servers":
+        {"docs": {"type": "http", "url": "https://docs.example/mcp", "headers": {"Authorization": "Bearer t"}}}}});
+    assert_eq!(redacted(&claude).unwrap()["request"]["servers"]["docs"]["headers"]["Authorization"], HIDDEN);
+    // Claude's status of its servers says a remote one's headers back.
+    let status = json!({"type": "control_response", "response": {"subtype": "success", "request_id": "z1", "response": {"mcpServers": [
+        {"name": "docs", "status": "connected", "config": {"type": "http", "url": "https://docs.example/mcp", "headers": {"Authorization": "Bearer t"}}}]}}});
+    assert_eq!(redacted(&status).unwrap()["response"]["response"]["mcpServers"][0]["config"]["headers"]["Authorization"], HIDDEN);
+    for plain in [
+        json!({"id": 4, "method": "turn/start", "params": {"input": [{"type": "text", "text": "env: API_KEY=k-123"}]}}),
+        json!({"id": 5, "method": "thread/start", "params": {"cwd": "/p"}}),
+        json!({"type": "user", "message": {"role": "user", "content": "hi"}}),
+    ] {
+        assert!(redacted(&plain).is_none(), "nothing to take out of {plain}");
+    }
+}
+
+#[test]
+fn a_server_changed_is_no_longer_taken_for_one_that_needs_signing_in_by_any_claude_home() {
+    // Claude Code skips an HTTP server it found wanting a sign-in in the last 15 minutes, by its name alone: the
+    // flag for the server as it was mustn't hide it as it is now. The homes share the user's file through a link.
+    let home = temp_dir("mcp-needs-auth");
+    let shared = home.join("dot-claude");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(shared.join("mcp-needs-auth-cache.json"), r#"{"paper": {"timestamp": 1}, "amie": {"timestamp": 2}}"#).unwrap();
+    let homes = home.join("claude-homes");
+    for (name, own) in [("a", false), ("b", false), ("c", true)] {
+        std::fs::create_dir_all(homes.join(name)).unwrap();
+        let file = homes.join(name).join("mcp-needs-auth-cache.json");
+        if own {
+            std::fs::write(&file, r#"{"paper": {"timestamp": 3}}"#).unwrap();
+        } else {
+            std::os::unix::fs::symlink(shared.join("mcp-needs-auth-cache.json"), &file).unwrap();
+        }
+    }
+    std::fs::create_dir_all(homes.join("d")).unwrap();
+    clear_needs_auth(&homes, "paper");
+    let read = |path: std::path::PathBuf| -> serde_json::Value { serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap() };
+    assert_eq!(read(shared.join("mcp-needs-auth-cache.json")), serde_json::json!({"amie": {"timestamp": 2}}), "the rest kept");
+    assert_eq!(read(homes.join("c").join("mcp-needs-auth-cache.json")), serde_json::json!({}));
+    assert!(
+        std::fs::symlink_metadata(homes.join("a").join("mcp-needs-auth-cache.json")).unwrap().file_type().is_symlink(),
+        "still the user's"
+    );
+    assert!(!homes.join("d").join("mcp-needs-auth-cache.json").exists(), "none made where there was none");
+}

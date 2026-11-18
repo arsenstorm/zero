@@ -623,3 +623,37 @@ async fn a_waiting_ask_after_a_relaunch_is_delivered_unless_its_cli_waits_again(
     assert_eq!(again.ask(&open.id).unwrap().waits, None, "a CLI that waits again reads it itself");
     let _ = std::fs::remove_file(&log);
 }
+
+/// An MCP server ask zerod made outlives a restart of zerod (every install restarts it): approved after, its server is
+/// kept. The mark is zerod's alone: a client's ask that claims it is still not kept.
+#[tokio::test]
+async fn an_mcp_ask_zerod_made_is_kept_when_approved_after_zerod_restarts() {
+    let dir = std::env::temp_dir().join(format!("zerod-mcp-restart-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("asks.jsonl");
+    let server: zerod::mcp_servers::McpServer = serde_json::from_value(serde_json::json!({"name": "paper", "command": "paper"})).unwrap();
+    let mut proposal = ask(AskKind::Approve, "Change the MCP server paper?", &["Change it", "Reject"]);
+    proposal.mcp = Some(server.clone());
+    let made = Inbox::open(Some(log.clone()), vec![]).create_mcp(proposal.clone());
+    let mut forged = proposal;
+    forged.mcp_made = true;
+    let first = Inbox::open(Some(log.clone()), vec![]);
+    let forged = first.create(forged, false);
+    drop(first);
+
+    let inbox = Inbox::open(Some(log), vec![]);
+    inbox.configure(Duration::from_millis(20), 3600);
+    let applied = Arc::new(Mutex::new(vec![]));
+    let seen = applied.clone();
+    inbox.on_mcp(Arc::new(move |ask: Ask| {
+        seen.lock().unwrap().push(ask.id.clone());
+        Box::pin(async { Ok("paper".to_string()) })
+    }));
+    inbox.choose(&made.id, 0);
+    inbox.choose(&forged.id, 0);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(*applied.lock().unwrap(), [made.id.as_str()], "zerod's own, not the forged one");
+    assert_eq!(inbox.ask(&made.id).unwrap().state, AskState::Answered);
+    assert_eq!(inbox.ask(&forged.id).unwrap().state, AskState::Declined);
+}

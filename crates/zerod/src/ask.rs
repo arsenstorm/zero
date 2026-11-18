@@ -151,6 +151,14 @@ pub struct Ask {
     /// What the agent answered when the user asked about it (about.rs reply): kept with it, not lost up the conversation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub replies: Vec<Reply>,
+    /// An MCP server the agent proposes (`zero mcp add`), new or a change of one there: kept, and given to the running
+    /// tasks, once the user approves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<crate::mcp_servers::McpServer>,
+    /// zerod made the MCP server ask itself (`zero mcp add`): only such an ask keeps its server once approved. Set by
+    /// zerod alone, never taken from a client; kept in the log, so an ask outlives a restart of zerod.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mcp_made: bool,
 }
 
 /// A message an ask is about: the agent's words just before it, or a heading it named (`zero ask --about "#plan"`).
@@ -213,11 +221,13 @@ impl Ask {
             needs: None,
             blocks: false,
             confirmed: false,
+            mcp_made: false,
             done_check: false,
             allow: None,
             link: None,
             about: None,
             replies: vec![],
+            mcp: None,
         }
     }
 

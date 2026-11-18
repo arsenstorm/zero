@@ -46,8 +46,9 @@ async fn it_introduces_itself_and_lists_the_scratchpad_tools() {
         ]
     );
     assert!(
-        names[11..].iter().all(|n| n.starts_with("browser_") || n.starts_with("zero_")) && names.contains(&"browser_computer"),
-        "then Zero for Chrome's and Zero's own: {names:?}"
+        names[11..].iter().all(|n| n.starts_with("browser_") || n.starts_with("desktop_") || n.starts_with("zero_"))
+            && names.contains(&"browser_computer"),
+        "then Zero for Chrome's, the desktop's and Zero's own: {names:?}"
     );
     let takes_workspace = |at: usize| tools["result"]["tools"][at]["inputSchema"]["properties"]["workspace"].is_object();
     assert!(takes_workspace(0) && takes_workspace(2), "list and create name a workspace");
@@ -119,6 +120,12 @@ async fn an_agent_asks_runs_and_notes_through_zeros_tools() {
     assert_eq!(heard.lock().unwrap()[0], ("zero_ask".to_string(), json!({"question": "Which?", "options": ["A", "B"]})));
     let noted = call("zero_note", json!({"text": "Blocked on CI", "state": "blocked"})).await;
     assert!(!noted["result"]["content"][0]["text"].as_str().unwrap().contains("asked"), "a note waits on nothing");
+    // An MCP server proposed waits on the user as an ask does; the list comes back as zerod gave it.
+    let proposed = call("zero_mcp", json!({"name": "paper", "command": "paper", "why": "designs"})).await;
+    assert!(proposed["result"]["content"][0]["text"].as_str().unwrap().contains("[zero: asked a1]"), "{proposed}");
+    let listed = call("zero_mcp_list", json!({})).await;
+    assert!(listed["result"]["content"][0]["text"].as_str().unwrap().contains("\"id\": \"a1\""), "{listed}");
+    assert!(names.contains(&"zero_mcp") && names.contains(&"zero_mcp_list"));
 }
 
 /// zerod down and the socket not the app's own: the call fails at once, and no zerod is started as this server's

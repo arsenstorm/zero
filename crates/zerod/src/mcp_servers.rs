@@ -78,6 +78,19 @@ pub struct Resolved {
 }
 
 impl McpServer {
+    /// How it runs, in a line: its command and arguments or its URL, when it starts, and the values it's given.
+    pub fn describe(&self) -> String {
+        let how = match (&self.command, &self.url) {
+            (Some(command), _) => [command].into_iter().chain(&self.args).cloned().collect::<Vec<_>>().join(" "),
+            (None, Some(url)) => url.clone(),
+            (None, None) => String::new(),
+        };
+        let names: Vec<&str> = self.env.iter().chain(&self.headers).map(|v| v.name.as_str()).collect();
+        let lazy = if self.lazy { ", started when first used" } else { "" };
+        let given = if names.is_empty() { String::new() } else { format!(", given {}", names.join(", ")) };
+        format!("`{how}`{lazy}{given}")
+    }
+
     /// Its values, from where each is kept; `keychain` reads one (service, account).
     pub fn resolve(&self, keychain: &dyn Fn(&str, &str) -> Option<String>) -> Resolved {
         let read = |values: &[Value]| -> Vec<(String, String)> {
@@ -106,6 +119,80 @@ impl McpServer {
             url: self.url.clone(),
             env: read(&self.env),
             headers: read(&self.headers),
+        }
+    }
+}
+
+/// What a transcript keeps in place of a server's value (an env var's, a header's).
+pub const HIDDEN: &str = "<kept out of the transcript>";
+
+/// A line to or from a CLI as its transcript keeps it: the servers it gives (Codex's thread config, ACP's
+/// `mcpServers`, Claude's `mcp_set_servers`) or says back (Claude's `mcp_status`) without their values, which may be
+/// secrets. None for a line that has none.
+pub fn redacted(message: &serde_json::Value) -> Option<serde_json::Value> {
+    let method = message["method"].as_str();
+    if message["type"] == "control_response" {
+        message["response"]["response"]["mcpServers"].as_array()?;
+        let mut kept = message.clone();
+        let servers = kept["response"]["response"]["mcpServers"].as_array_mut()?;
+        servers.iter_mut().filter_map(|s| s.get_mut("config")).for_each(hide);
+        return Some(kept);
+    }
+    let carries = match method {
+        Some("thread/start" | "thread/resume") => {
+            message["params"]["config"].as_object().is_some_and(|c| c.keys().any(|k| k.starts_with("mcp_servers.")))
+        }
+        Some("session/new" | "session/resume") => message["params"]["mcpServers"].as_array().is_some_and(|s| !s.is_empty()),
+        _ => message["request"]["subtype"] == "mcp_set_servers",
+    };
+    if !carries {
+        return None;
+    }
+    let mut kept = message.clone();
+    let servers: Vec<&mut serde_json::Value> = match method {
+        Some("thread/start" | "thread/resume") => kept["params"]["config"]
+            .as_object_mut()
+            .map(|c| c.iter_mut().filter(|(k, _)| k.starts_with("mcp_servers.")).map(|(_, v)| v).collect())
+            .unwrap_or_default(),
+        Some(_) => kept["params"]["mcpServers"].as_array_mut().map(|s| s.iter_mut().collect()).unwrap_or_default(),
+        None => kept["request"]["servers"].as_object_mut().map(|s| s.values_mut().collect()).unwrap_or_default(),
+    };
+    servers.into_iter().for_each(hide);
+    Some(kept)
+}
+
+/// A server's values (an env var's, a header's: an object of them, or ACP's list) as HIDDEN.
+fn hide(server: &mut serde_json::Value) {
+    for field in ["env", "headers", "http_headers"] {
+        match server.get_mut(field) {
+            Some(serde_json::Value::Object(values)) => values.values_mut().for_each(|v| *v = HIDDEN.into()),
+            Some(serde_json::Value::Array(values)) => values.iter_mut().filter_map(|v| v.get_mut("value")).for_each(|v| *v = HIDDEN.into()),
+            _ => {}
+        }
+    }
+}
+
+/// Takes `name` out of each Claude home's needs-auth cache (`homes`/<home>/mcp-needs-auth-cache.json): Claude Code
+/// skips an HTTP server it found wanting a sign-in in the last 15 minutes by its name alone, so a server changed
+/// since would be skipped for what it was. A home's file is often a link to the user's own: it's changed where it
+/// is, and stays a link.
+pub fn clear_needs_auth(homes: &Path, name: &str) {
+    let files: std::collections::HashSet<PathBuf> = std::fs::read_dir(homes)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|home| std::fs::canonicalize(home.path().join("mcp-needs-auth-cache.json")).ok())
+        .collect();
+    for file in files {
+        let Some(mut cache) = std::fs::read(&file).ok().and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok()) else {
+            continue;
+        };
+        if cache.as_object_mut().and_then(|c| c.remove(name)).is_none() {
+            continue;
+        }
+        let partial = file.with_extension("zero-partial");
+        if std::fs::write(&partial, cache.to_string()).and_then(|_| std::fs::rename(&partial, &file)).is_err() {
+            eprintln!("zerod: couldn't clear {name} from {}", file.display())
         }
     }
 }
@@ -185,16 +272,33 @@ fn security_line(service: &str, account: &str, value: &str) -> String {
     format!("add-generic-password -U -a {} -s {} -w {}\n", quoted(account), quoted(service), quoted(value))
 }
 
+/// A local server's identity as its CLI is given it (in its environment): a new one starts it again.
+pub const STAMP: &str = "ZERO_MCP_STAMP";
+
 pub struct McpServers {
     file: PathBuf,
     list: Mutex<Vec<McpServer>>,
+    /// How many times the user has had each started again (Reload), since zerod started.
+    reloads: Mutex<std::collections::HashMap<String, u32>>,
 }
 
 impl McpServers {
     pub fn open(home: &Path) -> McpServers {
         let file = home.join("mcp-servers.json");
         let list = std::fs::read(&file).ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
-        McpServers { file, list: Mutex::new(list) }
+        McpServers { file, list: Mutex::new(list), reloads: Mutex::default() }
+    }
+
+    /// Started again in every task that has it (Settings' Reload): its stamp changes.
+    pub fn reload(&self, id: &str) {
+        *self.reloads.lock().unwrap().entry(id.into()).or_default() += 1
+    }
+
+    /// A local server's stamp: its files as they are now, and its reloads.
+    pub fn stamp(&self, server: &Resolved) -> Option<String> {
+        let command = server.command.as_deref()?;
+        let reloads = self.reloads.lock().unwrap().get(&server.id).copied().unwrap_or_default();
+        Some(format!("{}-{reloads}", crate::mcp_lazy::stamp(command, &server.args)))
     }
 
     pub fn list(&self) -> Vec<McpServer> {
@@ -206,7 +310,44 @@ impl McpServers {
         self.list().into_iter().filter(|s| s.enabled && (s.workspaces.is_empty() || s.workspaces.iter().any(|w| w == workspace))).collect()
     }
 
-    /// A new server (no id: one made from its name) or a changed one. A value kept elsewhere isn't written here.
+    /// What an agent's proposed server becomes once the user approves it: a change of the one there of that id or
+    /// name (its id, name, workspaces and being on kept, and where the values of the names it still has are kept,
+    /// the values themselves left to `save`), else a new one for `workspace`. With the one it changes, as it is now.
+    /// `scope`, if the agent named one, is its workspaces either way (none: every workspace).
+    pub fn proposal(&self, mut proposed: McpServer, workspace: &str, scope: Option<Vec<String>>) -> (McpServer, Option<McpServer>) {
+        let key = proposed.name.trim().to_lowercase();
+        let was = self.list().into_iter().find(|s| s.id == key || s.name.to_lowercase() == key);
+        match &was {
+            Some(old) => {
+                (proposed.id, proposed.name, proposed.workspaces, proposed.enabled) =
+                    (old.id.clone(), old.name.clone(), old.workspaces.clone(), old.enabled);
+                for (new, old) in [(&mut proposed.env, &old.env), (&mut proposed.headers, &old.headers)] {
+                    for value in new.iter_mut() {
+                        if let Some(kept) = old.iter().find(|o| o.name == value.name) {
+                            value.from = kept.from
+                        }
+                    }
+                }
+            }
+            None => (proposed.id, proposed.workspaces) = (String::new(), vec![workspace.into()]),
+        }
+        if let Some(scope) = scope {
+            proposed.workspaces = scope
+        }
+        (proposed, was)
+    }
+
+    /// The servers as an agent may read them: no value.
+    pub fn for_agent(&self) -> Vec<McpServer> {
+        let mut list = self.list();
+        for value in list.iter_mut().flat_map(|s| s.env.iter_mut().chain(s.headers.iter_mut())) {
+            value.value = None
+        }
+        list
+    }
+
+    /// A new server (no id: one made from its name) or a changed one. A value kept elsewhere isn't written here; one
+    /// kept here and given none (a change an agent proposed, which never has values) keeps what it was.
     pub fn save(&self, mut server: McpServer) -> Result<McpServer, String> {
         server.name = server.name.trim().to_string();
         if server.name.is_empty() {
@@ -243,6 +384,11 @@ impl McpServers {
             server.id = id;
             list.push(server.clone());
         } else if let Some(kept) = list.iter_mut().find(|s| s.id == server.id) {
+            for (new, old) in [(&mut server.env, &kept.env), (&mut server.headers, &kept.headers)] {
+                for value in new.iter_mut().filter(|v| v.from == Source::File && v.value.is_none()) {
+                    value.value = old.iter().find(|o| o.name == value.name && o.from == Source::File).and_then(|o| o.value.clone())
+                }
+            }
             *kept = server.clone();
         } else {
             return Err(format!("No server {}", server.id));

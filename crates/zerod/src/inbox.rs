@@ -116,7 +116,12 @@ pub struct Inbox {
     workers: std::sync::OnceLock<WorkerTest>,
     /// A zerod task's conversation, for what its asks are about (about.rs).
     conversations: std::sync::OnceLock<Conversations>,
+    /// What an approved MCP server ask does (server.rs): given once.
+    mcp: std::sync::OnceLock<McpApply>,
 }
+
+/// Keeps and gives out the MCP server of an ask the user approved (`zero mcp add`): what its task is told of it.
+pub type McpApply = Arc<dyn Fn(Ask) -> Fut<'static, Result<String, String>> + Send + Sync>;
 
 /// Whether an agent is a worker, given once by whoever holds the daemon (server.rs).
 pub type WorkerTest = Box<dyn Fn(&AgentIdentity) -> bool + Send + Sync>;
@@ -147,9 +152,26 @@ impl Inbox {
             me: me.clone(),
             workers: std::sync::OnceLock::new(),
             conversations: std::sync::OnceLock::new(),
+            mcp: std::sync::OnceLock::new(),
         });
         inbox.load();
         inbox
+    }
+
+    /// An MCP server ask zerod made itself (`zero mcp add`): only such an ask keeps its server once approved, not one a
+    /// client made, whose server may not be the one its words describe.
+    pub fn create_mcp(&self, ask: Ask) -> Ask {
+        let made = self.create(ask, false);
+        self.update(&made.id, |a| {
+            a.mcp_made = true;
+            true
+        });
+        self.ask(&made.id).unwrap_or(made)
+    }
+
+    /// What an approved MCP server ask does: given once.
+    pub fn on_mcp(&self, apply: McpApply) {
+        let _ = self.mcp.set(apply);
     }
 
     fn runs(&self) -> Arc<crate::runs::Runs> {
@@ -312,6 +334,7 @@ impl Inbox {
         // Done is confirmed through `done` alone (its token, or the user's word): never taken as a client sent it.
         ask.confirmed = false;
         ask.done_check = false;
+        ask.mcp_made = false;
         if !keep_id || incoming.id.is_empty() || state.asks.iter().any(|a| a.id == incoming.id) {
             ask.id = crate::ask::new_id()
         }
@@ -620,6 +643,17 @@ impl Inbox {
             self.finish(id, AskState::Declined, None)
         } else if ask.kind == AskKind::Run {
             self.run(ask)
+        } else if ask.mcp.is_some() {
+            match self.mcp.get().cloned().filter(|_| ask.mcp_made) {
+                Some(apply) => self.apply_mcp(ask, apply),
+                None => {
+                    self.update(id, |a| {
+                        a.output = "Zero didn't make this ask: nothing was kept. Propose it again.".into();
+                        true
+                    });
+                    self.finish(id, AskState::Declined, None)
+                }
+            }
         } else {
             self.finish(id, AskState::Answered, None)
         }
@@ -680,6 +714,25 @@ impl Inbox {
     fn changed(&self, ask: &Ask) {
         self.write_log(ask);
         let _ = self.events.send(InboxEvent::Ask(Box::new(ask.clone())));
+    }
+
+    /// The MCP server approved: kept and given out, then the ask answered with what its task is told.
+    fn apply_mcp(&self, ask: Ask, apply: McpApply) {
+        let id = ask.id.clone();
+        self.update(&id, |a| {
+            a.state = AskState::Running;
+            true
+        });
+        let me = self.me.clone();
+        tokio::spawn(async move {
+            let said = apply(ask).await.unwrap_or_else(|error| format!("Zero couldn't keep it: {error}"));
+            let Some(inbox) = me.upgrade() else { return };
+            inbox.update(&id, |a| {
+                a.output = said;
+                true
+            });
+            inbox.finish(&id, AskState::Answered, None);
+        });
     }
 
     /// Runs the command where zerod's restart can't reach it (runs.rs), in its folder through the user's login shell,
@@ -863,6 +916,9 @@ impl Inbox {
             );
         }
         let reason = ask.answer.as_ref().map(|a| format!(": {a}")).unwrap_or_else(|| ".".into());
+        if ask.mcp.is_some() && ask.state == AskState::Answered {
+            return format!("The user approved your ask {id} (\"{}\"). {}", ask.title, ask.output);
+        }
         if ask.kind != AskKind::Run {
             return if ask.state == AskState::Answered {
                 format!("The user answered your ask {id} (\"{}\"): {}", ask.title, ask.answer.as_deref().unwrap_or(""))

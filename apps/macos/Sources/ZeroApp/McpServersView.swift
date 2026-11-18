@@ -127,6 +127,12 @@ struct McpServersPage: View {
                         Task { _ = await workspace.saveMcpServer(changed, secrets: [:]) }
                     })
             ).tip(server.enabled ? "On: given to tasks as they start" : "Off")
+            if server.command != nil, server.enabled {
+                RowButton(title: "Reload") {
+                    Task { await workspace.reloadMcpServer(server) }
+                }
+                .tip("Starts it again in the running tasks that have it")
+            }
             RowButton(title: "Edit…") {
                 given = [:]; editing = server
             }

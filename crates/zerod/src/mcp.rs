@@ -11,13 +11,16 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const INSTRUCTIONS: &str = "Chrome, through Zero for Chrome: the browser_ tools act in the task's own tabs, which browser_tabs lists \
 (call it first; createIfEmpty opens one). Read a page with browser_read (its elements' refs) or a screenshot (browser_computer), act with \
 browser_computer, browser_form and browser_navigate, and close the tabs you opened when you're done. \
+The Mac's other apps, through Zero.app: desktop_apps lists them (call it first), desktop_read gives a window's elements' refs \
+and desktop_screenshot a picture, desktop_click, desktop_type, desktop_key, desktop_scroll and desktop_drag act in the background, \
+desktop_record films a window. The user allows each app for the task on a card the first time. \
 Zero's scratchpads: Markdown notes the user keeps in Zero, in folders, shared with every agent. \
 A pad's link is zero://pad/<id>; zero://pad/<id>#<section> is one heading's part (its anchor as GitHub makes them). When the \
 user gives you such a link, read it with scratchpad_read. Read before you change a pad, and pass the revision you read to \
 scratchpad_write or scratchpad_edit, so changes made since aren't lost; scratchpad_append needs none. Give the user links \
 to what you wrote, as Markdown: [Title › Section](zero://pad/<id>#section). \
 In a Zero task, anything you need from the user goes through zero_ask (a question, a choice), zero_run (a command they run on their \
-Mac, its output coming back to you), zero_note (where the task stands), zero_done (the task done, confirmed in two steps) or zero_blocked (it can't go on at all, as \
+Mac, its output coming back to you), zero_note (where the task stands), zero_mcp (an MCP server for the user to approve, live once they do), zero_done (the task done, confirmed in two steps) or zero_blocked (it can't go on at all, as \
 confirmed), when \
 the `zero` command can't reach Zero (a sandbox). zero_slack and zero_linear read Slack and Linear through the user's \
 connections in Zero, no tokens needed.";
@@ -38,6 +41,18 @@ fn zero_tools() -> Vec<Value> {
         json!({"name": "zero_run", "description": "Asks the user to run a command on their Mac (their credentials, their access); its output comes back to you as a message. End your turn with [zero: asked <id>].",
                "inputSchema": {"type": "object", "required": ["command", "why"], "properties": {
                    "command": string("The command."), "why": string("What you need its output for."), "cwd": string("Where to run it; left out, the task's folder.")}}}),
+        json!({"name": "zero_mcp", "description": "Proposes an MCP server for the user to approve in Zero: a new one, or a change of the one there of that name (zero_mcp_list shows them). Once approved, Zero keeps it for the workspaces it names (by default: a new one for this task's, a changed one for its own) and gives it to their running tasks at once (Codex at its next turn); the answer names its tools. End your turn with [zero: asked <id>].",
+               "inputSchema": {"type": "object", "required": ["name", "why"], "properties": {
+                   "name": string("Its name, as its tools will be named after (mcp__<name>__<tool> in Claude Code); an existing server's name or id changes that one."),
+                   "command": string("A local server: the program that runs it."), "args": {"type": "array", "items": {"type": "string"}, "description": "The program's arguments."},
+                   "url": string("A remote server: where it is (instead of command)."),
+                   "lazy": {"type": "boolean", "description": "A local server started when first used rather than with every task."},
+                   "env": {"type": "array", "items": {"type": "string"}, "description": "The names of environment variables it needs; the user sets their values in Zero."},
+                   "headers": {"type": "array", "items": {"type": "string"}, "description": "The names of HTTP headers a remote one needs; the user sets their values in Zero."},
+                   "workspaces": string("Which workspaces' tasks get it: \"all\", or workspace ids or names, comma-separated. Default: a new server is for your task's workspace, a changed one keeps its own."),
+                   "why": string("What it's for, so the user knows what they're adding.")}}}),
+        json!({"name": "zero_mcp_list", "description": "Lists the MCP servers set up in Zero (without their values), to propose a change of one with zero_mcp.",
+               "inputSchema": {"type": "object", "properties": {}}}),
         json!({"name": "zero_issue", "description": "Sets the row of one of the issues you lead, which the user reads coming back: who has it now, and what it needs. Set it whenever the issue's state changes. Zero shows the rows as one live board at the top of your conversation, with each issue's states over time: don't repost them as a table; say only what changed and what you decided.",
                "inputSchema": {"type": "object", "required": ["ticket", "state"], "properties": {
                    "ticket": string("The issue's ticket."), "state": string("you (on the user: a decision, access), over (done on your side, the user's step to take: a review, a merge), working, waiting (on someone else), parked or done."),
@@ -173,16 +188,16 @@ where
                 "properties": args.iter().map(|(arg, about, _)| (arg.to_string(), json!({"type": "string", "description": about}))).collect::<serde_json::Map<_, _>>(),
                 "required": args.iter().filter(|(_, _, required)| *required).map(|(arg, _, _)| *arg).collect::<Vec<_>>(),
             },
-        })).chain(crate::browser::tools()).chain(zero_tools()).collect::<Vec<_>>()}),
+        })).chain(crate::browser::tools()).chain(crate::desktop::tools()).chain(zero_tools()).collect::<Vec<_>>()}),
         // A browser tool's answer is already MCP content (text and screenshots), as the extension made it.
-        "tools/call" if params["name"].as_str().is_some_and(|n| n.starts_with("browser_")) => {
+        "tools/call" if params["name"].as_str().is_some_and(|n| n.starts_with("browser_") || n.starts_with("desktop_")) => {
             match call(params["name"].as_str().unwrap_or_default().to_string(), params["arguments"].clone()).await {
                 Ok(answer) => json!({"content": answer["content"], "isError": answer["isError"].as_bool().unwrap_or(false)}),
                 Err(why) => json!({"content": [{"type": "text", "text": why}], "isError": true}),
             }
         }
-        // Slack's and Linear's own JSON, as they answered.
-        "tools/call" if matches!(params["name"].as_str(), Some("zero_slack" | "zero_linear")) => {
+        // Slack's and Linear's own JSON, as they answered; Zero's MCP servers as it keeps them.
+        "tools/call" if matches!(params["name"].as_str(), Some("zero_slack" | "zero_linear" | "zero_mcp_list")) => {
             match call(params["name"].as_str().unwrap_or_default().to_string(), params["arguments"].clone()).await {
                 Ok(answer) => {
                     json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&answer).unwrap_or_default()}], "isError": false})
@@ -299,7 +314,7 @@ pub async fn connect(socket: &Path) -> Result<tokio::net::UnixStream, String> {
     Err("Zero isn't running".into())
 }
 
-/// One tool call to zerod: a scratchpad's (`pad`), a browser's (`browserCall`), an ask's (`agentAsk`), or Slack's or
+/// One tool call to zerod: a scratchpad's (`pad`), a browser's (`browserCall`), the desktop's (`desktopCall`), an ask's (`agentAsk`), or Slack's or
 /// Linear's (`slack`, `linear`), all but the first for the session this server runs in.
 async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, String> {
     let mut stream = connect(socket).await?;
@@ -310,6 +325,8 @@ async fn through(socket: &Path, tool: String, args: Value) -> Result<Value, Stri
         let mut args = if args.is_object() { args } else { json!({}) };
         args["tool"] = json!(own);
         json!({"id": 1, "op": "agentAsk", "session": session.ok_or("zero_ tools are for Zero's tasks; elsewhere, use the zero command")?, "args": args})
+    } else if tool.starts_with("desktop_") {
+        json!({"id": 1, "op": "desktopCall", "tool": tool, "args": args, "session": session})
     } else if tool.starts_with("browser_") {
         json!({"id": 1, "op": "browserCall", "tool": tool, "args": args, "session": session})
     } else {

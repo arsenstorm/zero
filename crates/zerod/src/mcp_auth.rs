@@ -57,8 +57,13 @@ struct Attempt {
     over: bool,
 }
 
+/// Whether a server is one Zero signs in to itself.
+pub type Owns = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 pub struct McpAuth {
     run: Runner,
+    /// Zero's own sign-in, for the servers it's for (the remote ones the user keeps in Zero).
+    zero: OnceLock<(Owns, Runner)>,
     inbox: OnceLock<(Arc<Inbox>, Tell)>,
     attempts: Mutex<HashMap<String, Attempt>>,
     /// The claude.ai connectors the user has been told about.
@@ -70,6 +75,7 @@ impl McpAuth {
     pub fn new(run: Runner) -> Arc<McpAuth> {
         Arc::new_cyclic(|me| McpAuth {
             run,
+            zero: OnceLock::new(),
             inbox: OnceLock::new(),
             attempts: Mutex::default(),
             connectors: Mutex::default(),
@@ -106,6 +112,24 @@ impl McpAuth {
         };
         if let (Some(url), Some((_, tell))) = (link, self.inbox.get()) {
             tell(&conversation.id, &server, News::Link(&url))
+        }
+    }
+
+    /// Zero's own sign-in, run in place of a CLI's for the servers `owns` says: given once.
+    pub fn zero_signs_in(&self, owns: Owns, run: Runner) {
+        let _ = self.zero.set((owns, run));
+    }
+
+    /// Whether Zero signs in to `server` itself.
+    pub fn zero_owns(&self, server: &str) -> bool {
+        self.zero.get().is_some_and(|(owns, _)| owns(server))
+    }
+
+    /// A server's config changed: a sign-in that ended for the old one no longer stops a new one.
+    pub fn forget(&self, server: &str) {
+        let mut attempts = self.attempts.lock().unwrap();
+        if attempts.get(server).is_some_and(|a| a.over) {
+            attempts.remove(server);
         }
     }
 
@@ -153,7 +177,11 @@ impl McpAuth {
     fn start(&self, job: Job, agent: Option<crate::ask::AgentIdentity>) {
         let (me, server) = (self.me.clone(), job.server.clone());
         let (page, opened) = tokio::sync::oneshot::channel();
-        let running = (self.run)(job, page);
+        let run = match self.zero.get() {
+            Some((owns, run)) if owns(&job.server) => run.clone(),
+            _ => self.run.clone(),
+        };
+        let running = run(job, page);
         let linked = me.clone();
         let named = server.clone();
         tokio::spawn(async move {
@@ -278,7 +306,9 @@ pub fn start(daemon: Arc<crate::daemon::Daemon>, inbox: Arc<Inbox>) {
             notice(&session, &text, error);
             // Claude skipped the server when it started: it connects now, with what the sign-in kept. (Its folder, with
             // Claude running in it, isn't written: another account's folder gets the sign-in at its next start.)
-            if matches!(news, News::SignedIn) && session.summary().provider == Provider::Claude && session.is_attached() {
+            // Zero's own sign-in gives the CLIs its token instead (a changed server, restarted with it).
+            let zeros = weak.upgrade().is_some_and(|d| d.mcp_auth.zero_owns(server));
+            if matches!(news, News::SignedIn) && !zeros && session.summary().provider == Provider::Claude && session.is_attached() {
                 let _ = session.write(json!({"type": "control_request", "request_id": format!("mcp-reconnect-{server}"),
                                              "request": {"subtype": "mcp_reconnect", "serverName": server}}));
             }

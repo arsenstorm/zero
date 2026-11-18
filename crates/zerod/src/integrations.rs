@@ -14,6 +14,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::inbox::Fut;
 
+mod mcp_oauth;
+pub use mcp_oauth::McpToken;
+
 /// Runs a command (argv, through the login shell where it needs one) with what to write to its stdin, and returns
 /// what it printed. A seam so tests can answer for gh and curl.
 pub trait Fetcher: Send + Sync {
@@ -124,6 +127,9 @@ struct Secrets {
     slack: BTreeMap<String, String>,
     #[serde(default)]
     linear: Option<(String, Option<String>)>,
+    /// Zero's sign-ins to MCP servers, by server id.
+    #[serde(default)]
+    mcp: BTreeMap<String, McpToken>,
     #[serde(default, flatten)]
     writes: Writes,
 }
@@ -148,6 +154,7 @@ pub struct Integrations {
     signing_in: Mutex<(Option<(String, String)>, bool)>,
     /// Who gh is signed in as, once it has said.
     github: Mutex<Option<String>>,
+    mcp: Mutex<BTreeMap<String, McpToken>>,
 }
 
 impl Integrations {
@@ -195,6 +202,7 @@ impl Integrations {
             port: Mutex::new(47615),
             signing_in: Mutex::new((None, false)),
             github: Mutex::new(None),
+            mcp: Mutex::new(secrets.mcp),
         });
         if left_in_files && let Err(error) = integrations.save() {
             eprintln!("zerod: couldn't move the integrations' tokens out of their files: {error}")
@@ -228,6 +236,7 @@ impl Integrations {
         let secrets = Secrets {
             slack: slack.iter().map(|a| (a.team.id.clone(), a.token.clone())).collect(),
             linear: linear.as_ref().map(|a| (a.access.clone(), a.refresh.clone())),
+            mcp: self.mcp.lock().unwrap().clone(),
             writes: self.writes(),
         };
         self.vault.write(&serde_json::to_vec(&secrets).map_err(|e| e.to_string())?)?;
