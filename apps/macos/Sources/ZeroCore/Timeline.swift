@@ -28,7 +28,7 @@ public enum TimelineBlock: Identifiable, Equatable, Sendable {
             blocks.append(.work(id: "work-" + first.id, items: work, start: start ?? first.date, end: end ?? work.last?.date, live: live))
             work = []
         }
-        for item in items {
+        for item in Advice.folded(items) {
             switch item.kind {
             case .user:
                 flush(end: nil, live: false)
@@ -524,12 +524,64 @@ public enum AgentIcons {
     }
 }
 
+/// The agent's own line on its advisor's advice ("Advisor: …", as zerod's prompt asks after each call), folded into the
+/// call's step as `advisor-took`: the newer advisors' advice comes back encrypted, for the agent alone, so what the agent
+/// took from it is all there is to show. Advice an older advisor gave in plain words stays the step's, as the advisor's.
+public enum Advice {
+    static let mark = "Advisor:"
+
+    public static func folded(_ items: [ConversationItem]) -> [ConversationItem] {
+        var out: [ConversationItem] = []
+        // The advisor's step waiting for the agent's line on it: thinking may come between, nothing else.
+        var waiting: Int?
+        for var item in items {
+            switch item.kind {
+            case let .tool("advisor", detail):
+                out.append(item)
+                waiting = detail.isEmpty && item.status == .done ? out.count - 1 : nil
+                continue
+            case .reasoning:
+                out.append(item)
+                continue
+            case .agent(text: "", _):
+                // Words not yet come, or none left once zerod took the line away: nothing to show.
+                continue
+            case let .agent(text, final):
+                guard let step = waiting else { break }
+                let words = text.drop { $0.isWhitespace }
+                // Its first words still arriving: not shown as words, then taken away.
+                if words.count < mark.count, mark.hasPrefix(words) { continue }
+                guard words.hasPrefix(mark) else { break }
+                let line = words.prefix { $0 != "\n" }
+                out[step].kind = .tool(name: "advisor-took", detail: line.dropFirst(mark.count).trimmingCharacters(in: .whitespaces))
+                let rest = words.dropFirst(line.count).trimmingCharacters(in: .whitespacesAndNewlines)
+                waiting = nil
+                if rest.isEmpty { continue }
+                item.kind = .agent(text: rest, finalAnswer: final)
+            default: break
+            }
+            waiting = nil
+            out.append(item)
+        }
+        return out
+    }
+}
+
 public enum ToolNames {
+    /// The advisor's mark, on its steps and the pill that counts them.
+    public static let advisorIcon = "graduation-cap"
+
+    /// Its advisor's step ("advisor"), or the step with the agent's line on its advice folded in (Advice).
+    public static func isAdvisor(_ raw: String) -> Bool { raw == "advisor" || raw == "advisor-took" }
+
+    /// "Asked Fable": the advisor by name where the task has one, else said generally.
+    public static func advisor(_ name: String?) -> String { "Asked " + (name ?? "its advisor") }
+
     /// "mcp__linear-server__list_comments" → "Linear · list comments"; Claude Code's Agent tool is a subagent, said so,
     /// and its advisor (zerod's "advisor" step) is consulted; anything else as it is.
     public static func name(_ raw: String) -> String {
         if raw == "Agent" || raw == "Task" { return "Subagent" }
-        if raw == "advisor" { return "Asked its advisor" }
+        if isAdvisor(raw) { return advisor(nil) }
         guard raw.hasPrefix("mcp__") else { return raw }
         let parts = raw.dropFirst("mcp__".count).components(separatedBy: "__")
         guard parts.count >= 2 else { return raw }
@@ -538,6 +590,17 @@ public enum ToolNames {
             parts[0].replacingOccurrences(of: "-server", with: "").split(whereSeparator: { $0 == "_" || $0 == "-" }).last.map(String.init)
             ?? parts[0]
         return server.capitalized + " · " + parts[1...].joined(separator: " ").replacingOccurrences(of: "_", with: " ")
+    }
+
+    /// The web page a step is about (WebFetch's url, a browser tool's): the first argument that is a web link, so its
+    /// line can open it without opening the step.
+    public static func link(_ raw: String) -> URL? {
+        guard let data = raw.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return object.values.lazy.compactMap { $0 as? String }
+            .first { $0.hasPrefix("https://") || $0.hasPrefix("http://") }
+            .flatMap { URL(string: $0) }
     }
 
     /// A JSON object's values, shortest first (what it's about before what it says); anything else as it is.

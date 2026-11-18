@@ -103,9 +103,10 @@ public final class Navigation {
         worker = last.count > 1 && keeps(last[1]) ? last[1] : nil
     }
 
-    /// Each step: the place, the worker shown there, and the settings page open.
-    @ObservationIgnored private var behind: [(Place, String?, String?)] = []
-    @ObservationIgnored private var ahead: [(Place, String?, String?)] = []
+    /// Each step: the place, the worker shown there, and the settings page open. Observed: the toolbar's arrows are
+    /// drawn from them, and stayed dimmed while they weren't.
+    private var behind: [(Place, String?, String?)] = []
+    private var ahead: [(Place, String?, String?)] = []
     /// A place change is clearing the worker: not a step of its own.
     @ObservationIgnored private var changingPlace = false
     public var canGoBack: Bool { !behind.isEmpty }
@@ -143,6 +144,37 @@ public final class Navigation {
         worker = step.1
         settingsPage = step.2
         travelling = false
+    }
+}
+
+/// A trackpad's two-finger swipe between pages, read from its scroll gesture as Safari reads it: sideways from the
+/// start, over nothing that scrolls sideways itself, it is one step back (fingers to the right) or forward once it has
+/// gone `distance`; the rest of the gesture and its momentum are Zero's. Any other gesture is left to the views.
+public struct PageSwipe {
+    // ponytail: a fixed distance and no page sliding under the fingers; a live slide (trackSwipeEvent) if it feels abrupt.
+    public static let distance = 50.0
+    private enum Mode { case deciding, swiping, scrolling }
+    private var mode = Mode.scrolling
+    private var x = 0.0, y = 0.0
+    private var stepped = false
+
+    public init() {}
+
+    /// One event of a gesture: `fingers`, how far they moved sideways (right positive, whatever the scrolling
+    /// direction); `free`, nothing under the pointer scrolls sideways (read as the gesture begins). Nil leaves the event
+    /// to the views; 0 is Zero's, no step; -1 is back, 1 forward.
+    public mutating func scroll(began: Bool, momentum: Bool, fingers: Double, dy: Double, free: Bool) -> Int? {
+        if began { mode = free ? .deciding : .scrolling; x = 0; y = 0; stepped = false }
+        if momentum { return mode == .swiping ? 0 : nil }
+        x += fingers; y += dy
+        if mode == .deciding {
+            guard abs(x) + abs(y) >= 6 else { return nil }
+            mode = abs(x) > 2 * abs(y) ? .swiping : .scrolling
+        }
+        guard mode == .swiping else { return nil }
+        guard !stepped, abs(x) >= Self.distance else { return 0 }
+        stepped = true
+        return x > 0 ? -1 : 1
     }
 }
 

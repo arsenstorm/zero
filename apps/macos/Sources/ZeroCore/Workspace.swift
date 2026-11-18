@@ -724,6 +724,13 @@ public final class Workspace {
             devFollows = list
             followed = list ?? []
         }
+
+        /// Zero Dev's harness: a conversation shown as zerod would send it (a step running, say), with no agent behind
+        /// it; nil takes it away again.
+        public func devShow(_ conversation: Conversation?, id: String) {
+            mirror.receive(conversation.map { .session($0) } ?? .change(ZerodEvent(session: id, seq: 0, change: .archived)))
+            sync(id)
+        }
     #endif
 
     public func unfollow(session: String, topic: String) async {

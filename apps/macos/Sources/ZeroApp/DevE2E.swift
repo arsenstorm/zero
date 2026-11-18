@@ -266,8 +266,13 @@
             bareReferences(workspace)
             await effortSlider()
             await askPaste(window)
+            await composerOverscroll(window)
             await agentDrives()
             await desktopDrives(window)
+            await newTaskSuggestions(workspace, window)
+            await history(window)
+            await conversationEnd(workspace, window)
+            await runningStep(workspace, window)
             check("Zero Dev never became the active app", !NSApp.isActive, "active \(NSApp.isActive)", how: "call")
             // Nothing of Zero Dev's on any display: its windows, panels and menus.
             let shown = NSApp.windows.filter { w in w.isVisible && NSScreen.screens.contains { $0.frame.intersects(w.frame) } }
@@ -283,7 +288,8 @@
         }
 
         /// A task in Zero Dev's zerod, taken in from a Claude Code session written here: offline, never resumed.
-        func adoptTask() async -> String? {
+        /// `answers` more answers, each a few long paragraphs, make a conversation many pages tall.
+        func adoptTask(label: String = "Zero Dev e2e", answers: Int = 0) async -> String? {
             guard let home = ProcessInfo.processInfo.environment["ZERO_DEV_HOME"] else { return nil }
             let cwd = Paths.dir.appendingPathComponent("e2e-task")
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
@@ -308,13 +314,28 @@
                     ],
                 ],
             ]
-            let text = records.compactMap { try? JSONSerialization.data(withJSONObject: $0) }.map { String(decoding: $0, as: UTF8.self) }
-                .joined(separator: "\n")
+            let paragraph = String(repeating: "A line of an answer long enough to wrap across the conversation's column. ", count: 8)
+            // A question each: a turn's answers before its last fold into its steps.
+            let more: [[String: Any]] = (0..<answers).flatMap { i -> [[String: Any]] in
+                [
+                    ["type": "user", "uuid": "ask\(i)", "message": ["role": "user", "content": "Question \(i)"]],
+                    [
+                        "type": "assistant", "uuid": "more\(i)",
+                        "message": [
+                            "role": "assistant", "content": [["type": "text", "text": "\(i): " + paragraph + "\n\n" + paragraph]],
+                        ],
+                    ],
+                ]
+            }
+            let text = (records + more).compactMap { try? JSONSerialization.data(withJSONObject: $0) }.map {
+                String(decoding: $0, as: UTF8.self)
+            }
+            .joined(separator: "\n")
             try? text.write(to: folder.appendingPathComponent("\(thread).jsonl"), atomically: true, encoding: .utf8)
             guard let link = try? ZerodLink() else { return nil }
             defer { link.close() }
             let r =
-                try? await link.call("adopt", ["thread": thread, "cwd": real, "label": "Zero Dev e2e", "ticket": "ZD-1"]) as? [String: Any]
+                try? await link.call("adopt", ["thread": thread, "cwd": real, "label": label, "ticket": "ZD-1"]) as? [String: Any]
             return r?["session"] as? String
         }
 
@@ -1145,6 +1166,136 @@
             resetTabs()
         }
 
+        // MARK: Back and forward
+
+        /// A trackpad's scroll gesture over a point of the window, fingers moving `fingers` points sideways (right
+        /// positive), posted to Zero Dev alone: a windowed event made a scroll through its CGEvent, with the phases a
+        /// trackpad's has (a CGEvent made as a scroll has no window).
+        func swipe(_ view: NSView, _ p: CGPoint, fingers: Double) async -> Bool {
+            guard let window = view.window else { return false }
+            let phases: [(CGScrollPhase, Double)] = [(.began, 0)] + Array(repeating: (.changed, fingers / 4), count: 4) + [(.ended, 0)]
+            var events: [NSEvent] = []
+            for (phase, step) in phases {
+                guard
+                    let made = NSEvent.mouseEvent(
+                        with: .mouseMoved, location: inWindow(view, p), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0),
+                    let cg = made.cgEvent
+                else { return false }
+                cg.type = .scrollWheel
+                cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                // Content follows the fingers only with natural scrolling: the delta's sign by the event's own flag.
+                let inverted = NSEvent(cgEvent: cg)?.isDirectionInvertedFromDevice == true
+                let dx = inverted ? step : -step
+                cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(dx))
+                cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: dx)
+                guard let e = NSEvent(cgEvent: cg), e.window === window, e.type == .scrollWheel else { return false }
+                events.append(e)
+            }
+            for e in events { NSApp.postEvent(e, atStart: false) }
+            await pause(0.4)
+            return true
+        }
+
+        /// A click given to the window, which finds the view under it (the toolbar's, outside the content view).
+        func windowClick(_ view: NSView, _ p: CGPoint) async {
+            guard let window = view.window else { return }
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                guard
+                    let e = NSEvent.mouseEvent(
+                        with: type, location: inWindow(view, p), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+                else { continue }
+                window.sendEvent(e)
+            }
+            await pause(0.3)
+        }
+
+        /// The window's one history, as the user goes through it: the toolbar's arrows clicked, ⌘[ and ⌘] typed, the
+        /// mouse's side buttons and a two-finger swipe posted, each read back as the place. A swipe over something that
+        /// scrolls sideways stays its own.
+        func history(_ window: NSWindow) async {
+            let navigation = app.navigation
+            navigation.pane = false
+            navigation.place = .task(task)
+            navigation.place = .board
+            navigation.place = .later
+            await pause(0.5)
+            guard let arrows = window.toolbar?.items.first(where: { $0.itemIdentifier.rawValue == "history" })?.view,
+                let content = window.contentView
+            else { return check("The toolbar has Back and Forward", false, "no history item, or no content") }
+            let could = navigation.canGoBack
+            await windowClick(arrows, CGPoint(x: 14, y: 14))
+            let back = navigation.place
+            await windowClick(arrows, CGPoint(x: 44, y: 14))
+            let forward = navigation.place
+            check(
+                "The toolbar's Back and Forward go back and forward", back == .board && forward == .later,
+                "back to \(back.key), forward to \(forward.key); could go back \(could), arrows hidden \(arrows.isHidden)")
+
+            await key(33, "[", .command)
+            let keyBack = navigation.place
+            await key(30, "]", .command)
+            let keyForward = navigation.place
+            check(
+                "⌘[ and ⌘] go back and forward", keyBack == .board && keyForward == .later,
+                "back to \(keyBack.key), forward to \(keyForward.key)")
+
+            let middle = CGPoint(x: content.bounds.midX, y: content.bounds.midY)
+            _ = await mouseButton(3, content, middle)
+            let buttonBack = navigation.place
+            _ = await mouseButton(4, content, middle)
+            let buttonForward = navigation.place
+            check(
+                "The mouse's side buttons go back and forward", buttonBack == .board && buttonForward == .later,
+                "back to \(buttonBack.key), forward to \(buttonForward.key)")
+
+            let swipes = NSEvent.isSwipeTrackingFromScrollEventsEnabled
+            let posted = await swipe(content, middle, fingers: 120)
+            let swipeBack = navigation.place
+            _ = await swipe(content, middle, fingers: -120)
+            let swipeForward = navigation.place
+            check(
+                "A two-finger swipe goes back (fingers right) and forward (left)",
+                posted && (swipes ? swipeBack == .board && swipeForward == .later : swipeBack == .later),
+                "posted \(posted), the user swipes with two fingers \(swipes); back to \(swipeBack.key), forward to \(swipeForward.key)")
+
+            // Something that scrolls sideways under the pointer (a command's output, a diff), made as Zero makes them:
+            // the swipe scrolls it instead.
+            let wide = NSHostingView(
+                rootView: ScrollView([.vertical, .horizontal]) { Text(String(repeating: "wide output ", count: 80)).fixedSize() })
+            wide.frame = NSRect(x: middle.x - 150, y: middle.y - 100, width: 300, height: 200)
+            content.addSubview(wide)
+            await pause(0.3)
+            _ = await swipe(content, middle, fingers: 120)
+            let stayed = navigation.place
+            let found = views(NSScrollView.self, in: wide).map {
+                "\(type(of: $0)) \(Int($0.documentView?.frame.width ?? 0)) wide in \(Int($0.contentView.bounds.width))"
+            }
+            wide.removeFromSuperview()
+            check(
+                "A swipe over something that scrolls sideways doesn't go back", posted && stayed == .later,
+                "stayed on \(stayed.key); under it: \(found)")
+
+            // Over a conversation, which scrolls up and down: the swipe still goes back.
+            navigation.place = .board
+            navigation.place = .task(task)
+            await pause(1)
+            let under = views(NSScrollView.self, in: content).filter { $0.bounds.contains($0.convert(middle, from: content)) }.map {
+                "\(type(of: $0)) \(Int($0.documentView?.frame.width ?? 0)) wide in \(Int($0.contentView.bounds.width))"
+            }
+            _ = await swipe(content, middle, fingers: 120)
+            let fromTask = navigation.place
+            _ = await swipe(content, middle, fingers: -120)
+            let toTask = navigation.place
+            check(
+                "A swipe over a conversation goes back and forward",
+                posted && (swipes ? fromTask == .board && toTask == .task(task) : fromTask == .task(task)),
+                "back to \(fromTask.key), forward to \(toTask.key); under the pointer: \(under)")
+            navigation.place = .task(task)
+        }
+
         // MARK: Details pane
 
         /// The details pane's links by issue, from follows as zerod lists them (none polled), and a click on one.
@@ -1410,6 +1561,91 @@
                 "driving \(shown.map { "\($0.task) in \($0.app)" } ?? "nothing"): \(stopped.text.prefix(100))", how: "call")
         }
 
+        /// The @ list on the New task page draws over everything there, Zero's mark and name too, and hides them: the
+        /// window drawn by itself (as desktop_screenshot draws it) before "@" is typed and with the list open, the
+        /// pixels of the name's letters change under the list; drawn on top, they'd stay as they were.
+        func newTaskSuggestions(_ workspace: Workspace, _ window: NSWindow) async {
+            let name = "New task: the @ list draws over Zero's mark and name, and hides them"
+            let loops = ["e2e-one", "e2e-two", "e2e-three"]
+            for loop in loops { _ = await workspace.saveLoop(loop, description: "A loop for the checks", body: "Check.") }
+            defer { Task { for loop in loops { await workspace.deleteLoop(loop) } } }
+            app.navigation.place = .home
+            guard await until(5, { loops.allSatisfy { loop in workspace.loops.contains { $0.name == loop } } }) else {
+                return check(name, false, "loops \(workspace.loops.map(\.name))", how: "render")
+            }
+            // Where the name is, from accessibility (the tallest "Zero": the sidebar has a small one), in the window's
+            // points from its top left. Accessibility counts from the top of the main display.
+            let own = AXUIElementCreateApplication(getpid())
+            func all(_ e: AXUIElement, _ depth: Int = 0) -> [AXUIElement] {
+                depth > 60 ? [] : [e] + DesktopHands.children(e).flatMap { all($0, depth + 1) }
+            }
+            var mark = CGRect.null
+            _ = await until(5) {
+                mark =
+                    DesktopHands.windows(own).flatMap { all($0) }
+                    .filter {
+                        DesktopHands.string($0, kAXRoleAttribute) == "AXStaticText" && DesktopHands.string($0, kAXValueAttribute) == "Zero"
+                    }
+                    .map(DesktopHands.frameOf).max { $0.height < $1.height } ?? .null
+                return mark.height > 20
+            }
+            let top = (NSScreen.screens.first?.frame.height ?? 0) - window.frame.maxY
+            // The mark and the name: the mark is about 40 pt before the name's letters.
+            let area = CGRect(x: mark.minX - window.frame.minX - 42, y: mark.minY - top, width: mark.width + 42, height: mark.height)
+                .integral
+            func drawn() -> NSBitmapImageRep? {
+                guard let view = window.contentView?.superview ?? window.contentView,
+                    let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+                else { return nil }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                return rep
+            }
+            func light(_ rep: NSBitmapImageRep, _ x: Int, _ y: Int) -> CGFloat {
+                // One pixel a point or two: the rep's own scale.
+                let scale = CGFloat(rep.pixelsWide) / rep.size.width
+                return rep.colorAt(x: Int(CGFloat(x) * scale), y: Int(CGFloat(y) * scale))?.usingColorSpace(.deviceRGB)?
+                    .brightnessComponent ?? -1
+            }
+            let points = stride(from: Int(area.minX), to: Int(area.maxX), by: 1).flatMap { x in
+                stride(from: Int(area.minY), to: Int(area.maxY), by: 1).map { (x, $0) }
+            }
+            // The composer: the editable text just under the name (a kept task page's is elsewhere, hidden).
+            let field = views(NSTextView.self, in: window.contentView).first { field in
+                let below = window.frame.height - field.convert(field.bounds, to: nil).maxY - area.maxY
+                return field.isEditable && below > 0 && below < 120
+            }
+            guard !area.isEmpty, let field, let before = drawn() else {
+                return check(name, false, "name \(mark), area \(area), field \(field != nil), picture \(drawn() != nil)", how: "render")
+            }
+            // The letters: pixels far from the halo around them (the page's colour, at the area's corner).
+            let halo = light(before, Int(area.minX) + 1, Int(area.minY) + 1)
+            let ink = points.filter { abs(light(before, $0.0, $0.1) - halo) > 0.4 }
+            window.makeFirstResponder(field)
+            // What a typed "@" ends in (a posted key reaches no field in a window on no display), over whatever was there.
+            field.insertText("@", replacementRange: NSRange(location: 0, length: (field.string as NSString).length))
+            var kept = ink.count
+            var after: NSBitmapImageRep?
+            _ = await until(3) {
+                after = drawn()
+                kept = after.map { rep in ink.filter { abs(light(rep, $0.0, $0.1) - light(before, $0.0, $0.1)) < 0.1 }.count } ?? ink.count
+                return ink.count > 50 && kept * 5 < ink.count
+            }
+            let files = [("new-task-before.png", before), ("new-task-at.png", after)].compactMap { file, rep in
+                rep.flatMap { $0.representation(using: .png, properties: [:]) }.map { png -> String in
+                    let url = out.appendingPathComponent(file)
+                    try? png.write(to: url)
+                    return url.path
+                }
+            }
+            check(
+                name, ink.count > 50 && kept * 5 < ink.count,
+                "\(DesktopHands.locked ? "screen locked: " : "")text \"\(field.string)\"; the name's \(ink.count) letter pixels at \(area), \(kept) the same with the list open; \(files.joined(separator: ", "))",
+                how: "render")
+            field.insertText("", replacementRange: NSRange(location: 0, length: (field.string as NSString).length))
+            app.navigation.place = .task(task)
+            await pause(0.3)
+        }
+
         /// The middle of the first element with these words in a desktop_read, in the window's points.
         func center(in lines: String, _ words: String...) -> (x: Double, y: Double)? {
             guard
@@ -1474,6 +1710,228 @@
                 level != nil && moved == level && again == level,
                 "\(open?.row.id ?? "no selector"): slid to \(level ?? "nil"), shows \(moved ?? "nil"), reopened at \(again ?? "nil")",
                 how: "call")
+        }
+
+        /// The task's composer never scrolls past its text: no elasticity either way; a trackpad gesture over it, pushed
+        /// past either end, leaves the clip view's bounds inside the document while it runs and once it settles; on text
+        /// that fits nothing moves, the conversation behind included. Posted events move no scroll view in a window on
+        /// no display, so how far it scrolled is evidence only.
+        func composerOverscroll(_ window: NSWindow) async {
+            let name = "The composer has no elasticity, and a scroll past its ends leaves it inside its text"
+            app.navigation.place = .task(task)
+            await pause(0.5)
+            guard
+                let scroll = views(ComposeScroll.self, in: window.contentView).first(where: {
+                    !$0.isHiddenOrHasHiddenAncestor && $0.frame.width > 0 && ($0.documentView as? NSTextView)?.isEditable == true
+                }),
+                let field = scroll.documentView as? NSTextView
+            else { return check(name, false, "no composer", how: "call") }
+            let conversation = views(NSScrollView.self, in: window.contentView).filter {
+                !($0 is ComposeScroll) && !$0.isHiddenOrHasHiddenAncestor
+            }
+            .max { $0.frame.height < $1.frame.height }
+            let elastic = (scroll.verticalScrollElasticity, scroll.horizontalScrollElasticity)
+            // An elastic scroll view takes a gesture in a loop of its own, waiting on events that never come here.
+            guard elastic == (.none, .none) else {
+                return check(
+                    name, false, "elasticity vertical \(elastic.0.rawValue) horizontal \(elastic.1.rawValue), not none", how: "call")
+            }
+            let kept = field.string
+            func set(_ text: String) async {
+                window.makeFirstResponder(field)
+                field.insertText(text, replacementRange: NSRange(location: 0, length: (field.string as NSString).length))
+                await pause(0.4)
+            }
+            /// A trackpad gesture over the field's middle, `dy` points a step for eight steps (windowed events made
+            /// scrolls through their CGEvents), each given to the field's scroll view itself: the window's hit test
+            /// finds SwiftUI's hosting view there. How far the clip view went past the text's top or foot, read after
+            /// each event and as it settles.
+            func gesture(_ dy: Double) async -> (past: CGFloat, top: CGFloat) {
+                let clip = scroll.contentView
+                var past: CGFloat = 0
+                func sample() {
+                    let doc = scroll.documentView?.frame.height ?? 0
+                    past = max(past, -clip.bounds.minY, clip.bounds.maxY - max(doc, clip.bounds.height))
+                }
+                let at = inWindow(scroll, CGPoint(x: scroll.bounds.midX, y: scroll.bounds.height / 2))
+                let phases: [(CGScrollPhase, Double)] = [(.began, 0)] + Array(repeating: (.changed, dy), count: 8) + [(.ended, 0)]
+                var events: [NSEvent] = []
+                for (phase, step) in phases {
+                    guard
+                        let made = NSEvent.mouseEvent(
+                            with: .mouseMoved, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0),
+                        let cg = made.cgEvent
+                    else { continue }
+                    cg.type = .scrollWheel
+                    cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                    cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                    cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(step))
+                    cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: step)
+                    if let e = NSEvent(cgEvent: cg), e.window === window { events.append(e) }
+                }
+                for e in events {
+                    scroll.scrollWheel(with: e)
+                    sample()
+                }
+                for _ in 0..<10 {
+                    await pause(0.05)
+                    sample()
+                }
+                return (past, clip.bounds.minY)
+            }
+            let behind = conversation?.contentView.bounds.origin
+            await set("A short line")
+            let fitsUp = await gesture(40), fitsDown = await gesture(-40)
+            let behindAfter = conversation?.contentView.bounds.origin
+            await set((1...40).map { "Line \($0)" }.joined(separator: "\n"))
+            scroll.contentView.scroll(to: .zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
+            // Toward one end, the other, and back: past both ends whichever way the deltas' sign scrolls.
+            let long = [await gesture(400), await gesture(-400), await gesture(400)]
+            let doc = scroll.documentView?.frame.height ?? 0, height = scroll.contentView.bounds.height
+            await set(kept)
+            let past = ([fitsUp, fitsDown] + long).map(\.past).max() ?? 0
+            let moved = long.map(\.top).max() ?? 0
+            check(
+                // Moved stays evidence, not a condition: made events don't scroll a window on no display. The bounce
+                // under a real trackpad is the user's to see.
+                name, elastic == (.none, .none) && past < 0.5 && doc > height && behind == behindAfter,
+                "elasticity vertical \(elastic.0.rawValue) horizontal \(elastic.1.rawValue) (none is \(NSScrollView.Elasticity.none.rawValue)); past the ends at most \(past) pt (fits \(fitsUp.past), \(fitsDown.past); long \(long.map(\.past))); long text \(doc) pt in \(height) pt, scrolled to \(long.map(\.top))\(moved > 0 ? "" : " (the gesture moved nothing: no scroll view moves for made events in a window on no display)"); conversation behind \(behind.map { "\($0)" } ?? "none") then \(behindAfter.map { "\($0)" } ?? "none")",
+                how: "call"
+            )
+        }
+
+        /// A long conversation at its end as an ask's card comes up on the composer (the end's room growing with it), then
+        /// a trackpad gesture pushed on past the end, and its momentum. The page goes to its new end and stops: never past
+        /// it, never back and forth (where its clip view is, every frame from before the ask until it has settled).
+        /// AppKit scrolls no window on no display for made events, so the gesture moves nothing here: it is given anyway,
+        /// and what the page does meanwhile counted.
+        func conversationEnd(_ workspace: Workspace, _ window: NSWindow) async {
+            let name = "A conversation at its end stays still as its ask comes and a trackpad pushes on past it"
+            guard let long = await adoptTask(label: "Zero Dev e2e long", answers: 40),
+                await until(10, { workspace.conversation(long) != nil })
+            else { return check(name, false, "no long task", how: "event") }
+            defer { Task { await workspace.archive(long) } }
+            await workspace.pause([long])
+            /// The conversation's scroll view: many pages tall, the tallest shown.
+            func conversation() -> NSScrollView? {
+                views(NSScrollView.self, in: window.contentView).filter {
+                    !$0.isHiddenOrHasHiddenAncestor && !($0 is ComposeScroll)
+                        && ($0.documentView?.frame.height ?? 0) > $0.contentView.bounds.height * 3
+                }.max(by: { $0.frame.height < $1.frame.height })
+            }
+            // Every move of its clip view from the moment it opens (a frame's timer missed a jump there and back within one
+            // pass): kept to its end as its rows measure themselves, it goes one way.
+            // The first scroll view in the window that is many pages tall as it moves: the conversation (the sidebar easing
+            // to the task's row is another, its first move too short to pass).
+            var ys: [CGFloat] = [], followed: NSClipView?
+            let watch = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: nil, queue: nil) {
+                note in
+                MainActor.assumeIsolated {
+                    guard let clip = note.object as? NSClipView, let scroll = clip.enclosingScrollView, !(scroll is ComposeScroll),
+                        scroll.window === window
+                    else { return }
+                    if followed == nil, (scroll.documentView?.frame.height ?? 0) > clip.bounds.height * 5 { followed = clip }
+                    guard clip === followed else { return }
+                    ys.append(clip.bounds.origin.y)
+                }
+            }
+            app.navigation.place = .task(long)
+            await pause(2)
+            let scrolls = views(NSScrollView.self, in: window.contentView).filter { !$0.isHiddenOrHasHiddenAncestor }
+            guard let scroll = conversation(), followed == nil || followed === scroll.contentView else {
+                NotificationCenter.default.removeObserver(watch)
+                let found = scrolls.map {
+                    "\(type(of: $0)) \(Int($0.documentView?.frame.height ?? 0)) in \(Int($0.contentView.bounds.height))"
+                }
+                return check(name, false, "no conversation scroll view: \(found)", how: "event")
+            }
+            let clip = scroll.contentView
+            func end() -> CGFloat { (scroll.documentView?.frame.height ?? 0) - clip.bounds.height + scroll.contentInsets.bottom }
+            // At its end once its rows have measured themselves (a step of the composer's can come a moment later).
+            _ = await until(3) { abs(clip.bounds.origin.y - end()) < 1 }
+            let opened = (clip.bounds.origin.y, end())
+            // As it opens: to its end in one way, never back to where it first was.
+            let open = ys.count
+            _ = try? await ZerodLink().call(
+                "agentAsk", ["session": long, "args": ["tool": "ask", "question": "Carry on?", "options": ["Yes", "No"]]])
+            await pause(2)
+            let card = ys.count
+            /// A trackpad's: the fingers' phase or, let go, its momentum's; `dy` toward the end, whatever the direction
+            /// setting. Made as it's given, its timestamp then.
+            func event(_ phase: CGScrollPhase?, momentum: CGMomentumScrollPhase = .none, _ dy: Double) -> NSEvent? {
+                guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(-dy), wheel2: 0, wheel3: 0)
+                else { return nil }
+                cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase?.rawValue ?? 0))
+                cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(momentum.rawValue))
+                return NSEvent(cgEvent: cg)
+            }
+            let gesture: [() -> NSEvent?] =
+                [{ event(.began, 0) }] + Array(repeating: { event(.changed, 24) }, count: 12) + [{ event(.ended, 0) }]
+                + [{ event(nil, momentum: .begin, 30) }]
+                + stride(from: 28.0, to: 1, by: -2).map { dy in { event(nil, momentum: .continuous, dy) } }
+                + [{ event(nil, momentum: .end, 0) }]
+            let phases = gesture.compactMap { $0().map { "\($0.phase.rawValue)/\($0.momentumPhase.rawValue)" } }
+            for make in gesture {
+                if let e = make() { scroll.scrollWheel(with: e) }
+                await pause(1.0 / 60)
+            }
+            // So the same gesture as the scroll view carries one out on a display: a live scroll, the clip view moved
+            // a frame at a time as far as AppKit lets it, fingers then momentum.
+            let hand: [CGFloat] = Array(repeating: 24, count: 12) + stride(from: 30.0, to: 1, by: -2).map { CGFloat($0) }
+            NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+            for dy in hand {
+                var bounds = clip.bounds
+                bounds.origin.y += dy
+                clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
+                scroll.reflectScrolledClipView(clip)
+                NotificationCenter.default.post(name: NSScrollView.didLiveScrollNotification, object: scroll)
+                await pause(1.0 / 60)
+            }
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+            await pause(1)
+            // The end shorter while the page keeps to it (the composer's lines gone, as a card's step makes it): AppKit
+            // holds the clip view inside the shorter page before SwiftUI reads where it is.
+            let composer =
+                views(ComposeScroll.self, in: window.contentView).first {
+                    !$0.isHiddenOrHasHiddenAncestor && ($0.documentView as? NSTextView)?.isEditable == true
+                }?.documentView as? NSTextView
+            let kept = composer?.string ?? ""
+            func write(_ text: String) {
+                guard let composer else { return }
+                window.makeFirstResponder(composer)
+                composer.insertText(text, replacementRange: NSRange(location: 0, length: (composer.string as NSString).length))
+            }
+            write("One\nTwo\nThree\nFour")
+            await pause(1.5)
+            let shrink = ys.count
+            write("")
+            await pause(3)
+            NotificationCenter.default.removeObserver(watch)
+            write(kept)
+            // Back and forth: a move one way after a move the other (half a point either way is no move); the gesture
+            // and the end shrinking each one way at most.
+            func turns(_ ys: ArraySlice<CGFloat>) -> Int {
+                var turns = 0, last: CGFloat = 0
+                for (a, b) in zip(ys, ys.dropFirst()) where abs(b - a) > 0.5 {
+                    if last != 0, (b - a).sign != last.sign { turns += 1 }
+                    last = b - a
+                }
+                return turns
+            }
+            let opening = turns(ys.prefix(open))
+            let shook = (gestured: turns(ys.prefix(shrink).dropFirst(max(0, open - 1))), shrunk: turns(ys.dropFirst(shrink)))
+            let settled = ys.last ?? 0, now = end()
+            check(
+                name,
+                opened.1 > 100 && abs(opened.0 - opened.1) < 1 && composer != nil && abs(settled - now) < 1 && opening == 0
+                    && shook == (0, 0)
+                    && ys.count > 2 && scroll.verticalScrollElasticity == .none,
+                "opened at \(opened.0) of \(opened.1), settled at \(settled) of \(now); \(ys.count) moves (\(open) as it opened, \(card) before the gesture: phase/momentum \(phases.prefix(2)) … \(phases.suffix(2)); \(shrink) before the end shrank, composer \(composer != nil)): \(opening) turns as it opened, \(shook.gestured) as its ask came and the gesture pushed, \(shook.shrunk) as the end shrank; elasticity \(scroll.verticalScrollElasticity.rawValue) (none is \(NSScrollView.Elasticity.none.rawValue)); y \(ys.map { Int($0.rounded()) })"
+            )
+            app.navigation.place = .task(task)
         }
 
         /// An image pasted (⌘V) into an ask's "Something else…": a tile over the words in the box, not its path; the
@@ -1555,6 +2013,82 @@
             let closed = await agent("browser_tab_close", ["tabId": tabId])
             let gone = await until(4) { !self.tabs.tabs.contains { $0.openedBy == self.task } }
             check("browser_tab_close closes it, in the panel too", closed.ok && gone, String(closed.text.prefix(80)), how: "call")
+        }
+    }
+
+    extension DevE2E {
+        // MARK: A running step
+
+        /// Red and spinner-blue pixels in a view drawn as the window has it (cacheDisplay), and through ImageRenderer.
+        static func pixels(_ rep: NSBitmapImageRep?) -> (red: Int, blue: Int) {
+            guard let rep else { return (0, 0) }
+            var red = 0, blue = 0
+            for y in 0..<rep.pixelsHigh {
+                for x in 0..<rep.pixelsWide {
+                    guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.5 else { continue }
+                    if c.redComponent > 0.75 && c.greenComponent < 0.45 && c.blueComponent < 0.45 { red += 1 }
+                    if c.blueComponent > 0.75 && c.redComponent < 0.45 && c.greenComponent < 0.7 { blue += 1 }
+                }
+            }
+            return (red, blue)
+        }
+
+        func drawn(_ view: NSView, _ name: String) -> (red: Int, blue: Int) {
+            view.layoutSubtreeIfNeeded()
+            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            if let rep { view.cacheDisplay(in: view.bounds, to: rep) }
+            try? rep?.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent("\(name).png"))
+            return Self.pixels(rep)
+        }
+
+        /// A step still running shows its spinner, folded under its turn's heading and open: never SwiftUI's red mark
+        /// for a view it can't draw (the spinner is an AppKit view). The turn's block alone, drawn as the window draws
+        /// it; the window with the step in it too, as images to look at (its badges are red, so not counted).
+        func runningStep(_ workspace: Workspace, _ window: NSWindow) async {
+            let id = "e2e-running-step"
+            let command = ConversationItem(
+                id: "c1", turn: "t1", kind: .command(command: "sleep 600", cwd: Paths.dir.path, output: "", exitCode: nil, durationMs: nil),
+                status: .running, at: Int(Date().timeIntervalSince1970 * 1000))
+            var counts: [String] = []
+            var ok = true
+            for open in [false, true] {
+                let host = NSHostingView(
+                    rootView: WorkBlock(items: [command], start: Date().addingTimeInterval(-5), end: nil, live: true, cwd: Paths.dir.path)
+                        .padding(12).frame(width: 520, height: 140, alignment: .topLeading).background(Theme.card))
+                host.frame = NSRect(x: 0, y: 0, width: 520, height: 140)
+                let holder = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                holder.contentView = host
+                holder.setFrameOrigin(DevWindow.away)
+                await pause(0.5)
+                if open { NotificationCenter.default.post(name: WorkBlock.unfold, object: "c1") }
+                await pause(0.8)
+                let seen = drawn(host, "running-step-\(open ? "open" : "folded")")
+                counts.append("\(open ? "open" : "folded"): red \(seen.red), blue \(seen.blue)")
+                ok = ok && seen.red == 0 && seen.blue > 0
+                holder.isReleasedWhenClosed = false
+                holder.close()
+            }
+            check("A running step shows its spinner, folded and open, never a red mark", ok, counts.joined(separator: "; "), how: "render")
+
+            // In the window, as the user has it: a task working on that step.
+            var conversation = Conversation(id: id, provider: .claude, cwd: Paths.dir.path)
+            conversation.status = .working
+            conversation.turn = "t1"
+            conversation.items = [ConversationItem(id: "u1", turn: "t1", kind: .user(text: "Run the long build"), status: .done), command]
+            conversation.seq = 3
+            workspace.devShow(conversation, id: id)
+            let before = app.navigation.place
+            app.navigation.place = .task(id)
+            await pause(2)
+            if let content = window.contentView {
+                _ = drawn(content, "running-step-window-folded")
+                NotificationCenter.default.post(name: WorkBlock.unfold, object: "c1")
+                await pause(1.5)
+                _ = drawn(content, "running-step-window-open")
+            }
+            app.navigation.place = before
+            workspace.devShow(nil, id: id)
+            await pause(0.5)
         }
     }
 #endif

@@ -275,7 +275,7 @@ struct ConversationView: View {
             for _ in 0..<20 {
                 try? await Task.sleep(for: .milliseconds(50))
                 if let before, let now = tracker.geometry, now.contentSize.height > before.contentSize.height + 1 {
-                    position.scrollTo(y: before.contentOffset.y + (now.contentSize.height - before.contentSize.height))
+                    scroll(to: before.contentOffset.y + (now.contentSize.height - before.contentSize.height), in: now)
                     grew = true
                     break
                 }
@@ -551,6 +551,7 @@ struct ConversationView: View {
         .environment(\.askInbox, inbox)
         .environment(\.playback, playback)
         .environment(\.askSession, conversation.id)
+        .environment(\.advisorName, conversation.advisor.flatMap { $0.isEmpty ? nil : ModelNames.readable($0) })
         // The box, not a closure: a closure in the environment reads as changed on every redraw, and each view reading it
         // (every message's text) was updated with every word streamed.
         .environment(\.replyToSelection, box)
@@ -703,7 +704,7 @@ struct ConversationView: View {
         guard beyond > 0 else { return }
         liftMin = max(0, liftMin - beyond)
         if liftMin == 0 { lifted = false; liftPlaced = false; liftId = nil }
-        DispatchQueue.main.async { position.scrollTo(y: offset) }
+        DispatchQueue.main.async { scroll(to: offset, in: g) }
     }
 
     private func scrollGeometryChanged(from before: ScrollGeometry, to now: ScrollGeometry) {
@@ -781,8 +782,10 @@ struct ConversationView: View {
         }
         // Past the end is never a place to be (a page left blank until scrolled): back to the end, whether
         // following it or restoring where you were.
-        else if end > 0, now.contentOffset.y > end + 2 {
-            position.scrollTo(y: end)
+        // Not under your hand: a trackpad pushing on past the end is the scroll view's to stop, and pulled back here
+        // as it pushed, the page shook.
+        else if end > 0, !userScrolling, now.contentOffset.y > end + 2 {
+            scroll(to: end, in: now)
         }
     }
 
@@ -799,12 +802,21 @@ struct ConversationView: View {
             scroll.reflectScrolledClipView(clip)
             return
         }
+        // Not in its window yet (the page opening): SwiftUI kept the point and applied it once it was, twice, by then
+        // short of an end its rows had grown, and the page jumped back up to it and down again. It opens at its end on
+        // its own (initialOffset), and is kept to it from here once it's in.
+        guard tracker.scroller != nil else { return }
         // Where it is already, and held there (not to a view or the edge, which the scroll view would keep it to).
-        guard abs(g.contentOffset.y - y) > 0.25 || position.point?.y != y else { return }
+        guard abs(g.contentOffset.y - y) > 0.25 || position.point?.y != y + g.contentInsets.top else { return }
         // A point, never the edge: sent to its bottom edge, the scroll view kept to it, jumped to each new end as words
         // came in, and the glide pulled it back down and slid it up again.
-        position.scrollTo(y: y)
+        scroll(to: y, in: g)
     }
+
+    /// To a content offset, as ScrollGeometry has it (the top inset in it): ScrollPosition's point is from the content's
+    /// top. Given the offset, it landed the inset short of the end, and the page, moved to the end on its clip view
+    /// directly, was put back there by SwiftUI at its next update, and up again: the page shook 2 pt at its end.
+    private func scroll(to offset: CGFloat, in g: ScrollGeometry) { position.scrollTo(y: offset + g.contentInsets.top) }
 
     private func startTicking() { if !foot.ticking { foot.ticking = true } }
 
@@ -994,7 +1006,7 @@ struct ConversationView: View {
             // Not as a message is sent (the composer emptied): its room holds the page and the lift slides it up, one
             // movement; brought down to the end first, the page dropped by the composer's height, then rose.
             if grown < 0, atEnd, !following, !lifted, let g = tracker.geometry {
-                position.scrollTo(y: max(-g.contentInsets.top, Self.end(of: g) + grown))
+                scroll(to: max(-g.contentInsets.top, Self.end(of: g) + grown), in: g)
             }
         }
     }

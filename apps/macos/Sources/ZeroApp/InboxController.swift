@@ -43,13 +43,7 @@ final class InboxController {
     var barTop: CGFloat { max(0, barPanel / 2 - 100) }
     /// How far the bar's middle is below its panel's middle (above, negative): the inbox's cards line up with it.
     var barMiddle: CGFloat { barTop + barHeight / 2 - barPanel / 2 }
-    /// The bar's join: how far in from the screen's edge its base sits. 0 at the screen's edge; with Zero's window's
-    /// right edge at the bar's, 4 (the window's right rail strip, between its page and its edge: the bar grows out of
-    /// it); during a drag away, riding on the strip up to 12 pt more, then letting go. The bar's panel is moved there
-    /// (AppDelegate's `trackBarJoin`); the bar draws its border by it.
-    var barJoin: CGFloat = 0
-    /// The bar's panel's width: the bar's 44 and room for its join to ride in (`barJoin`); the rest lets the pointer
-    /// through.
+    /// The bar's panel's width: the bar's 44; the rest lets the pointer through.
     static let pillWidth: CGFloat = 64
     /// The agents the bar shows now, top to bottom: a slot of one gone from the bar is not under the pointer.
     @ObservationIgnored var barOrder: [String] = []

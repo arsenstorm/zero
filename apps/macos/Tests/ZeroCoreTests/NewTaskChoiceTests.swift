@@ -61,3 +61,10 @@ import Testing
 @Test func anAdvisorCallReadsAsAskingIt() {
     #expect(ToolNames.name("advisor") == "Asked its advisor")
 }
+
+/// A step about a web page names it as a link its line opens; a step with none has no link.
+@Test func aStepAboutAWebPageLinksIt() {
+    #expect(ToolNames.link(#"{"url":"https://nginx.org/en/security_advisories.html","prompt":"list them"}"#)?.host == "nginx.org")
+    #expect(ToolNames.link(#"{"file_path":"/tmp/a","pattern":"http"}"#) == nil)
+    #expect(ToolNames.link("not json") == nil)
+}

@@ -17,8 +17,6 @@ struct BarKnob<Label: View>: View {
     var waiting = false
     /// Bumped as something new comes in: the arc brightens once.
     var pulse = 0
-    /// Its border, 0 to 1: drawn only while the bar joins a window's page (`InboxController.barJoin`).
-    var outline: CGFloat = 0
     @ViewBuilder var label: (_ hovered: Bool) -> Label
     @State private var hovered = false
     /// How far out it is, eased by the button itself (see `.onChange` below).
@@ -59,19 +57,16 @@ struct BarKnob<Label: View>: View {
     }
 
     /// The arc (or ring, or button) on the bar's surface, the waiting colour laid over it by `tint`, all of it on the
-    /// arc and none of it on the button. No outline (the surface alone is its shape) but while the bar joins a window's
-    /// page, when it has the page's hairline (`outline`).
+    /// arc and none of it on the button, and the bar's hairline round it (blue while waiting, fading with it).
     private func seed(_ open: CGFloat, tint: CGFloat) -> some View {
         let shape = BarSeed(open: open, top: top), blue = AgentStatus.needsYou.color.opacity(tint * (1 - open))
         // The blue inside the surface's own cut, not a shape filled over it: a filled shape draws as a vector shape
         // layer, its edges harder and thinner on screen than the masked surface's; in the same cut it's the settings
-        // arc exactly, in blue. Its border (only while the bar joins a window's page) the same way, a colour cut to the
-        // outline: the page's grey, or blue while waiting, fading with it. Unjoined there's none, as on the settings
-        // arc: a blue edge there made the waiting arc a point heavier than it.
+        // arc exactly, in blue. Its border the same way, a colour cut to the outline: grey, or blue while waiting.
         let waiting = tint * (1 - open)
         return BarSurface(shape: shape, colour: blue)
-            .overlay(Outline.drawn(Theme.stroke.opacity(outline * (1 - waiting)), round: shape))
-            .overlay(Outline.drawn(AgentStatus.needsYou.color.opacity(outline * waiting), round: shape))
+            .overlay(Outline.drawn(Theme.stroke.opacity(1 - waiting), round: shape))
+            .overlay(Outline.drawn(AgentStatus.needsYou.color.opacity(waiting), round: shape))
     }
 }
 
@@ -171,7 +166,7 @@ struct BarPeak: Shape {
     /// The bump's rounding, a circle touching both hollows on the screen's side of the buttons' axis. Its height comes
     /// from this alone (the hollows keep their gap): 2.5 pt stands it about 13.7 pt off the edge, 6 pt only 10.7.
     var tip: CGFloat = 2.5
-    /// Its outline alone, open at its base, as the bar's border when it joins a window's page.
+    /// Its outline alone, open at its base (the screen's edge), as the bar's border.
     var open = false
 
     func path(in rect: CGRect) -> Path {

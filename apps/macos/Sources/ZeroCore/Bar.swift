@@ -143,17 +143,3 @@ public enum BarReach: Sendable {
         return nearSettings ? .settings : .neither
     }
 }
-
-/// The bar's base against Zero's window: how far in from the screen's edge it sits (`InboxController.barJoin`).
-public enum BarEdge {
-    /// The window's right rail strip, between its page and its edge (WorkspaceView's): the bar grows out of it.
-    public static let strip = 4.0
-    /// How far a window dragged away carries the bar with it before it lets go.
-    public static let ride = 12.0
-
-    /// `away`: how far the window's right edge is in from the screen's (negative: past it). At the edge, the strip; up
-    /// to `ride` away, the strip and the distance; further, or past the edge, none.
-    public static func join(away: Double) -> Double {
-        away < -0.5 || away > ride ? 0 : strip + max(0, away)
-    }
-}

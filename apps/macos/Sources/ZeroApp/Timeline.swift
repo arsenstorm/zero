@@ -91,6 +91,11 @@ struct WorkBlock: View {
     @State private var answering = false
     @Environment(\.playback) private var playback
     private var open: Bool { expanded }
+    @Environment(\.advisorName) private var advisorName
+    /// How many times it asked its advisor (Claude Code's `--advisor`) and had an answer: a failed call isn't advice.
+    private var advised: Int {
+        items.filter { if case let .tool(name, _) = $0.kind { ToolNames.isAdvisor(name) && $0.status != .failed } else { false } }.count
+    }
     /// Steps of substance: reading, running, editing. Thought alone isn't work, nor its words.
     private var worked: Bool {
         items.contains { if case .reasoning = $0.kind { false } else if case .agent = $0.kind { false } else { true } }
@@ -187,6 +192,18 @@ struct WorkBlock: View {
                         let verb = worked ? "Worked" : "Thought"
                         Text(Took.text(verb, start.flatMap { start in end.map { $0.timeIntervalSince(start) } }))
                     }
+                    // Its advisor asked: said on the line itself, folded or not, so it's never a claim to take on trust.
+                    if advised > 0 {
+                        HStack(spacing: 4) {
+                            NucleoIcon(ToolNames.advisorIcon, size: 12)
+                            Text(ToolNames.advisor(advisorName) + (advised == 1 ? "" : " \(advised)×"))
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(.primary.opacity(0.75))
+                        .padding(.horizontal, 7)
+                        // Its pill reaches past the line rather than making it taller: nothing moves as it comes.
+                        .background(Capsule().fill(Theme.choice).padding(.vertical, -3))
+                    }
                     if !items.isEmpty { NucleoIcon("chevron-down", size: 10).rotationEffect(.degrees(open ? 0 : -90)) }
                 }
                 // Figures of one width: the count ticks without the chevron after it shifting.
@@ -263,7 +280,6 @@ struct WorkBlock: View {
                             }
                         }
                         .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22, alignment: .leading)
-                        .allowsHitTesting(false)
                     }
                     // Between steps, until its words start to stream (before any step, the heading breathes): not
                     // under a step still running, which says so itself. Its place kept, so nothing below moves.
@@ -339,6 +355,8 @@ extension EnvironmentValues {
     /// The inbox, and the session whose chat this is: what a step that asked shows its card from.
     @Entry var askInbox: InboxController? = nil
     @Entry var askSession: String? = nil
+    /// The task's advisor as people say it ("Fable"): what its steps say they asked.
+    @Entry var advisorName: String? = nil
 }
 
 /// "Thinking…", breathing, while the agent works with nothing new to show: never mistaken for stuck.
@@ -861,6 +879,8 @@ struct ScrollHandle: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             tracker?.scroller = window == nil ? nil : enclosingScrollView
+            // At its end it stops, as the composer does: no bounce past it.
+            enclosingScrollView?.verticalScrollElasticity = .none
         }
     }
 
@@ -1114,11 +1134,27 @@ struct SkeletonTurns: View {
 /// tone and spacing), so opening the block changes nothing about the line.
 struct StepLine: View {
     let item: ConversationItem
+    @Environment(\.advisorName) private var advisorName
 
     var body: some View {
         HStack(spacing: 8) {
-            StatusIcon(status: item.status)
-            text.lineLimit(1).truncationMode(.tail)
+            Group {
+                if case let .tool(name, _) = item.kind, ToolNames.isAdvisor(name), item.status == .done {
+                    NucleoIcon(ToolNames.advisorIcon, size: 13).frame(width: 14, height: 16)
+                } else {
+                    StatusIcon(status: item.status)
+                }
+            }
+            .allowsHitTesting(false)
+            // Only a web page's link takes a click: the rest of the line is the step's state, read.
+            if case let .tool(name, detail) = item.kind, !ToolNames.isAdvisor(name), ToolNames.link(detail) != nil {
+                HStack(spacing: 0) {
+                    Text(ToolNames.name(name) + "  ").fontWeight(.medium).lineLimit(1).allowsHitTesting(false)
+                    ToolDetail(detail: detail)
+                }
+            } else {
+                text.lineLimit(1).truncationMode(.tail).allowsHitTesting(false)
+            }
         }
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
@@ -1132,6 +1168,8 @@ struct StepLine: View {
             } else {
                 Text(description)
             }
+        case let .tool(name, detail) where ToolNames.isAdvisor(name):
+            Text(ToolNames.advisor(advisorName)).fontWeight(.medium) + Text("  " + detail).foregroundStyle(.tertiary)
         case let .tool(name, detail):
             Text(ToolNames.name(name)).fontWeight(.medium) + Text("  " + ToolNames.detail(detail)).foregroundStyle(.tertiary)
         case let .fileChange(changes): Text("Edited " + changes.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", "))

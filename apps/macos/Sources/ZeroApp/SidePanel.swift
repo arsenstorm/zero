@@ -237,6 +237,9 @@ enum BrowserKeys {
         kept = task
     }
 
+    /// The pointer is on the panel's page.
+    static func onPage(_ event: NSEvent) -> Bool { page(under: event) != nil }
+
     /// The mouse's back (-1) or forward (1), or a swipe: in the panel's page under the pointer; false leaves it to Zero.
     static func go(_ step: Int, under event: NSEvent) -> Bool {
         guard let page = page(under: event) else { return false }

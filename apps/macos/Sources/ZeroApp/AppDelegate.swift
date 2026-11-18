@@ -49,18 +49,13 @@ import ZeroCore
     private var moveWindow: NSWindow?
     private var launchedAtLogin = false
 
-    /// A zero://pad link, clicked anywhere: the pad, at its section. A zero://loop link: the loop.
+    /// A zero:// link, clicked anywhere: a pad (at its section), a loop, a Later item, a task.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard moveWindow == nil else { return }
-        if let other = urls.first(where: { $0.scheme == "zero" && ["loop", "later", "task"].contains($0.host) }) {
-            openZeroURL(other); return
-        }
-        guard let (id, section) = urls.lazy.compactMap(PadLinks.parse).first else { return }
-        navigation.place = .pad(id)
-        navigation.padSection = section
-        openWorkspace()
+        if let url = urls.first(where: { $0.scheme == "zero" }) { openZeroURL(url) }
     }
 
+    /// What a zero:// link (or a path) clicked in Zero or anywhere opens.
     @objc func openZeroURL(_ url: URL) {
         if url.isFileURL { OpenTarget.open(path: url.path); return }
         let name = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -68,6 +63,10 @@ import ZeroCore
         case "loop": navigation.place = name.isEmpty ? .loops : .loop(name)
         case "later": navigation.place = name.isEmpty ? .later : .laterItem(name)
         case "task": openTask(url)
+        case "pad":
+            guard let (id, section) = PadLinks.parse(url) else { return }
+            navigation.place = .pad(id)
+            navigation.padSection = section
         default: return
         }
         openWorkspace()
@@ -314,6 +313,37 @@ import ZeroCore
             if !BrowserKeys.go(step, under: event) { if step < 0 { navigation.goBack() } else { navigation.goForward() } }
             return nil
         }
+        // A trackpad's two-finger swipe between pages (PageSwipe), when the user swipes with two fingers (System
+        // Settings › Trackpad); a mouse's wheel has no gesture and is left alone.
+        var swipe = PageSwipe()
+        NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, event.window === workspaceWindow, event.phase != [] || event.momentumPhase != [] else { return event }
+            let began = event.phase == .began
+            let free = began && NSEvent.isSwipeTrackingFromScrollEventsEnabled && !scrollsSideways(under: event)
+            let fingers = event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX
+            guard
+                let step = swipe.scroll(
+                    began: began, momentum: event.momentumPhase != [], fingers: fingers, dy: event.scrollingDeltaY, free: free)
+            else { return event }
+            if step < 0 { navigation.goBack() } else if step > 0 { navigation.goForward() }
+            return nil
+        }
+    }
+
+    /// Something under the pointer scrolls sideways, and keeps a sideways gesture: a scroll view wider inside than out
+    /// (a command's output, a diff), or the side panel's page, whose own scrolling Zero can't see. Found by the views'
+    /// frames, not a hit test, which a SwiftUI window answers with its hosting view.
+    private func scrollsSideways(under event: NSEvent) -> Bool {
+        func scrolls(_ view: NSView) -> Bool {
+            guard !view.isHidden, view.bounds.contains(view.convert(event.locationInWindow, from: nil)) else { return false }
+            if let scroll = view as? NSScrollView, let inside = scroll.documentView,
+                inside.frame.width > scroll.contentView.bounds.width + 1
+            {
+                return true
+            }
+            return view.subviews.contains(where: scrolls)
+        }
+        return BrowserKeys.onPage(event) || event.window?.contentView.map(scrolls) == true
     }
 
     /// Zero is in the Dock while one of its windows (onboarding, the workspace) is open, or always without the bar (its

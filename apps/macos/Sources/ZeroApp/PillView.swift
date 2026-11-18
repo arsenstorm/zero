@@ -14,8 +14,7 @@ struct PillShape: InsettableShape {
     var radius: CGFloat = 22
     var fillet: CGFloat = 22
     var inset: CGFloat = 0
-    /// Its outline alone, open at its base: from the top fillet's end round to the bottom one's, as the bar's border
-    /// when it joins a window's page (the page's own hairline carries on from each end).
+    /// Its outline alone, open at its base (the screen's edge): from the top fillet's end round to the bottom one's.
     var open = false
 
     func inset(by amount: CGFloat) -> PillShape {
@@ -243,9 +242,6 @@ struct PillView: View {
                 }
             }
         }
-        // Joined to Zero's window, the bar's panel sits on the window's right rail strip (AppDelegate's `trackBarJoin`
-        // moves it); here only its border fades in and out, on the bar's curve.
-        .animation(reduceMotion ? nil : barMotion(entering: controller.barJoin > 0), value: controller.barJoin)
         // Its top held where it is (`barTop`), whatever it shows: every change grows or shrinks it at its foot, and the
         // inbox's arc and all above stay put, rather than the bar re-centring in its panel. The rest of the panel is
         // empty and lets the pointer through.
@@ -253,9 +249,6 @@ struct PillView: View {
         .frame(height: controller.barPanel, alignment: .top)
         .frame(width: InboxController.pillWidth, alignment: .trailing)
     }
-
-    /// The bar's border, 0 to 1: only while it joins a window's page, the page's hairline carrying on round the bar.
-    private var joined: CGFloat { min(1, controller.barJoin / 4) }
 
     /// The dots, between the bar's curves, grouped by workspace; at least a slot tall, so the curves always fit. Each
     /// group opens with the 4 pt between groups (the first's taken off the bar's padding), so a group closing takes its
@@ -267,12 +260,10 @@ struct PillView: View {
         }
         .frame(width: 32).frame(minHeight: 28)
         .padding(.top, 8 + 22 - 4).padding(.bottom, 8 + 22).padding(.horizontal, 6)
-        // The surface alone is its shape: no outline, but while the bar joins a window's page. Then the page's hairline
-        // runs on round it: open at its base, just outside its surface (as the page's is just inside the page), so at
-        // each fillet's end it lies on the page's hairline exactly, one line, the same 1 pt.
+        // A hairline round it, open at the screen's edge, so it holds its shape over a page of its own colour (Zero's).
         .background(BarSurface(shape: PillShape()))
         // Cut to its outline, as the arcs' borders are (a stroke draws as a vector shape layer, harder on screen).
-        .overlay(Outline<PillShape>.drawn(Theme.stroke.opacity(joined), round: PillShape(open: true).inset(by: -0.5)))
+        .overlay(Outline<PillShape>.drawn(Theme.stroke, round: PillShape(open: true).inset(by: -0.5)))
     }
 
     /// A workspace's agents under its mark (the window's too, when more than one group shows). Only the window's is
@@ -416,13 +407,13 @@ struct PillView: View {
             } else if barFoot {
                 settingsKnob
             } else {
-                BarKnob(out: false, outline: joined) { _ in EmptyView() }.allowsHitTesting(false)
+                BarKnob(out: false) { _ in EmptyView() }.allowsHitTesting(false)
             }
         }
         .frame(width: 44)
         .background {
             BarSurface(shape: BarPeak())
-                .overlay(Outline<BarPeak>.drawn(Theme.stroke.opacity(joined), round: BarPeak(open: true)).offset(x: -0.5))
+                .overlay(Outline<BarPeak>.drawn(Theme.stroke, round: BarPeak(open: true)).offset(x: -0.5))
         }
     }
 
@@ -441,8 +432,7 @@ struct PillView: View {
     private var inboxKnob: some View {
         let selected = controller.agentFilter
         return BarKnob(
-            top: true, out: inboxOut, passing: controller.barAiming, waiting: !controller.store.open.isEmpty, pulse: inboxPulse,
-            outline: joined
+            top: true, out: inboxOut, passing: controller.barAiming, waiting: !controller.store.open.isEmpty, pulse: inboxPulse
         ) { _ in
             // 16 pt, on whole points in the 32 pt disc; half a point up, as the tray's ink sits low in its box. Out is
             // the only time it shows, so always the text's colour (one solid white in dark).
@@ -464,7 +454,7 @@ struct PillView: View {
     /// The settings button, in the bottom hollow: out with the pointer in its zone at the bar's foot, in while the
     /// inbox's panel is open.
     private var settingsKnob: some View {
-        BarKnob(out: settingsOut, passing: controller.barAiming, outline: joined) { _ in
+        BarKnob(out: settingsOut, passing: controller.barAiming) { _ in
             NucleoIcon("gear", size: 16).foregroundStyle(.primary)
         }
         .onTapGesture(perform: customiseBar)
@@ -478,7 +468,7 @@ struct PillView: View {
     private var desktopKnob: some View {
         let driving = Desktop.shared.driving
         let said = "\(driving?.task ?? "A task") is using \(driving?.app ?? "an app")"
-        return BarKnob(out: true, waiting: true, outline: joined) { _ in
+        return BarKnob(out: true, waiting: true) { _ in
             NucleoIcon("cursor-rays", size: 16).foregroundStyle(.primary)
         }
         .onTapGesture { Desktop.shared.stop() }

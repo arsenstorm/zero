@@ -3,11 +3,11 @@ import SwiftUI
 import ZeroCore
 
 /// A lead's issues (`zero issue`) as one live board at the top of its conversation, so its messages carry only what
-/// changed and what it decided. Closed, a 36 pt strip: how many, a pill per state, and the first that's on the user.
-/// Opened, the board drops over the page (never pushing it): a row per issue, as tall as its words, with its PR,
-/// what it needs from the user and the lead's own columns (`zero issue --pr --needs --field`), in zerod's order as it
-/// opens and kept so while open (a changed row stays put, its cell lit a moment); a row opened shows a worker's ask,
-/// answerable there, and the states it went through. One issue, and the strip is its row.
+/// changed and what it decided. Closed, a 36 pt strip: a bar of how far they've come (a segment per state), and the
+/// first that's on the user. Opened, the board drops over the page (never pushing it): a row per issue, as tall as its
+/// words, with its PR, what it needs from the user and the lead's own columns (`zero issue --pr --needs --field`), in
+/// zerod's order as it opens and kept so while open (a changed row stays put, its cell lit a moment); a row opened
+/// shows a worker's ask, answerable there, and the states it went through. One issue, and the strip is its row.
 struct IssueStrip: View {
     let workspace: Workspace
     let inbox: InboxController
@@ -85,13 +85,14 @@ struct IssueStrip: View {
         // What's on the user: one with an ask to answer first.
         let theirs = IssueBoard.sorted(issues).filter { ["you", "over"].contains($0.state) }
         let first = theirs.first { ask($0) != nil } ?? theirs.first
+        let counts = IssueBoard.counts(issues)
+        let done = counts.first { $0.state == .done }?.count ?? 0
         return HStack(spacing: 10) {
-            Text("Issues").font(.system(size: 12.5, weight: .medium))
-            Text("\(issues.count)").font(.system(size: 12.5)).monospacedDigit().foregroundStyle(.tertiary)
-            HStack(spacing: 6) {
-                ForEach(IssueBoard.counts(issues), id: \.state) { state, count in Count(state: state, count: count) }
-            }
-            Spacer(minLength: 8)
+            // How far they've come: a segment per state, done first; the counts on hover.
+            Progress(counts: counts.reversed(), total: issues.count)
+                .tip(counts.map { "\($0.count) \(TaskStateIcon.look($0.state).name.lowercased())" }.joined(separator: " · "))
+            Text("\(done) of \(issues.count) done").font(.system(size: 12.5)).monospacedDigit().foregroundStyle(.secondary)
+            if first != nil { Rectangle().fill(Theme.stroke).frame(width: 1, height: 16).padding(.horizontal, 2) }
             if let first {
                 HStack(spacing: 5) {
                     if first.state == "you" { PixelIcon("px-circle-question", height: 12).foregroundStyle(.blue) }
@@ -100,6 +101,7 @@ struct IssueStrip: View {
                 }
                 .font(.system(size: 12.5)).lineLimit(1).truncationMode(.tail)
             }
+            Spacer(minLength: 8)
             NucleoIcon("chevron-down", size: 10).foregroundStyle(.secondary).rotationEffect(.degrees(opened ? 180 : 0))
         }
         .padding(.horizontal, 14).frame(height: Self.height)
@@ -157,7 +159,10 @@ struct IssueStrip: View {
 
     /// Where a row's "Where it stands" starts: its opened steps' words line up under it.
     private static let boardWhere = 16 + Column.state + Column.gap + Column.issue + Column.gap + Column.pr + Column.gap
-    private static let soloWhere = 16 + Column.state + Column.gap + Column.issue + Column.gap
+    private static let soloWhere = soloLead + Column.state + Column.gap + Column.issue + Column.gap
+    /// The one issue's state pill (20 pt) sits as far from the card's left edge as from its top and bottom, 8 pt: at
+    /// the board's 16 the pill, a shape at the card's edge, read as pushed in.
+    private static let soloLead: CGFloat = (height - 20) / 2
 
     /// One issue under the board's headings: its line, as tall as its words (up to three lines each) and never under
     /// 40 pt; opened, its worker's ask and its steps.
@@ -208,7 +213,7 @@ struct IssueStrip: View {
                 }
                 age(issue, now: now)
             }
-            .padding(.horizontal, 16).frame(height: Self.height)
+            .padding(.leading, Self.soloLead).padding(.trailing, 16).frame(height: Self.height)
         }
     }
 
@@ -367,7 +372,7 @@ struct IssueStrip: View {
     }
 }
 
-/// A state's pill with how many are in it, for the strip; its name on hover.
+/// A state's pill with how many are in it, for the details pane's Issues line; its name on hover.
 struct Count: View {
     let state: BoardRow.State
     let count: Int
@@ -382,6 +387,26 @@ struct Count: View {
         .padding(.leading, 6).padding(.trailing, 7).padding(.vertical, 3)
         .background((grey ? Color.secondary : look.color).opacity(0.12), in: Capsule())
         .tip(look.name)
+    }
+}
+
+/// A lead's issues as one thin bar, a segment per state as wide as its share (never under 3 pt, so one shows).
+struct Progress: View {
+    let counts: [(state: BoardRow.State, count: Int)]
+    let total: Int
+    var body: some View {
+        GeometryReader { bar in
+            let room = bar.size.width - 1.5 * CGFloat(max(0, counts.count - 1))
+            HStack(spacing: 1.5) {
+                ForEach(counts, id: \.state) { state, count in
+                    let look = TaskStateIcon.look(state)
+                    Rectangle().fill(look.color == .secondary ? Color.secondary.opacity(0.3) : look.color.opacity(0.7))
+                        .frame(width: max(3, room * CGFloat(count) / CGFloat(max(total, 1))))
+                }
+            }
+            .clipShape(Capsule())
+        }
+        .frame(width: 120, height: 5)
     }
 }
 

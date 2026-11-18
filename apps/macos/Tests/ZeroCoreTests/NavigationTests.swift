@@ -120,3 +120,67 @@ import Testing
     #expect(!navigation.canGoBack && !navigation.canGoForward)
     UserDefaults.standard.removeObject(forKey: "placeWorker")
 }
+
+/// The toolbar's arrows are drawn from canGoBack and canGoForward: a step taken (or retraced) redraws them, else they
+/// stay as they were first drawn, dimmed, and do nothing.
+@MainActor @Test func theArrowsAreToldWhenTheHistoryChanges() {
+    let navigation = Navigation()
+    func changes(_ step: () -> Void) -> Bool {
+        var changed = false
+        withObservationTracking {
+            _ = (navigation.canGoBack, navigation.canGoForward)
+        } onChange: {
+            changed = true
+        }
+        step()
+        return changed
+    }
+    #expect(changes { navigation.place = .later })
+    #expect(changes { navigation.goBack() })
+    #expect(changes { navigation.goForward() })
+    #expect(changes { navigation.place = .pads })
+    #expect(changes { navigation.openSettings("Git") })
+    #expect(changes { navigation.settingsPage = "Folders" })
+}
+
+/// Every place the rail and the window go is a step: the pages, a pad, a loop, Later's items, a new workspace.
+@MainActor @Test func everyPlaceIsAStep() {
+    let navigation = Navigation()
+    let places: [Navigation.Place] = [
+        .task("t"), .board, .later, .laterItem("l"), .pads, .pad("p"), .loops, .loop("n"), .inbox, .agent("a"),
+        .newWorkspace, .settings, .home,
+    ]
+    for place in places { navigation.place = place }
+    for place in places.dropLast().reversed() {
+        navigation.goBack()
+        #expect(navigation.place == place)
+    }
+    #expect(navigation.place == .task("t"))
+    navigation.goBack()
+    #expect(navigation.place == .home && !navigation.canGoBack)
+}
+
+/// A trackpad's two-finger scroll, sideways, goes back (fingers to the right) or forward, once a gesture; anything
+/// else is left to the views.
+@Test func aSidewaysGestureIsOneStep() {
+    var swipe = PageSwipe()
+    #expect(swipe.scroll(began: true, momentum: false, fingers: 2, dy: 0, free: true) == nil, "too little to tell")
+    #expect(swipe.scroll(began: false, momentum: false, fingers: 10, dy: 1, free: true) == 0, "sideways: Zero's")
+    #expect(swipe.scroll(began: false, momentum: false, fingers: 60, dy: 0, free: true) == -1, "far enough: back")
+    #expect(swipe.scroll(began: false, momentum: false, fingers: 60, dy: 0, free: true) == 0, "once a gesture")
+    #expect(swipe.scroll(began: false, momentum: true, fingers: 30, dy: 0, free: true) == 0, "its momentum too")
+
+    #expect(swipe.scroll(began: true, momentum: false, fingers: -20, dy: 0, free: true) == 0)
+    #expect(swipe.scroll(began: false, momentum: false, fingers: -60, dy: 0, free: true) == 1, "fingers left: forward")
+}
+
+@Test func aScrollThatIsntSidewaysIsLeftToTheViews() {
+    var swipe = PageSwipe()
+    #expect(swipe.scroll(began: true, momentum: false, fingers: 4, dy: 20, free: true) == nil, "down the page")
+    #expect(swipe.scroll(began: false, momentum: false, fingers: 200, dy: 0, free: true) == nil, "still a scroll")
+    #expect(swipe.scroll(began: false, momentum: true, fingers: 200, dy: 0, free: true) == nil)
+
+    // Over something that scrolls sideways (a table, code, the side panel's page), the gesture is its own.
+    #expect(swipe.scroll(began: true, momentum: false, fingers: 40, dy: 0, free: false) == nil)
+    #expect(swipe.scroll(began: false, momentum: false, fingers: 200, dy: 0, free: false) == nil)
+}

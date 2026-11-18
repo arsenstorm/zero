@@ -61,6 +61,8 @@ struct ItemView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(changes, id: \.path) { change in FileChangeCard(change: change, status: item.status, cwd: cwd) }
             }
+        case let .tool(name, detail) where ToolNames.isAdvisor(name):
+            AdvisorCard(took: name == "advisor-took", detail: detail, status: item.status)
         case let .tool(name, detail):
             ToolCard(name: name, detail: detail, status: item.status)
         case let .notice(text, error):
@@ -492,6 +494,66 @@ private func relative(_ path: String, to folder: String) -> String {
     return inner.hasPrefix(outer) ? String(inner.dropFirst(outer.count)) : (path as NSString).abbreviatingWithTildeInPath
 }
 
+/// A tool step's arguments on its line, as words; a web page it's about as a link that opens it, without the step
+/// opening: it's there to be clicked.
+struct ToolDetail: View {
+    let detail: String
+    @State private var hovered = false
+
+    var body: some View {
+        if let url = ToolNames.link(detail) {
+            Button {
+                LinearLinks.open(url)
+            } label: {
+                Text(ToolNames.detail(detail)).underline(hovered).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .onHover { hovered = $0 }
+            .tip(url.absoluteString)
+        } else {
+            Text(ToolNames.detail(detail)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+        }
+    }
+}
+
+/// Its advisor asked: the advisor's mark for its tick, "Asked Fable", and what the agent took from the advice (the
+/// advice itself is encrypted, for the agent alone; an older advisor's plain words are said as its own). Opened, the
+/// whole of it as prose. A failed call keeps the failure's mark, with why.
+struct AdvisorCard: View {
+    let took: Bool
+    let detail: String
+    let status: ItemStatus
+    @State private var open = false
+    @Environment(\.advisorName) private var advisorName
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            StepRow(open: $open, opens: !detail.isEmpty && status != .failed) {
+                if status == .done {
+                    NucleoIcon(ToolNames.advisorIcon, size: 13).frame(width: 14, height: 16)
+                } else {
+                    StatusIcon(status: status)
+                }
+                Text(ToolNames.advisor(advisorName)).fontWeight(.medium).lineLimit(1)
+                Text(detail).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+            }
+            if open && !detail.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(took ? "What it took from the advice" : "The advice")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+                    Text(detail).font(.system(size: 12.5)).foregroundStyle(.secondary)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.tint, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.stroke))
+            }
+        }
+    }
+}
+
 /// A tool's step: a row like every step's, its name as people say it and its arguments' values on one line; opened (as a
 /// command is), each argument by its name with its whole value, in a box beneath it. No tooltip of raw JSON.
 private struct ToolCard: View {
@@ -554,7 +616,7 @@ private struct ToolCard: View {
             StepRow(open: $open, opens: !detail.isEmpty) {
                 StatusIcon(status: status)
                 Text(ToolNames.name(name)).fontWeight(.medium).lineLimit(1)
-                Text(ToolNames.detail(detail)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+                ToolDetail(detail: detail)
             }
             if open && !detail.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {

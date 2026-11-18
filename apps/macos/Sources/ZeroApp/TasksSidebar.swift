@@ -9,8 +9,8 @@ struct TasksSidebar: View {
         get { navigation.place }
         nonmutating set { navigation.place = newValue }
     }
-    /// Leads whose workers are folded away, one per line.
-    @AppStorage("foldedLeads") private var folded = ""
+    /// Leads whose workers the user opened, one per line: the rest stay folded, new ones included.
+    @AppStorage("openLeads") private var opened = ""
     /// Where each lead's row starts down the window's task area: where its hover card goes.
     /// Each row's top, for the peek card on hover: kept where writing it doesn't redraw the sidebar (rows moving in an
     /// animation write theirs every frame).
@@ -122,8 +122,7 @@ struct TasksSidebar: View {
                 ScrollView {
                     taskList(all: all, workersOf: workersOf, earlier: earlier).id(workspace.current)
                 }
-                // The task open, however it was opened (a link, a card, a report): its lead's workers unfolded and
-                // its row scrolled into view, as when it's opened here.
+                // The task open, however it was opened (a link, a card, a report): its row scrolled into view.
                 .onChange(of: place.key + "|" + (navigation.worker ?? ""), initial: true) { reveal(in: proxy) }
             }
             .thinScrollbar(outset: 10, remember: "sidebar.tasks") // in the sidebar's padding: at its edge, clear of the rows
@@ -221,11 +220,13 @@ struct TasksSidebar: View {
     /// The rows in a stack of their own, masked at its top: one arriving slides in from under the heading
     /// as the rest move down, rather than across it. The mask reaches well below, for the archive card.
     private func leads(all: [Conversation], workersOf: [String: [Conversation]]) -> some View {
-        let folded = Set(folded.split(separator: "\n").map(String.init))
+        let opened = Set(opened.split(separator: "\n").map(String.init))
+        // A worker open shows its lead's workers while it is, without opening the lead for good.
+        let shown: String? = if case let .task(lead) = place, navigation.worker != nil { lead } else { nil }
         let rows = sorted(workspace.board.filter { $0.workspace == workspace.current } + starting(all))
         return VStack(alignment: .leading, spacing: 1) {
             ForEach(rows) { row in
-                leadGroup(row, workers: workersOf[row.session] ?? [], open: !folded.contains(row.session), in: rows)
+                leadGroup(row, workers: workersOf[row.session] ?? [], open: opened.contains(row.session) || row.session == shown, in: rows)
             }
         }
         .mask(alignment: .top) { Rectangle().padding(.bottom, -800) }
@@ -306,21 +307,17 @@ struct TasksSidebar: View {
         .hidden()
     }
 
-    /// The open task's row shown: its lead unfolded if it's a worker, then scrolled to, no further than needed.
+    /// The open task's row scrolled to, no further than needed (a worker's lead shows its workers meanwhile, `leads`).
     private func reveal(in proxy: ScrollViewProxy) {
         guard case let .task(lead) = place else { return }
-        if navigation.worker != nil {
-            var set = Set(folded.split(separator: "\n").map(String.init))
-            if set.remove(lead) != nil { folded = set.sorted().joined(separator: "\n") }
-        }
         let row = navigation.worker ?? lead
         DispatchQueue.main.async { withAnimation(Motion.animation(.easeOut(duration: 0.2))) { proxy.scrollTo(row) } }
     }
 
     private func toggle(_ lead: String) {
-        var set = Set(folded.split(separator: "\n").map(String.init))
+        var set = Set(opened.split(separator: "\n").map(String.init))
         if set.contains(lead) { set.remove(lead) } else { set.insert(lead) }
-        folded = set.sorted().joined(separator: "\n")
+        opened = set.sorted().joined(separator: "\n")
     }
 
     /// At the foot, while Zero can't reach its daemon: that, on a fade over the list's end. (What tasks use and the

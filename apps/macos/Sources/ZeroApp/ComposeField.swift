@@ -94,6 +94,10 @@ struct ComposeField: NSViewRepresentable {
         let scroll = ComposeScroll()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
+        // The text never moves past its ends: no bounce at either.
+        scroll.verticalScrollElasticity = .none
+        scroll.horizontalScrollElasticity = .none
         scroll.borderType = .noBorder
         let view = TokenTextView()
         view.keepTokensWhole()
@@ -346,6 +350,12 @@ final class ComposeScroll: NSScrollView {
     override func tile() {
         super.tile()
         settle()
+    }
+
+    /// Text that fits has nothing to scroll: the scroll ends here, neither bounced nor handed on.
+    override func scrollWheel(with event: NSEvent) {
+        guard (documentView?.frame.height ?? 0) > contentView.bounds.height else { return }
+        super.scrollWheel(with: event)
     }
 
     /// No further down than the text's foot: at the top whenever it all fits.

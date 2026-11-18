@@ -100,8 +100,9 @@ dev-stop:
 	@$(MACOS)/scripts/dev-run.sh stop
 
 # Zero Dev's end-to-end checks (DevE2E): built, run, stopped; the results in build-dev/e2e/results.md.
+# One run at a time: Zero Dev and build-dev are shared, so a second run waits for the first.
 e2e:
-	@$(MACOS)/scripts/e2e.sh
+	@mkdir -p build-dev && lockf -k build-dev/e2e.lock $(MACOS)/scripts/e2e.sh
 
 test:
 	cargo test --workspace

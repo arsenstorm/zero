@@ -120,7 +120,9 @@ struct NewTaskView: View {
             } action: {
                 composer = $0
             }
-            .overlay(alignment: .topLeading) {
+            // Behind the composer, never over it: what the composer floats above itself (the @ and / suggestions, the +
+            // menu) is its own overlay, and an overlay here would draw the name over them.
+            .background(alignment: .topLeading) {
                 // The mark centred on the name's capitals (about 20 pt tall at this size), not on its whole line.
                 HStack(alignment: .firstTextBaseline, spacing: 9) {
                     ZeroMark(small: true).frame(width: 31, height: 30).alignmentGuide(.firstTextBaseline) {

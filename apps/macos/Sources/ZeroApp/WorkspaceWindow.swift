@@ -110,25 +110,6 @@ extension AppDelegate {
                     DispatchQueue.main.async { MainActor.assumeIsolated { self?.placeBar() } }
                 }
             }
-            // Wherever the window goes (moved, resized, minimised, closed, covered, brought forward), the bar joins its
-            // right rail strip or lets go of it (`trackBarJoin`): as it moves during a drag, after a close.
-            for name in changes + [
-                NSWindow.didMoveNotification, NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification,
-            ] {
-                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
-                    MainActor.assumeIsolated {
-                        // Moved or resized: at once, in the same pass as the window. Closing: let go first.
-                        if note.name == NSWindow.willCloseNotification { self?.letGoOfWindow() }
-                        if [NSWindow.didMoveNotification, NSWindow.didResizeNotification].contains(note.name) { self?.trackBarJoin() }
-                        DispatchQueue.main.async { MainActor.assumeIsolated { self?.trackBarJoin() } }
-                    }
-                }
-            }
-            // Going to the Dock takes its children along: the bar lets go before it does.
-            NotificationCenter.default.addObserver(forName: NSWindow.willMiniaturizeNotification, object: window, queue: .main) {
-                [weak self] _ in
-                MainActor.assumeIsolated { self?.letGoOfWindow() }
-            }
         }
         NSApp.setActivationPolicy(.regular)
         if activating {
@@ -177,81 +158,6 @@ extension AppDelegate {
         hideInbox()
         navigation.place = place
         openWorkspace()
-    }
-
-    /// The bar's join to Zero's window (`InboxController.barJoin`): with the window's right edge at the bar's screen
-    /// edge, and the window on screen beside the whole bar, the bar's panel moves 4 pt in, its base on the window's
-    /// right rail strip (WorkspaceView's 4 pt between its page and its edge), and grows out of it.
-    ///
-    /// Joined, the panel is the window's child: the window server moves the two together, in the same frame, so a
-    /// drag or a snap never parts them (the bar following the window's move notices was always a frame or more late,
-    /// a gap opening between them as the window moved). Only its height, the screen's, is put back on a vertical move,
-    /// and its place on a live resize from the window's right edge (which moves that edge, not the child). Dragged 12
-    /// pt away it lets go, back to the screen's edge on the bar's curve.
-    ///
-    /// The bar's screen is the one `layout` chose (`pinnedDisplay`), never the panel's own: joined, the panel goes
-    /// wherever the window takes it, and would hold the bar to the window's screen.
-    func trackBarJoin(eased: Bool = true) {
-        let chosen = NSScreen.screens.first { $0.displayID == pinnedDisplay }
-        guard let screen = chosen ?? pill.screen ?? NSScreen.main else { return }
-        let join: CGFloat = {
-            guard settings.showBar, pill.isVisible, let window = workspaceWindow, window.isVisible, !window.isMiniaturized,
-                window.occlusionState.contains(.visible), window.screen == screen
-            else { return 0 }
-            let bar = barRect
-            guard window.frame.minY <= bar.minY, window.frame.maxY >= bar.maxY else { return 0 }
-            return BarEdge.join(away: screen.frame.maxX - window.frame.maxX)
-        }()
-        if join > 0, let window = workspaceWindow {
-            let joining = pill.parent !== window
-            if joining { window.addChildWindow(pill, ordered: .above) }
-            // Arriving on its own (a snap, the window opened there), it eases in; dragged there, it's already there.
-            placeBarPanel(
-                x: window.frame.maxX - BarEdge.strip - InboxController.pillWidth, on: screen,
-                eased: eased && joining && NSEvent.pressedMouseButtons == 0)
-        } else {
-            // Let go on another screen than the bar's (taken there by the window): back a moment later
-            // (`letGoDelay`), at once rather than across the screens.
-            if letGoOfWindow(), pill.screen != screen {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.letGoDelay) { [weak self] in self?.trackBarJoin(eased: false) }
-            } else {
-                placeBarPanel(x: screen.frame.maxX - InboxController.pillWidth, on: screen, eased: eased && pill.screen == screen)
-            }
-        }
-        // Not eased (a screen change), the bar's own animation on its join doesn't slide it to its new place either.
-        if inbox.barJoin != join { withTransaction(.still(!eased)) { inbox.barJoin = join } }
-    }
-
-    /// The bar's panel no longer the window's child: before the window closes or goes to the Dock, which would take
-    /// its children with it.
-    /// Whether it was the window's child.
-    @discardableResult func letGoOfWindow() -> Bool {
-        guard let parent = pill.parent else { return false }
-        parent.removeChildWindow(pill)
-        // A child takes its parent's level and keeps it once let go: without this the bar sinks behind other windows.
-        pill.level = .floating
-        return true
-    }
-
-    /// How long the bar's panel waits after letting go of the window before it moves to another display: moved there
-    /// at once, the window server never draws it there (in Zero, even after a CATransaction.flush()). 20 and 30 ms
-    /// were enough in tests; the next turn of the main loop wasn't, always.
-    /// ponytail: a fixed wait, not an event; if the bar ever goes missing on another screen again, look here first.
-    static let letGoDelay = 0.03
-
-    /// The bar's panel at `x`, as tall as its screen: on the bar's curve (220 ms in, 150 ms out), or at once.
-    private func placeBarPanel(x: CGFloat, on screen: NSScreen, eased: Bool) {
-        let target = NSRect(x: x, y: screen.frame.minY, width: InboxController.pillWidth, height: screen.frame.height)
-        guard pill.frame != target else { return }
-        guard eased, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            pill.setFrame(target, display: true)
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = x < pill.frame.minX ? 0.22 : 0.15
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.33, 1, 0.68, 1)
-            pill.animator().setFrame(target, display: true)
-        }
     }
 
     /// An agent from the docked bar: one of zerod's sessions opens as its task (a worker under its lead); any other

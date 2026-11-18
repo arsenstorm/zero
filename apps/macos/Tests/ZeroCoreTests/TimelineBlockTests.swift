@@ -187,3 +187,33 @@ private func item(_ id: String, _ kind: ConversationItem.Kind) -> ConversationIt
     let words = TableColumns.widths(natural: [1000, 5000], least: [300, 100], total: 700)
     #expect(words[0] >= 300 - 0.5, "\(words)")
 }
+
+/// The advisor's advice is encrypted: the agent's own "Advisor: …" line after the call is folded into the call's step,
+/// and the rest of its words stay where they were. A line that isn't one stays as words.
+@Test func theAgentsLineOnItsAdvisorsAdviceFoldsIntoTheStep() {
+    let items = [
+        item("u", .user(text: "plan it")),
+        item("s1", .tool(name: "advisor", detail: "")),
+        item("r1", .reasoning(text: "Weighing it.")),
+        item("a1", .agent(text: "Advisor: read the lock file first.\n\nReading it now.", finalAnswer: false)),
+        item("c1", .command(command: "cat lock", cwd: "/", output: "", exitCode: 0, durationMs: 1)),
+        item("s2", .tool(name: "advisor", detail: "")),
+        item("a2", .agent(text: "Advisor: ship it as is.", finalAnswer: true)),
+    ]
+    let folded = Advice.folded(items)
+    #expect(folded.map(\.id) == ["u", "s1", "r1", "a1", "c1", "s2"], "\(folded.map(\.id))")
+    #expect(folded[1].kind == .tool(name: "advisor-took", detail: "read the lock file first."))
+    #expect(folded[3].kind == .agent(text: "Reading it now.", finalAnswer: false))
+    #expect(folded[5].kind == .tool(name: "advisor-took", detail: "ship it as is."))
+    // Still arriving, its first letters aren't shown; words of another kind stay; plain advice stays the advisor's.
+    #expect(
+        Advice.folded([item("s", .tool(name: "advisor", detail: "")), item("a", .agent(text: "Advi", finalAnswer: false))]).map(\.id) == [
+            "s"
+        ])
+    let other = Advice.folded([item("s", .tool(name: "advisor", detail: "")), item("a", .agent(text: "Done.", finalAnswer: true))])
+    #expect(other[0].kind == .tool(name: "advisor", detail: "") && other[1].kind == .agent(text: "Done.", finalAnswer: true))
+    let plain = Advice.folded([
+        item("s", .tool(name: "advisor", detail: "Expand.")), item("a", .agent(text: "Advisor: x", finalAnswer: true)),
+    ])
+    #expect(plain.map(\.id) == ["s", "a"])
+}

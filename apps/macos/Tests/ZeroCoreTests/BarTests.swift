@@ -138,14 +138,3 @@ private func dot(_ name: String, in workspace: String?, running: Bool = false, w
     #expect(both.map(\.window) == [true, false, false])
     #expect(BarGroups.union(was, now, workspaces: order, fieldsFrom: now).map(\.window) == [false, true, false])
 }
-
-@Test func theBarJoinsTheWindowsRailStripWhenTheirEdgesMeetAndLetsGoPast12Points() {
-    // At the screen's edge: 4 pt in, onto the window's right rail strip.
-    #expect(BarEdge.join(away: 0) == 4)
-    // Dragged away, riding on the strip; let go past 12 pt.
-    #expect(BarEdge.join(away: 6) == 10)
-    #expect(BarEdge.join(away: 12) == 16)
-    #expect(BarEdge.join(away: 12.5) == 0)
-    // Past the screen's edge (partly off screen): no join.
-    #expect(BarEdge.join(away: -3) == 0)
-}
