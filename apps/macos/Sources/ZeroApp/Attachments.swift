@@ -10,6 +10,8 @@ import ZeroCore
 
 enum Attachments {
     static let folder = Paths.dir.appendingPathComponent("attachments")
+    /// Where ⌘V reads images: the clipboard; Zero Dev's checks give it one of their own, never the user's.
+    nonisolated(unsafe) static var pasteboard = NSPasteboard.general
 
     /// An image kept as Zero's own PNG.
     static func save(_ image: NSImage) -> URL? {
@@ -67,7 +69,7 @@ enum Attachments {
 
     /// What a paste would attach: image files copied in Finder, else an image on the clipboard with no words beside it.
     /// Nil leaves the paste to the text field.
-    static func fromPasteboard(_ board: NSPasteboard = .general) -> [URL]? {
+    static func fromPasteboard(_ board: NSPasteboard = pasteboard) -> [URL]? {
         if let files = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !files.isEmpty,
             files.allSatisfy({ isImage($0) || isVideo($0) })
         {
