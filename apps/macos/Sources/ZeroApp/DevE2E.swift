@@ -273,6 +273,7 @@
             await history(window)
             await conversationEnd(workspace, window)
             await runningStep(workspace, window)
+            await codeFirst()
             check("Zero Dev never became the active app", !NSApp.isActive, "active \(NSApp.isActive)", how: "call")
             // Nothing of Zero Dev's on any display: its windows, panels and menus.
             let shown = NSApp.windows.filter { w in w.isVisible && NSScreen.screens.contains { $0.frame.intersects(w.frame) } }
@@ -2017,6 +2018,77 @@
     }
 
     extension DevE2E {
+        // MARK: An answer that starts with code
+
+        /// An answer whose first block is a fenced code block, finished (MarkdownText) and read out (RevealText): its
+        /// panel whole inside its text view, its top corners rounded (drawn, not just worked out), its copy button inside it.
+        func codeFirst() async {
+            let answer =
+                "```\nshipped:\n\nU-9924: third-party rows out of the overall status\nU-9801: ticking an Instructions to-do\n```\n\nAll three are live."
+            let user = ConversationItem(id: "u1", turn: "t1", kind: .user(text: "What shipped?"), status: .done)
+            let said = ConversationItem(id: "a1", turn: "t1", kind: .agent(text: answer, finalAnswer: true), status: .done)
+            let playback = Playback()
+            let start = Date()
+            playback.update([user], conversation: "e2e-code-first", live: true, now: start)
+            playback.update([user, said], conversation: "e2e-code-first", live: true, now: start)
+            playback.advance(to: start.addingTimeInterval(0.05))
+            playback.advance(to: start.addingTimeInterval(0.1))
+            guard let readout = playback.readout("a1") else {
+                return check("An answer starting with code is read out", false, "no readout", how: "render")
+            }
+            let views: [(String, AnyView)] = [
+                ("finished", AnyView(MarkdownText(answer, size: 14.5))),
+                ("read out", AnyView(RevealText(readout: readout, text: answer, cwd: Paths.dir.path))),
+            ]
+            for (name, view) in views {
+                let host = NSHostingView(rootView: view.padding(.horizontal, 12).frame(width: 520, height: 260, alignment: .topLeading))
+                host.frame = NSRect(x: 0, y: 0, width: 520, height: 260)
+                let holder = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                holder.isReleasedWhenClosed = false
+                holder.contentView = host
+                holder.setFrameOrigin(DevWindow.away)
+                await pause(0.6)
+                host.layoutSubtreeIfNeeded()
+                guard let text = self.views(RichTextView.self, in: host).first, let storage = text.textStorage,
+                    let layout = text.layoutManager, let container = text.textContainer
+                else {
+                    holder.close(); check("An answer starting with code, \(name): its panel whole", false, "no text view", how: "render");
+                    continue
+                }
+                let panel = RichLayoutManager.panel(
+                    for: NSRange(location: 0, length: (storage.string as NSString).range(of: "\n", options: .backwards).location),
+                    storage: storage, manager: layout, container: container, origin: text.textContainerOrigin)
+                // Drawn: the view's own pixels (no background, so the panel's fill is what isn't clear). At the panel's
+                // left edge, its top row clear (a rounded corner); down its middle, the first row filled where the panel's top is.
+                let rep = text.bitmapImageRepForCachingDisplay(in: text.bounds)
+                if let rep { text.cacheDisplay(in: text.bounds, to: rep) }
+                try? rep?.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent("code-first-\(name).png"))
+                let scale = CGFloat(rep?.pixelsWide ?? 1) / max(1, text.bounds.width)
+                func filled(_ x: CGFloat, _ y: CGFloat) -> Bool {
+                    guard let rep, y >= 0, y < text.bounds.height else { return false }
+                    return (rep.colorAt(x: Int(x * scale), y: Int(y * scale))?.alphaComponent ?? 0) > 0.01
+                }
+                let corner = filled(panel.minX + 0.5, max(0, panel.minY) + 0.5)
+                let top = stride(from: 0, to: 40, by: 1 / scale).first { filled(panel.midX, $0) } ?? -1
+                // The pointer over the panel: its copy button shows, inside it.
+                let inWindow = text.convert(NSPoint(x: panel.midX, y: panel.midY), to: nil)
+                if let move = NSEvent.mouseEvent(
+                    with: .mouseMoved, location: inWindow, modifierFlags: [], timestamp: 0, windowNumber: holder.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 0, pressure: 0)
+                {
+                    text.mouseMoved(with: move)
+                }
+                let button = text.subviews.first { $0 is NSHostingView<AnyView> && !$0.isHidden }?.frame
+                let ok =
+                    panel.minY >= 0 && !corner && abs(top - panel.minY) < 1 && button.map { panel.contains($0) && $0.minY >= 0 } == true
+                check(
+                    "An answer starting with code, \(name): its panel whole in its view, its copy button inside it", ok,
+                    "panel \(panel) in \(text.bounds) (origin \(text.textContainerOrigin)); drawn top \(top), top-left corner filled \(corner); copy button \(button.map { "\($0)" } ?? "none")",
+                    how: "render")
+                holder.close()
+            }
+        }
+
         // MARK: A running step
 
         /// Red and spinner-blue pixels in a view drawn as the window has it (cacheDisplay), and through ImageRenderer.

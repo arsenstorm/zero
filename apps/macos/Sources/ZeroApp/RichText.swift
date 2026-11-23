@@ -375,7 +375,10 @@ enum RichMarkdown {
 /// Draws what the attributes ask for behind the text: rounded pills for inline code, a panel for a code block, a bar for
 /// a quote, a hairline for a rule.
 final class RichLayoutManager: NSLayoutManager {
-    /// A code block's panel: 12 pt either side of its text, 8 pt above and below; where the copy button goes too.
+    /// How far a code block's panel reaches above and below its text.
+    static let reach: CGFloat = 8
+
+    /// A code block's panel: 12 pt either side of its text, `reach` above and below; where the copy button goes too.
     static func panel(for range: NSRange, storage: NSTextStorage, manager: NSLayoutManager, container: NSTextContainer, origin: NSPoint)
         -> NSRect
     {
@@ -384,8 +387,8 @@ final class RichLayoutManager: NSLayoutManager {
         let style = storage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle
         let left = (style?.headIndent ?? 12) - 12 + container.lineFragmentPadding
         return NSRect(
-            x: origin.x + left, y: origin.y + rect.minY - 8, width: container.size.width - left - container.lineFragmentPadding,
-            height: rect.height + 16)
+            x: origin.x + left, y: origin.y + rect.minY - reach, width: container.size.width - left - container.lineFragmentPadding,
+            height: rect.height + 2 * reach)
     }
 
     /// The selection's highlight on each line as wide as what's selected on it, and as tall as the line (not the room
@@ -652,6 +655,19 @@ final class RichTextView: NSTextView {
     override func clicked(onLink link: Any, at charIndex: Int) {
         guard let url = link as? URL ?? (link as? String).flatMap(URL.init(string:)), !url.isFileURL else {
             return super.clicked(onLink: link, at: charIndex)
+        }
+        // "3 PRs": Zero's menu of them, at the pointer, each opening its page.
+        if url.scheme == "zero", url.host == "pulls" {
+            let titles = LinkInputs.shared.titles
+            return ZeroContextMenu.open("pulls") {
+                [
+                    References.listed(url).map { pull in
+                        let key = pull.url.path.dropFirst().replacingOccurrences(of: "/pull/", with: "/").lowercased()
+                        let title = titles[key].map { $0.isEmpty ? pull.name : pull.name + "  " + $0 } ?? pull.name
+                        return MenuItem(title, "arrow-up-right") { LinearLinks.open(pull.url) }
+                    }
+                ]
+            }
         }
         LinearLinks.open(url)
     }
@@ -998,20 +1014,15 @@ final class RichTextView: NSTextView {
         let below: CGFloat =
             (textStorage.map { $0.length > 0 && $0.attribute(.zeroCodeBlock, at: $0.length - 1, effectiveRange: nil) != nil } ?? false)
             ? 8 : 0
-        measured = (width, ceil(used.height) + above + below, min(width, ceil(widest)))
-        return CGSize(width: min(width, ceil(widest)), height: ceil(used.height) + above + below)
+        // To its foot, not its height: a code block first starts its text 8 pt down (TokenBreaks), and the used rect
+        // starts there too.
+        measured = (width, ceil(used.maxY) + below, min(width, ceil(widest)))
+        return CGSize(width: min(width, ceil(widest)), height: ceil(used.maxY) + below)
     }
 
-    /// A code block first: its panel reaches 8 pt above the text (RichLayoutManager), and a view draws nothing above
-    /// its top, so the text starts 8 pt down and the panel has its top.
-    private var above: CGFloat {
-        (textStorage.map { $0.length > 0 && $0.attribute(.zeroCodeBlock, at: 0, effectiveRange: nil) != nil } ?? false) ? 8 : 0
-    }
-
-    override var textContainerOrigin: NSPoint {
-        let origin = super.textContainerOrigin
-        return NSPoint(x: origin.x, y: origin.y + above)
-    }
+    /// At its inset, always: AppKit moves the container up to centre a used rect that doesn't start at its top (a code
+    /// block first, TokenBreaks), by up to that much, which cut the panel's top off again.
+    override var textContainerOrigin: NSPoint { NSPoint(x: super.textContainerOrigin.x, y: textContainerInset.height) }
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.current?.cgContext.setShouldSmoothFonts(false)

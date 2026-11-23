@@ -175,6 +175,11 @@ final class SelectorState {
         let next = row.children.isEmpty ? nil : row.id
         if submenu != next { submenu = next }
     }
+
+    /// The pointer off the card (into the submenu, say): a check still pending from its last move there is dropped. It
+    /// came after the pointer reached the submenu, lit the row it had left, and the submenu row under the pointer went
+    /// dark until the pointer moved again.
+    func leftCard() { moves += 1 }
 }
 
 /// Zero's selector, a compact palette: provider tabs across the top, the chosen provider's rows beneath at
@@ -230,6 +235,14 @@ struct SelectorView: View {
     static let menuFont = Font(menuNSFont)
     /// Room around a menu's card in its window for its shadow (Linear's: 18 points of blur, 6 down).
     static func shadowRoom(_ kind: SelectorKind) -> CGFloat { kind == .runtime ? 0 : 24 }
+
+    /// A menu's card as tall as it draws (its 32 pt rows, 12 pt between groups, 6 pt inset): where it fits decides
+    /// whether it opens below the pointer or above. Other selectors: the 240 pt they need at least.
+    static func height(_ state: SelectorState) -> CGFloat {
+        guard state.kind == .menu else { return 240 }
+        let groups = state.sections.filter { !$0.rows.isEmpty }
+        return CGFloat(groups.reduce(0) { $0 + $1.rows.count }) * 32 + CGFloat(max(0, groups.count - 1)) * 12 + 12
+    }
     /// Menus and short lists as Linear's (measured): 12 pt corners, rows 32 tall 6 in from the edge, a 6 pt highlight
     /// (#323234, the row's words and icon white on it), its icon 9 in from the highlight's edge, the words 8 after it.
     /// The model selector keeps its own.
@@ -289,7 +302,8 @@ struct SelectorView: View {
             state.cardHeight = $0.height; state.cardFrame = $0
         }
         .onContinuousHover(coordinateSpace: .global) { phase in
-            if state.kind == .menu, case .active(let at) = phase { state.aim(at, rows: rows) }
+            guard state.kind == .menu else { return }
+            if case .active(let at) = phase { state.aim(at, rows: rows) } else { state.leftCard() }
         }
         .overlay(alignment: .topLeading) { submenu }
         .onAppear {
@@ -460,6 +474,7 @@ struct SelectorView: View {
         .onHover { inside in
             // A menu's own rows follow the pointer's intent instead (SelectorState.aim, from the card).
             guard inside, siblings != nil || state.kind != .menu else { return }
+            if siblings != nil { state.leftCard() }
             state.highlighted = row.id
         }
         // Where it is in the window: a right-button drag (which hover doesn't follow) finds its row by it.

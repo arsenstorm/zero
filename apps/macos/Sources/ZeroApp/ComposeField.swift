@@ -548,4 +548,23 @@ final class TokenBreaks: NSObject, NSLayoutManagerDelegate {
     func layoutManager(_ layoutManager: NSLayoutManager, shouldBreakLineByWordBeforeCharacterAt charIndex: Int) -> Bool {
         !inside(charIndex)
     }
+
+    /// A code block that starts the text (RichTextView): its words moved down as far as its panel reaches above them
+    /// (RichLayoutManager), in the layout, as its spacing before does anywhere else (TextKit skips a first paragraph's,
+    /// and a compact one has none). A text view draws only inside its container: moved down instead (the container's
+    /// origin), the panel's top was cut off.
+    func layoutManager(
+        _ layoutManager: NSLayoutManager, shouldSetLineFragmentRect rect: UnsafeMutablePointer<NSRect>,
+        lineFragmentUsedRect used: UnsafeMutablePointer<NSRect>, baselineOffset: UnsafeMutablePointer<CGFloat>,
+        in textContainer: NSTextContainer, forGlyphRange glyphRange: NSRange
+    ) -> Bool {
+        guard glyphRange.location == 0, let storage = layoutManager.textStorage, storage.length > 0,
+            storage.attribute(.zeroCodeBlock, at: 0, effectiveRange: nil) != nil
+        else { return false }
+        let reach = RichLayoutManager.reach
+        rect.pointee.size.height += reach
+        used.pointee.origin.y += reach
+        baselineOffset.pointee += reach
+        return true
+    }
 }

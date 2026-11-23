@@ -1234,13 +1234,14 @@ public final class ZerodLink: @unchecked Sendable {
     /// Starts a worker of `lead`, in its folder and with its permissions unless given others.
     public func spawn(
         lead: String, provider: Provider?, prompt: String, cwd: String? = nil, model: String? = nil, effort: String? = nil,
-        permissions: Permissions? = nil, label: String? = nil, ticket: String? = nil, workspace: String? = nil
+        permissions: Permissions? = nil, label: String? = nil, ticket: String? = nil, workspace: String? = nil, own: Bool = false
     ) async throws -> String {
         let result = try await call(
             "spawn",
             [
                 "session": lead, "provider": provider?.rawValue, "prompt": prompt, "cwd": cwd, "model": model,
                 "effort": effort, "permissions": permissions?.rawValue, "label": label, "ticket": ticket, "workspace": workspace,
+                "own": own ? true : nil,
             ])
         guard let session = (result as? [String: Any])?["session"] as? String else { throw ZerodError(message: "zerod started no session") }
         return session
@@ -2078,7 +2079,15 @@ public final class ZerodLink: @unchecked Sendable {
                 let decoded: ZerodMirror.Message? =
                     switch event {
                     case "session":
-                        (try? JSONDecoder().decode(Snapshot.self, from: data)).map { snapshot in
+                        { () -> Snapshot? in
+                            do { return try JSONDecoder().decode(Snapshot.self, from: data) } catch {
+                                // Dropped, its task is missing from the app until it's fetched again: said, with why.
+                                Log.write(
+                                    "zerod: a task's snapshot didn't decode, so the app hasn't got it: \(String(describing: error).prefix(400))"
+                                )
+                                return nil
+                            }
+                        }().map { snapshot in
                             onMessage?(.earlier(session: snapshot.conversation.id, count: snapshot.earlier ?? 0))
                             return .session(snapshot.conversation)
                         }

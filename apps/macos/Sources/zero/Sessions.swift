@@ -26,7 +26,8 @@ import ZeroCore
         if let lead = ProcessInfo.processInfo.environment["ZERO_SESSION"] {
             return try await link.spawn(
                 lead: lead, provider: provider, prompt: prompt, cwd: flag("cwd"), model: flag("model"), effort: flag("effort"),
-                permissions: permissions, label: flag("label"), ticket: flag("ticket"), workspace: flag("workspace"))
+                permissions: permissions, label: flag("label"), ticket: flag("ticket"), workspace: flag("workspace"),
+                own: flag("lead") != nil)
         }
         let id = try await link.start(
             provider: provider ?? .claude, cwd: flag("cwd") ?? FileManager.default.currentDirectoryPath, prompt: prompt,

@@ -11,6 +11,7 @@ import ZeroCore
     private var hotKey: EventHotKeyRef?
     private var statusItem: NSStatusItem!
     private var updateItem: NSMenuItem?
+    private var barItem: NSMenuItem?
     var selectorPanel: Panel?
     /// The two panels menus open in and their views, kept between them and taken in turn (SelectorPanel.selectorWindow).
     var selectorHosts: [(panel: Panel, view: FirstMouseHostingView<AnyView>)] = []
@@ -404,6 +405,7 @@ import ZeroCore
         statusItem.button?.image = mark
         let menu = NSMenu()
         menu.addItem(withTitle: "Show Zero", action: #selector(openWorkspace), keyEquivalent: "0")
+        barItem = menu.addItem(withTitle: "Hide Control Bar", action: #selector(toggleBar), keyEquivalent: "")
         menu.addItem(.separator())
         updateItem = menu.addItem(withTitle: "Check for Updates…", action: #selector(showUpdates), keyEquivalent: "")
         menu.addItem(.separator())
@@ -425,6 +427,9 @@ import ZeroCore
     }
 
     @objc private func showConfiguration() { openSettings() }
+
+    /// The same switch as Settings › Control bar's.
+    @objc private func toggleBar() { settings.showBar.toggle() }
 
     @objc func goBack() { navigation.goBack() }
 
@@ -534,6 +539,7 @@ import ZeroCore
 extension AppDelegate: NSMenuDelegate {
     /// The menu bar's menu names an update once there is one.
     func menuWillOpen(_ menu: NSMenu) {
+        barItem?.title = settings.showBar ? "Hide Control Bar" : "Show Control Bar"
         updateItem?.title = Updater.shared.available.map { "Update to Zero \($0.version)…" } ?? "Check for Updates…"
     }
 }

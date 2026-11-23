@@ -210,6 +210,9 @@ struct PillView: View {
         }
         .frame(width: 44)
         .onHover { overBar = $0 }
+        .onChange(of: overBar || controller.panelOpen) { _, held in
+            withAnimation(reduceMotion ? nil : barMotion(entering: false)) { controller.heldTop = held ? controller.barTop : nil }
+        }
         .onChange(of: names, initial: true) { controller.barOrder = $1 }
         .onChange(of: live, initial: true) { _, now in follow(now, dots: looks) }
         // Nothing switched on: no bar at all, rather than an empty tab at the edge.
@@ -242,11 +245,10 @@ struct PillView: View {
                 }
             }
         }
-        // Its top held where it is (`barTop`), whatever it shows: every change grows or shrinks it at its foot, and the
-        // inbox's arc and all above stay put, rather than the bar re-centring in its panel. The rest of the panel is
-        // empty and lets the pointer through.
-        .padding(.top, controller.barTop)
-        .frame(height: controller.barPanel, alignment: .top)
+        // Centred in its panel, its top held while the pointer is on it (`barTop`). The rest of the panel is empty and
+        // lets the pointer through.
+        .padding(.top, controller.heldTop ?? 0)
+        .frame(height: controller.barPanel, alignment: controller.heldTop == nil ? .center : .top)
         .frame(width: InboxController.pillWidth, alignment: .trailing)
     }
 

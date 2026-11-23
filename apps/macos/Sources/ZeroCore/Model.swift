@@ -90,6 +90,10 @@ public struct Ask: Codable, Identifiable, Equatable, Sendable {
     public var run: String?
     /// A page its first option opens, the ask staying open (an MCP server's sign-in, which zerod closes once done).
     public var link: String? = nil
+    /// For an approval: its title and body say the whole call in words, so the call itself shows folded.
+    public var folded: Bool? = nil
+    /// For an approval said in words: what it writes (a comment), as Markdown, shown as it will read.
+    public var preview: String? = nil
     /// The message of its task's conversation it's about: the agent's words just before it, or a heading it named.
     public var about: About? = nil
     /// What the agent answered when the user asked about it in their own words.

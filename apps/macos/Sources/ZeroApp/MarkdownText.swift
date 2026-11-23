@@ -157,7 +157,8 @@ struct MarkdownText: View {
 
     static func links(cwd: String?, yours: Bool, task: String? = nil) -> Links {
         Links(
-            pulls: task.flatMap { LinkInputs.shared.pulls[$0] } ?? [:], task: task,
+            pulls: task.flatMap { LinkInputs.shared.pulls[$0] } ?? [:], known: LinkInputs.shared.known,
+            tickets: LinkInputs.shared.tickets, task: task,
             repo: cwd.flatMap(References.repo(of:)), owner: cwd.flatMap(References.owner(of:)), github: GitHubLinks.enabled,
             slack: SlackLinks.teams, teams: LinearLinks.enabled ? LinearTeams.known : [:],
             app: LinearLinks.inApp, loops: LoopNames.known, skills: yours, pads: PadNames.known, cwd: cwd,
@@ -186,6 +187,9 @@ struct MarkdownText: View {
     struct Links: Sendable {
         /// The task's followed pull requests (LinkInputs.pulls), and the task.
         var pulls: [String: Set<String>] = [:]
+        /// Every task's (LinkInputs.known, LinkInputs.tickets).
+        var known: [String: Set<String>] = [:]
+        var tickets: [String: [String]] = [:]
         var task: String?
         let repo: String?
         let owner: String?
@@ -267,7 +271,7 @@ struct MarkdownText: View {
         }
         for (range, url) in References.find(
             in: String(result.characters), repo: links.repo, linear: links.teams, linearApp: links.app, owner: links.owner,
-            github: links.github, slack: links.slack, pulls: links.pulls, row: row)
+            github: links.github, slack: links.slack, pulls: links.pulls, row: row, known: links.known, tickets: links.tickets)
         {
             guard let span = Range(range, in: result) else { continue }
             let plain = result[span].runs.allSatisfy { $0.link == nil && !($0.inlinePresentationIntent?.contains(.code) ?? false) }

@@ -36,11 +36,12 @@ final class InboxController {
     @ObservationIgnored var barSlots: [String: CGRect] = [:]
     /// Which view set each slot (PillView's `BarSlot`), so only that one clears it.
     @ObservationIgnored var barSlotOwners: [String: UUID] = [:]
-    /// The bar's panel: the screen's height at its edge, the bar's top held 100 pt above the middle (`barTop`), so
-    /// whatever the bar shows, it grows and shrinks at its foot. The pointer's zones, the inbox's hold and the inbox's
-    /// cards (centred on the bar's middle, `barMiddle`) go by it.
+    /// The bar's panel: the screen's height at its edge, the bar centred in it (`barTop`). While the pointer is on the
+    /// bar or its panel is open, its top holds (`heldTop`) and it grows and shrinks at its foot, so nothing moves under
+    /// the pointer. The pointer's zones, the inbox's hold and the inbox's cards (centred on `barMiddle`) go by it.
     var barPanel: CGFloat = 600
-    var barTop: CGFloat { max(0, barPanel / 2 - 100) }
+    var heldTop: CGFloat?
+    var barTop: CGFloat { heldTop ?? max(0, (barPanel - barHeight) / 2) }
     /// How far the bar's middle is below its panel's middle (above, negative): the inbox's cards line up with it.
     var barMiddle: CGFloat { barTop + barHeight / 2 - barPanel / 2 }
     /// The bar's panel's width: the bar's 44; the rest lets the pointer through.

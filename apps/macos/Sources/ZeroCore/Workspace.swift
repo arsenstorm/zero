@@ -32,6 +32,7 @@ public final class Workspace {
     /// zerod's sessions as its protocol keeps them (snapshots, then changes in order). Views read the roster and each
     /// task's live object instead, so a change redraws only what it touches.
     @ObservationIgnored private var mirror = ZerodMirror()
+    @ObservationIgnored private var refetched = Date.distantPast
     /// Each task without its conversation (its first message of yours kept, for its name): what lists, the sidebar and
     /// the title bar need. It changes when a task's name, state or usage does, not with every word streamed.
     public private(set) var roster: [String: Conversation] = [:]
@@ -73,6 +74,13 @@ public final class Workspace {
         didSet {
             let leads = Dictionary(uniqueKeysWithValues: roster.compactMap { id, task in task.parent.map { (id, $0) } })
             LinkInputs.shared.pulls = References.pulls(followed, leads: leads)
+            LinkInputs.shared.known = References.anywhere(followed)
+            LinkInputs.shared.tickets = References.tickets(followed)
+            LinkInputs.shared.titles = Dictionary(
+                followed.map {
+                    ($0.topic.dropFirst("github/".count).replacingOccurrences(of: "/pull/", with: "/").lowercased(), $0.summary)
+                },
+                uniquingKeysWith: { first, _ in first })
         }
     }
     /// The user's workspaces (zerod's workspaces.rs), Zero first, and the one the window shows. Every workspace's
@@ -130,13 +138,24 @@ public final class Workspace {
     }
 
     public var conversations: [Conversation] { order.compactMap { roster[$0] } }
-    /// A task as the roster has it: everything but its conversation.
-    public func conversation(_ id: String) -> Conversation? { roster[id] }
+    /// A task as the roster has it: everything but its conversation. Read through its entry, so a view showing one task
+    /// redraws when that task changes, not with every task's turn starting or ending (the whole roster, ~1 a second).
+    public func conversation(_ id: String) -> Conversation? { entry(id).conversation }
+
+    /// A task the board lists that the app's copy lacks (seen once: its page fell back to New task until Zero restarted):
+    /// said in the log, and every task fetched afresh, at most every ten seconds.
+    public func refetch(missing id: String) {
+        guard roster[id] == nil, board.contains(where: { $0.session == id }), Date().timeIntervalSince(refetched) > 10 else { return }
+        refetched = Date()
+        Log.write("task \(id): on the board but not in the app's copy (\(mirror.conversations.count) there); fetching every task again")
+        Task { try? await link?.subscribe() }
+    }
 
     /// A task's roster entry and board row, observed on their own; made on demand, kept up to date from then on.
     public func entry(_ id: String) -> TaskEntry {
         if let kept = entries[id] { return kept }
-        let entry = TaskEntry(roster[id], row: board.first { $0.session == id })
+        // Untracked: the view asking observes the entry alone, not the roster and board it starts from.
+        let entry = TaskEntry(_roster[id], row: _board.first { $0.session == id })
         entries[id] = entry
         return entry
     }

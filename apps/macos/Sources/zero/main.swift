@@ -24,7 +24,8 @@ func usage(help: Bool = false) -> Never {
           zero done    "what's done" [--confirm TOKEN | --ask]
                        marks the task done, in two steps: alone, it's refused with what done means and a token; if it
                        is so (the user said it's done, or it's finished end to end: merged, deployed and checked), run it
-                       again with --confirm TOKEN within 5 minutes. Unsure: --ask asks the user (end [zero: asked <id>])
+                       again with --confirm TOKEN within 5 minutes. Unsure: --ask asks the user (end [zero: asked <id>]);
+                       their answer decides: until they say Done, --confirm is refused
           zero blocked "what blocks it" [--confirm TOKEN]
                        marks the task blocked (red), in two steps as done: only when it can't go on at all until
                        something outside you and the user changes (an outage, another team's access)
@@ -46,14 +47,18 @@ func usage(help: Bool = false) -> Never {
                        Look at the overview first, then closer where it matters; a long frame-by-frame pass is a worker's
                        job (zero spawn), with what to look for.
         sessions Zero runs (from inside one, the session you are in is the lead):
-          zero spawn   "task" [--brief FILE] [--loop NAME] [--provider codex|claude|opencode] [--model M] [--effort E] [--cwd DIR]
-                       [--label NAME] [--ticket REF] [--permissions auto|unrestricted] [--workspace ID]
+          zero spawn   "task" [--lead] [--brief FILE] [--loop NAME] [--provider codex|claude|opencode] [--model M] [--effort E]
+                       [--cwd DIR] [--label NAME] [--ticket REF] [--permissions auto|unrestricted] [--workspace ID]
                        starts a worker of this session (its folder and permissions unless given others) and prints its id;
                        when it finishes, fails or gets stuck, this session is told. Outside a session: a new session here.
+                       --lead: a task of its own instead, beside this one (its folder, mode and model, in its workspace), not
+                       a worker: this session isn't told when it ends; zero send and wait still reach it. One per issue:
+                       zero spawn --lead --loop issue "T-123"
                        --workspace puts it in another workspace (zero workspaces lists them); otherwise it is in yours.
           zero workspaces   (the user's workspaces: id and name)
           zero send    <session or name> "text"   (a message to a session, resumed first if it is offline; from inside a task, marked
-                       as that task's and given between the other's turns, as a worker's report is)
+                       as that task's and given between the other's turns, as a worker's report is; to your own
+                       worker, at its next step, mid-turn)
           zero wait    <session>... [--any] [--timeout MINUTES]   (until they stop working: finished, failed, stuck, or waiting on the user)
           zero workers   (the sessions this one started, or adopted)
           zero adopt   <task | Claude Code session id>   (makes it a worker of this session, taken into Zero first if it isn't
@@ -92,7 +97,8 @@ func usage(help: Bool = false) -> Never {
                        Set it whenever the issue's state changes. Zero shows the rows as one live board at the top
                        of your conversation, each issue's states over time: don't repost them as a table. --needs: what
                        it needs from the user, in your words; --pr: its pull request; --field: a column of your own
-                       ("Merge risk=Medium"). Left out, each keeps what it was; empty takes it back)
+                       ("Merge risk=Medium"). Left out, each keeps what it was, but --needs only while the row is you
+                       or over: moved to any other state, it's dropped; empty takes it back)
           zero attr    NAME [VALUE] [--session ID]   (something about this task for the user to see on it, such as
                        zero attr PR https://github.com/org/repo/pull/12; a link opens. No value takes it back)
           zero expect  DURATION ["what"] [--session ID]   (before a command that may run long and quiet, such as a migration,
@@ -168,9 +174,12 @@ while i < args.count {
     if arg == "--" { positional.append(contentsOf: args[(i + 1)...]); break }
     if arg.hasPrefix("--") {
         let key = String(arg.dropFirst(2))
-        if ["async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch", "block", "ask", "lazy"]
-            .contains(
-                key)
+        if [
+            "async", "blocked", "done", "merged", "completed", "waiting", "any", "mine", "all", "asked", "watch", "block", "ask", "lazy",
+            "lead",
+        ]
+        .contains(
+            key)
         {
             flags[key, default: []].append("1")
         } else {

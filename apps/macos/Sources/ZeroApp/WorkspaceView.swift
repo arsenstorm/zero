@@ -246,6 +246,8 @@ struct WorkspaceView: View {
             if case .task(let id) = navigation.place, workspace.conversation(id) != nil { id } else { nil }
         ZStack {
             TaskPages(workspace: workspace, inbox: inbox, navigation: navigation, current: task)
+                // A task opened that the app's copy lacks: fetched again, rather than New task in its place.
+                .task(id: navigation.place) { if case .task(let id) = navigation.place, task == nil { workspace.refetch(missing: id) } }
                 .background { if let task { TaskCopyKeys(id: navigation.worker ?? task, workspace: workspace) } }
             switch navigation.place {
             case .board: BoardView(workspace: workspace, navigation: navigation)

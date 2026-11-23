@@ -42,6 +42,8 @@ struct CardView: View {
     private var dimmed: Bool { !flat && ask.state == .waiting && !selected && controller.waitingCards > 1 }
 
     @State private var commandExpanded = false
+    /// A call said in words (Ask.folded): shown on request.
+    @State private var callShown = false
     @State private var scriptExpanded = false
     /// False until the entrance has played; cards already seen start true.
     @State private var entered = false
@@ -160,6 +162,15 @@ struct CardView: View {
             if let supporting, !supporting.isEmpty { supportingText(supporting) }
             if showsTerminal {
                 terminal
+            } else if let command = ask.command, ask.folded == true {
+                // What it writes, as it will read there.
+                if let preview = ask.preview, !preview.isEmpty {
+                    MarkdownText(preview, cwd: ask.agent.cwd ?? ask.cwd, size: 13).environment(\.linkTask, task)
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.code, in: RoundedRectangle(cornerRadius: 10))
+                }
+                if callShown { commandBox(command) }
+                foldButton(callShown ? "Hide the call" : "Show the call", $callShown)
             } else if let command = ask.command {
                 commandBlock(command)
             }
@@ -187,8 +198,10 @@ struct CardView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
+                // Not selectable: as a selectable text (an AppKit view of its own) it went blank, docked, as the user typed
+                // in the composer, and showed again only once selected.
                 Text(linked(headline)).font(.system(size: 15, weight: .semibold)).tint(Theme.link)
-                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    .fixedSize(horizontal: false, vertical: true)
                 if showsByline, let byline {
                     Text(byline).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -263,6 +276,8 @@ struct CardView: View {
             Text(command).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                 .lineLimit(commandIsLong && !commandExpanded && !flat ? Self.collapsedLines : nil)
                 .fixedSize(horizontal: false, vertical: true)
+                // Clear of the Copy chip over its top right, which hid the end of the first line.
+                .padding(.trailing, 64)
             // The script the command runs, so what the user approves is what they can read.
             if let script = ask.script { scriptText(script) }
             if folder != nil || commandIsLong { commandFooter }

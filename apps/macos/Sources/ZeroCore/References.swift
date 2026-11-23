@@ -20,9 +20,13 @@ public enum References {
     /// a bare "#123" followed in one is there, before the folder's. A commit is in the repository of the pull request
     /// beside it, in its sentence or, for a table cell, in its `row` (the row's cells); with none beside it, in the folder's;
     /// with several repositories there, or one unknown, in none.
+    /// `known` are the pull requests Zero follows for any task (`anywhere`): a bare "#123" neither the task's follows nor
+    /// its folder place is the one of them in a single repository. `tickets` (`tickets`): "3 PRs" beside one ticket lists
+    /// the pull requests followed for it, when there are that many (a zero://pulls link, `listed`).
     public static func find(
         in text: String, repo: String?, linear: [String: String], linearApp: Bool, owner: String? = nil, github: Bool = true,
-        slack: [Slack.State] = [], pulls: [String: Set<String>] = [:], row: String? = nil
+        slack: [Slack.State] = [], pulls: [String: Set<String>] = [:], row: String? = nil, known: [String: Set<String>] = [:],
+        tickets: [String: [String]] = [:]
     ) -> [(range: NSRange, url: URL)] {
         let ns = text as NSString
         let addresses = addresses(in: text)
@@ -36,6 +40,7 @@ public enum References {
             case nil:
                 let followed = pulls[number] ?? []
                 if followed.count == 1 { return followed.first }
+                if followed.isEmpty, repo == nil, let anywhere = known[number], anywhere.count == 1 { return anywhere.first }
                 return followed.isEmpty || followed.contains(where: { $0.caseInsensitiveCompare(repo ?? "") == .orderedSame }) ? repo : nil
             case let name? where name.contains("/"): return name
             case let name?: return (repo.map { String($0.split(separator: "/")[0]) } ?? owner).map { $0 + "/" + name }
@@ -64,7 +69,72 @@ public enum References {
                 pullRepo(name, number)
             } commit: { range in
                 besideRepo(row ?? sentence(of: range, in: text)) ?? repo
-            }).sorted { $0.range.location < $1.range.location }
+            } + (github ? counted(in: text, row: row, linear: linear, tickets: tickets) : [])).sorted {
+                $0.range.location < $1.range.location
+            }
+    }
+
+    /// "3 PRs" whose sentence (or row) names one ticket, followed with that many pull requests: a zero://pulls link to them.
+    private static func counted(in text: String, row: String?, linear: [String: String], tickets: [String: [String]])
+        -> [(range: NSRange, url: URL)]
+    {
+        guard !tickets.isEmpty else { return [] }
+        let ns = text as NSString
+        return count.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
+            let scope = row ?? sentence(of: match.range, in: text)
+            let scopeNS = scope as NSString
+            let named = Set(
+                pattern.matches(in: scope, range: NSRange(location: 0, length: scopeNS.length)).compactMap { m -> String? in
+                    guard m.range(at: 1).location != NSNotFound else { return nil }
+                    let team = scopeNS.substring(with: m.range(at: 1)).uppercased()
+                    let id = team + "-" + scopeNS.substring(with: m.range(at: 2))
+                    return tickets[id] != nil || linear[team] != nil ? id : nil
+                })
+            guard named.count == 1, let pulls = tickets[named.first!], String(pulls.count) == ns.substring(with: match.range(at: 1))
+            else { return nil }
+            var link = URLComponents(string: "zero://pulls")!
+            link.queryItems = pulls.map { URLQueryItem(name: "pr", value: $0) }
+            return link.url.map { (match.range, $0) }
+        }
+    }
+    private static let count = try! NSRegularExpression(pattern: #"\b(\d+) (?:PRs|pull requests)\b"#)
+
+    /// A zero://pulls link's pull requests: each as people say it (name#123) and its page.
+    public static func listed(_ link: URL) -> [(name: String, url: URL)] {
+        (URLComponents(url: link, resolvingAgainstBaseURL: false)?.queryItems ?? []).compactMap { item in
+            let parts = (item.value ?? "").split(separator: "/")
+            guard item.name == "pr", parts.count == 3, let url = URL(string: "https://github.com/\(parts[0])/\(parts[1])/pull/\(parts[2])")
+            else { return nil }
+            return ("\(parts[1])#\(parts[2])", url)
+        }
+    }
+
+    /// The pull requests Zero follows, for any task: number → the repositories ("owner/name") it's followed in.
+    public static func anywhere(_ followed: [ZerodLink.Followed]) -> [String: Set<String>] {
+        var out: [String: Set<String>] = [:]
+        for (repo, number) in followed.compactMap({ pull($0.topic) }) { out[number, default: []].insert(repo) }
+        return out
+    }
+
+    /// Each ticket's pull requests ("owner/name/123"): those followed by the tasks that follow the ticket, in follow order.
+    public static func tickets(_ followed: [ZerodLink.Followed]) -> [String: [String]] {
+        var out: [String: [String]] = [:]
+        for follow in followed where follow.topic.hasPrefix("linear/") {
+            let ticket = String(follow.topic.dropFirst("linear/".count)).uppercased()
+            for (repo, number) in followed.filter({ $0.session == follow.session }).compactMap({ pull($0.topic) }) {
+                let pr = repo + "/" + number
+                if !(out[ticket]?.contains(pr) ?? false) { out[ticket, default: []].append(pr) }
+            }
+        }
+        return out
+    }
+
+    /// A followed pull request's repository ("owner/name", lower case) and number: "github/owner/name/123", or with
+    /// "pull" before the number.
+    private static func pull(_ topic: String) -> (repo: String, number: String)? {
+        let parts = topic.split(separator: "/").filter { $0 != "pull" }.map(String.init)
+        guard parts.count == 4, parts[0] == "github", parts[1] != "*", parts[3].allSatisfy(\.isNumber) else { return nil }
+        return ("\(parts[1])/\(parts[2])".lowercased(), parts[3])
     }
 
     /// An address written out is one thing: nothing in it is a commit, issue or channel of its own ("01a1e4b4537c" in
@@ -121,11 +191,9 @@ public enum References {
     public static func pulls(_ followed: [ZerodLink.Followed], leads: [String: String]) -> [String: [String: Set<String>]] {
         var out: [String: [String: Set<String>]] = [:]
         for follow in followed {
-            // "github/owner/name/123", or with "pull" before the number.
-            let parts = follow.topic.split(separator: "/").filter { $0 != "pull" }.map(String.init)
-            guard parts.count == 4, parts[0] == "github", parts[1] != "*", parts[3].allSatisfy(\.isNumber) else { continue }
+            guard let (repo, number) = pull(follow.topic) else { continue }
             for task in [follow.session] + (leads[follow.session].map { [$0] } ?? []) {
-                out[task, default: [:]][parts[3], default: []].insert("\(parts[1])/\(parts[2])".lowercased())
+                out[task, default: [:]][number, default: []].insert(repo)
             }
         }
         return out
@@ -248,6 +316,16 @@ public enum LinearTeams {
     public var pulls: [String: [String: Set<String>]] = [:] {
         didSet { if pulls != oldValue { changed() } }
     }
+    /// The pull requests followed for any task (`References.anywhere`), and for each ticket (`References.tickets`).
+    public var known: [String: Set<String>] = [:] {
+        didSet { if known != oldValue { changed() } }
+    }
+    public var tickets: [String: [String]] = [:] {
+        didSet { if tickets != oldValue { changed() } }
+    }
+    /// Each followed pull request's line ("owner/name/123" → its title and state), for a zero://pulls menu: read when it
+    /// opens, so a new title draws nothing again.
+    @ObservationIgnored public var titles: [String: String] = [:]
 
     public func changed() { version += 1 }
 }

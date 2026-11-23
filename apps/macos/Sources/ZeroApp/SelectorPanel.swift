@@ -35,7 +35,7 @@ extension AppDelegate {
         let screen = window.screen?.visibleFrame ?? NSScreen.screens[0].visibleFrame
         let roomBelow = chip.minY - 6 - screen.minY
         let roomAbove = screen.maxY - chip.maxY - 6
-        let opensBelow = roomBelow >= 240 || roomBelow >= roomAbove
+        let opensBelow = roomBelow >= min(480, SelectorView.height(selector)) || roomBelow >= roomAbove
         // Whole points: a fraction left the window between pixels, and the card's hairline at its top edge went when
         // a hover redrew part of it.
         // The strip and room around it for the card's shadow (none for the runtime selector, which has none).

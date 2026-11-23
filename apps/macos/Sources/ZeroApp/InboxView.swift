@@ -91,8 +91,8 @@ struct InboxView: View {
         .frame(minHeight: bar, alignment: controller.holdTop ? .top : (pinsBottom ? .bottom : .center))
         .coordinateSpace(name: "stack")
         // Padding equal to the gap between panel edge and bar edge: scrolled to either end, the list
-        // stops level with the bar's top or bottom, and a list no taller than the bar cannot scroll. The bar's top is
-        // held (it grows at its foot), so its middle sits off the panel's by `barMiddle`.
+        // stops level with the bar's top or bottom, and a list no taller than the bar cannot scroll. The bar's middle
+        // sits off the panel's by `barMiddle` (its top held while the pointer is on it).
         .padding(.top, max(0, (height - bar) / 2 + controller.barMiddle))
         .padding(.bottom, max(0, (height - bar) / 2 - controller.barMiddle))
         // Outermost on purpose: the stack and its surface grow together when a card joins.

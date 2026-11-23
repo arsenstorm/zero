@@ -75,7 +75,7 @@ extension AppDelegate {
         pinnedDisplay = screen.displayID
         let frame = screen.frame
         let visible = screen.visibleFrame
-        // The screen's height, so the bar (its top held, `barTop`) grows down as far as it needs.
+        // The screen's height, so the bar (centred, `barTop`) has room to grow either way.
         // At the screen's edge, a panel of its own: never joined to Zero's window, which other apps' windows and Mission
         // Control would take it along with.
         let pillFrame = NSRect(
@@ -143,7 +143,7 @@ extension AppDelegate {
     private func hoverBar(at mouse: NSPoint) {
         let local = pill.convertPoint(fromScreen: mouse)
         let point = CGPoint(x: local.x, y: pill.frame.height - local.y) // SwiftUI's global space runs top down
-        // The bar's top is held in its panel (`barTop`); above or below the bar is off it.
+        // The bar's top in its panel (`barTop`); above or below the bar is off it.
         let y = point.y - inbox.barTop
         guard pill.isVisible, barRect.contains(mouse), (0...inbox.barHeight).contains(y) else {
             inbox.barHover = nil

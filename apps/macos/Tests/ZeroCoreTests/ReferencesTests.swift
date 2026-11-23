@@ -177,3 +177,49 @@ private let followedPulls: [String: Set<String>] = ["13963": ["acme/app"], "1396
     #expect(pulls["worker"] == ["9": ["acme/site"]])
     #expect(pulls["other"] == ["9": ["acme/app"]])
 }
+
+private func followed(_ session: String, _ topic: String, _ summary: String = "") -> ZerodLink.Followed {
+    let json =
+        #"{"session":"\#(session)","topic":"\#(topic)","at":0,"summary":"\#(summary)","lastPoll":0,"mine":false,"about":[],"new":false,"detail":""}"#
+    return try! JSONDecoder().decode(ZerodLink.Followed.self, from: Data(json.utf8))
+}
+
+/// A task that follows nothing, in a folder of repositories, writes of other tasks' pull requests: a number Zero follows
+/// in one repository, whichever task follows it, is that one.
+@Test func aBarePullRequestNoOneElsePlacesIsTheOneZeroFollows() {
+    let known = References.anywhere([
+        followed("a", "github/acme/app/14016"), followed("b", "github/acme/app/14016"), followed("c", "github/acme/site/7003"),
+        followed("d", "github/acme/app/500"), followed("e", "github/acme/site/500"),
+    ])
+    let urls = { (text: String, repo: String?, pulls: [String: Set<String>]) in
+        References.find(in: text, repo: repo, linear: [:], linearApp: false, pulls: pulls, known: known).map(\.url.absoluteString)
+    }
+    #expect(
+        urls("U-9564 (#14016, #500): site #7003 and #77", nil, [:]) == [
+            "https://github.com/acme/app/pull/14016", "https://github.com/acme/site/pull/7003",
+        ], "one repo across Zero links; two or none don't")
+    // The task's own follows and its folder still come first.
+    #expect(urls("#14016", "acme/other", [:]) == ["https://github.com/acme/other/pull/14016"])
+    #expect(urls("#14016", nil, ["14016": ["acme/fork"]]) == ["https://github.com/acme/fork/pull/14016"])
+}
+
+/// "3 PRs" beside one ticket: the pull requests the tasks following that ticket follow, when there are that many.
+@Test func aCountOfPullRequestsBesideOneTicketListsThem() {
+    let tickets = References.tickets([
+        followed("w1", "linear/U-9563"), followed("w1", "github/acme/app/14024", "Opus fix · open"),
+        followed("w1", "github/acme/logs/19832"), followed("w1", "github/acme/api/149"),
+        followed("w2", "linear/U-10034"), followed("w2", "github/acme/app/14032"),
+    ])
+    #expect(tickets["U-9563"]?.count == 3)
+    let find = { (text: String) in
+        References.find(in: text, repo: nil, linear: ["U": "acme"], linearApp: false, tickets: tickets).map(\.url)
+    }
+    let found = find("U-9563 (3 PRs): Opus and Fable verified it for ship. Two PRs elsewhere.")
+    #expect(found.count == 2, "the ticket and its count")
+    let listed = found.last.map(References.listed) ?? []
+    #expect(listed.map(\.name) == ["app#14024", "logs#19832", "api#149"])
+    #expect(listed.first?.url.absoluteString == "https://github.com/acme/app/pull/14024")
+    #expect(find("U-9563 (2 PRs): one is merged.").count == 1, "a count that doesn't match: no guess")
+    #expect(find("U-9563 and U-10034 (3 PRs): both green.").count == 2, "two tickets: no guess")
+    #expect(find("Then 3 PRs went out.").isEmpty)
+}
