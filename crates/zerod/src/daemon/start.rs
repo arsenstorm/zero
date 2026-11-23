@@ -449,7 +449,7 @@ impl Daemon {
             });
         }
         let mut env = match conversation.signin.as_deref().and_then(|id| self.signins.get(id)) {
-            Some(signin) => self.signins.task_environment(&signin)?,
+            Some(signin) => self.signins.task_environment(&signin, &servers.iter().map(|s| s.id.as_str()).collect::<Vec<_>>())?,
             None => vec![],
         };
         if conversation.provider == Provider::Claude {

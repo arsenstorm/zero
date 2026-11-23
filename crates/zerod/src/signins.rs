@@ -484,9 +484,10 @@ impl SignIns {
     /// A task's CLI's environment for this sign-in (`environment`), its folder given the MCP servers' sign-ins first.
     /// Only a task's start writes the folder's item: every write is a chance to lose a refresh Claude Code makes at
     /// the same time (`share_mcp_sign_ins`), so Zero's own short runs of it (usage, models) don't.
-    pub fn task_environment(&self, signin: &SignIn) -> Result<Variables, String> {
+    /// Not the servers Zero gives the task itself (`zeros`, by name), whose own of that name the CLI doesn't use.
+    pub fn task_environment(&self, signin: &SignIn, zeros: &[&str]) -> Result<Variables, String> {
         if signin.kind == Kind::ClaudeHome && !signin.pending {
-            self.share_mcp_sign_ins(Some(&self.folder(Provider::Claude, &signin.id)?));
+            self.share_mcp_sign_ins_but(Some(&self.folder(Provider::Claude, &signin.id)?), zeros);
         }
         self.environment(signin)
     }
@@ -558,6 +559,10 @@ impl SignIns {
     /// with only the servers' sign-ins added or renewed changed. Zero never calls a server: Claude Code signs in and
     /// refreshes, Zero copies what it kept.
     pub fn share_mcp_sign_ins(&self, into: Option<&Path>) {
+        self.share_mcp_sign_ins_but(into, &[])
+    }
+
+    fn share_mcp_sign_ins_but(&self, into: Option<&Path>, given: &[&str]) {
         let Some(store) = self.store.lock().unwrap().clone() else { return };
         let read = self.secrets.lock().unwrap().clone();
         let user = claude_user();
@@ -601,8 +606,10 @@ impl SignIns {
         let service = claude_keychain(Some(folder));
         let Some(text) = read(&service, &user) else { return };
         let Ok(theirs) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+        // An entry's name is "<server>|<hash>".
+        let zeros_own = |name: &str| given.contains(&name.split('|').next().unwrap_or_default());
         let mut renewed: Vec<(String, serde_json::Value)> =
-            latest.into_iter().filter(|(name, entry)| later(entry, theirs["mcpOAuth"].get(name))).collect();
+            latest.into_iter().filter(|(name, entry)| !zeros_own(name) && later(entry, theirs["mcpOAuth"].get(name))).collect();
         // The item goes on one line of `security -i`: as many as fit, the servers used last first (Claude Code renews
         // a server's sign-in as it uses it, so the latest to expire); the rest wait for the folder's next start.
         renewed.sort_by_key(|(_, entry)| std::cmp::Reverse(entry["expiresAt"].as_i64().unwrap_or(0)));
