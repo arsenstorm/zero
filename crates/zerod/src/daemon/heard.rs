@@ -66,20 +66,28 @@ impl Daemon {
         true
     }
 
-    /// Refused its model by its account's provider (no access): that's kept of the account, and the task carries on as
-    /// one not refused it, as at a limit. False when there's none.
-    fn switch_for_model(&self, conversation: &Conversation) -> bool {
+    /// Refused its model by its account's provider (no access), or its account signed out (its CLI couldn't renew the
+    /// sign-in): that's kept of the account, and the task carries on as another, as at a limit. False when there's none.
+    fn switch_for_failure(&self, conversation: &Conversation) -> bool {
         if self.switching.lock().unwrap().contains(&conversation.id) {
             return true;
         }
-        let (Some(model), Some(signin)) = (conversation.model.as_deref(), conversation.signin.as_deref()) else { return false };
-        if !conversation.failure.as_ref().is_some_and(|f| crate::signins::refuses_model(&f.message)) {
+        let (Some(failure), Some(signin)) = (conversation.failure.as_ref(), conversation.signin.as_deref()) else { return false };
+        let model = conversation.model.as_deref();
+        let why = if failure.kind == crate::model::FailureKind::SignIn {
+            self.signins.signed_out(signin);
+            "Your account is signed out, so Zero carries this task on as another account: carry on with what you were doing.".to_string()
+        } else if let Some(model) = model.filter(|_| crate::signins::refuses_model(&failure.message)) {
+            self.signins.refuse(signin, model);
+            format!(
+                "Your account can't use {model}, so Zero carries this task on as another account that can: carry on with what you were doing."
+            )
+        } else {
             return false;
-        }
-        self.signins.refuse(signin, model);
-        let Some(next) = self.signins.choose_for(conversation.provider, now(), Some(signin), Some(model)) else { return false };
+        };
+        let Some(next) = self.signins.choose_for(conversation.provider, now(), Some(signin), model) else { return false };
         self.switching.lock().unwrap().insert(conversation.id.clone());
-        let (me, id, model) = (self.me.clone(), conversation.id.clone(), model.to_string());
+        let (me, id) = (self.me.clone(), conversation.id.clone());
         tokio::spawn(async move {
             let Some(daemon) = me.upgrade() else { return };
             if let Ok(session) = daemon.session(&id) {
@@ -93,7 +101,7 @@ impl Daemon {
                 session.change(Change::Status { status: Status::Offline, turn: None, error: None });
                 session.change(Change::Failed { failure: None });
             }
-            daemon.tell(&id, crate::model::from_line("zero", &format!("Your account can't use {model}, so Zero carries this task on as another account that can: carry on with what you were doing.")));
+            daemon.tell(&id, crate::model::from_line("zero", &why));
         });
         true
     }
@@ -263,7 +271,7 @@ impl Daemon {
                     false
                 }
             }
-            Attention::Failed if before != Some(Attention::Failed) => self.switch_for_model(&conversation),
+            Attention::Failed if before != Some(Attention::Failed) => self.switch_for_failure(&conversation),
             Attention::Offline => self.switching.lock().unwrap().remove(id),
             _ => false,
         };

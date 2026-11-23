@@ -484,6 +484,8 @@ pub fn mcp_sign_ins(daemon: &Arc<Daemon>, integrations: &Arc<crate::integrations
         })
     });
     daemon.mcp_auth.zero_signs_in(owns, run);
+    // A task already running (taken over from the zerod before) may have been given its servers without Zero's tokens.
+    daemon.push_mcp_everywhere();
     let tokens = integrations.clone();
     tokio::spawn(async move {
         loop {

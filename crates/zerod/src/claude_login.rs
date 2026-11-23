@@ -105,21 +105,20 @@ pub async fn models(command: &[String], env: &[(String, String)]) -> Result<Vec<
     Ok(response["models"].as_array().cloned().unwrap_or_default())
 }
 
-/// One control request to a Claude Code started for it, and its answer.
+/// One control request to a Claude Code started for it, and its answer. Answered (or given up on), it's left to
+/// finish on its own as its input closes, never killed: it may be renewing the account's sign-in, and killed between
+/// Anthropic's new refresh token and its write to the Keychain, the account is signed out for good.
+// ponytail: one hung on the network lingers until its own timeouts; a reaper with a long deadline if they pile up.
 async fn control(command: &[String], env: &[(String, String)], id: &str, request: serde_json::Value) -> Result<serde_json::Value, String> {
     use tokio::io::AsyncWriteExt;
     let mut claude = tokio::process::Command::new(&command[0]);
-    claude
-        .args(&command[1..])
-        .envs(env.iter().cloned())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
+    claude.args(&command[1..]).envs(env.iter().cloned()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = claude.spawn().map_err(|e| format!("Couldn't start Claude Code: {e}"))?;
+    let lines = tokio::io::BufReader::new(child.stdout.take().ok_or("Claude Code has no output")?).lines();
+    let mut running = LetFinish(Some((child, lines)));
+    let (child, lines) = running.0.as_mut().expect("just set");
     let ask = serde_json::json!({"type": "control_request", "request_id": id, "request": request});
     child.stdin.as_mut().ok_or("Claude Code has no input")?.write_all(format!("{ask}\n").as_bytes()).await.map_err(|e| e.to_string())?;
-    let mut lines = tokio::io::BufReader::new(child.stdout.take().ok_or("Claude Code has no output")?).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
         let response = &message["response"];
@@ -132,6 +131,23 @@ async fn control(command: &[String], env: &[(String, String)], id: &str, request
         return Ok(response["response"].clone());
     }
     Err("Claude Code stopped before it answered".into())
+}
+
+/// A Claude Code done with, however (answered, failed, its caller's timeout): its input closed and its output read
+/// to the end in the background, so it exits when it's finished, not on a write to a closed pipe.
+struct LetFinish(Option<(tokio::process::Child, tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>)>);
+
+impl Drop for LetFinish {
+    fn drop(&mut self) {
+        let Some((mut child, mut lines)) = self.0.take() else { return };
+        drop(child.stdin.take());
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                while let Ok(Some(_)) = lines.next_line().await {}
+                let _ = child.wait().await;
+            });
+        }
+    }
 }
 
 /// `get_usage`'s rate limits: each window's use (0 to 100) and reset; one it has no figure for is left out.

@@ -94,6 +94,11 @@ async fn main() {
     let mut terminate = signal(SignalKind::terminate()).expect("a SIGTERM handler");
     eprintln!("zerod: {} sessions, listening on {}", daemon.list().len(), args.socket.display());
     let zerod = zerod_for(&args, &daemon, inbox, own);
+    // Started only now Zero's MCP sign-ins are read (zerod_for): a task started before was given its servers without
+    // their tokens. After a restart, the turns it paused carry on; and parked tasks with words that may go, which
+    // nothing woke for them before (a hold that went with that zerod).
+    daemon.carry_on();
+    daemon.deliver_stranded();
     tokio::spawn(zerod::server::archive_completed(zerod.clone()));
     tokio::spawn(zerod::uses::follow(daemon.clone()));
     tokio::spawn(zerod::left::follow(daemon.clone()));
@@ -117,7 +122,7 @@ async fn main() {
     let _ = std::fs::remove_file(&args.socket);
 }
 
-/// The sessions in `home`, the turns a restart paused carrying on; zerod ends if they can't be read.
+/// The sessions in `home`, the processes a restart handed over taken over; zerod ends if they can't be read.
 fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
     zerod::stuck::open(home);
     let daemon = match zerod::daemon::Daemon::open(home, zerod::daemon::real_runtime()) {
@@ -131,9 +136,6 @@ fn open_daemon(home: &Path) -> Arc<zerod::daemon::Daemon> {
     // each process taken over records it (Daemon::compact_window_changed).
     zerod::adapter::set_compact_window(zerod::server::Settings::load(home).compact_window());
     daemon.take_over();
-    daemon.carry_on();
-    // And parked tasks with words that may go, which nothing woke for them before (a hold that went with that zerod).
-    daemon.deliver_stranded();
     // Every task's turns end on Zero's ending, whichever agent runs it: one that doesn't is sent back once.
     daemon.require_endings();
     daemon.name_tasks();

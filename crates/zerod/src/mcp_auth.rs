@@ -368,6 +368,10 @@ pub fn start(daemon: Arc<crate::daemon::Daemon>, inbox: Arc<Inbox>) {
                 let _turn = turn.lock().await;
                 // The CLI's own server: Zero's to sign in to from now on, when it can be.
                 daemon.adopt_mcp(&event.session, &server).await;
+                // Zero has its token (the task started without it, or with its CLI's own): given it, no sign-in.
+                if daemon.mcp_signed_in(&server) {
+                    return daemon.push_mcp_everywhere();
+                }
                 let env = crate::process::SESSION_ENV.lock().unwrap().get(&conversation.id).cloned().unwrap_or_default();
                 let job =
                     Job { server, provider: conversation.provider, cwd: conversation.cwd.clone(), env, mcp: conversation.mcp.clone() };

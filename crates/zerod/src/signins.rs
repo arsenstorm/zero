@@ -107,6 +107,10 @@ pub struct SignIns {
     /// Wakes the accounts' usage reads (server/signins.rs `follow_usage`) to read now: the Accounts page opened, a
     /// limit heard in a task.
     pub read_now: tokio::sync::Notify,
+    /// Accounts a task found signed out (its CLI couldn't renew the sign-in): not chosen until a read of their usage
+    /// gives their plan's figures, which only a signed-in account has.
+    // ponytail: in memory; after a restart a task finds it signed out again, once, and moves on.
+    signed_out: Mutex<std::collections::HashSet<String>>,
 }
 
 /// An account's turns by hour, by its id.
@@ -131,6 +135,7 @@ impl SignIns {
             claude: Mutex::new(claude),
             activity: Mutex::new(activity),
             read_now: tokio::sync::Notify::new(),
+            signed_out: Mutex::default(),
         }
     }
 
@@ -352,7 +357,15 @@ impl SignIns {
     /// with no window at all (its CLI answered without its limits) read nothing, so what's known stays, unless it said
     /// the plan has none.
     pub fn replace_usage(&self, id: &str, usage: &crate::model::Usage) {
+        if !usage.windows.is_empty() {
+            self.signed_out.lock().unwrap().remove(id);
+        }
         self.keep_usage(id, usage, false)
+    }
+
+    /// A task found this account signed out: not chosen again until it's signed in (`replace_usage`).
+    pub fn signed_out(&self, id: &str) {
+        self.signed_out.lock().unwrap().insert(id.into());
     }
 
     fn keep_usage(&self, id: &str, usage: &crate::model::Usage, report: bool) {
@@ -432,10 +445,12 @@ impl SignIns {
         self.choose_for(cli, now, except, None)
     }
 
-    /// As `choose`, for a task on `model`: an account refused it isn't one to choose.
+    /// As `choose`, for a task on `model`: an account refused it, or found signed out, isn't one to choose.
     pub fn choose_for(&self, cli: Provider, now: i64, except: Option<&str>, model: Option<&str>) -> Option<SignIn> {
         let kept = self.kept.lock().unwrap();
-        let refused = |id: &str| model.is_some_and(|m| kept.refused.get(id).is_some_and(|r| r.iter().any(|x| x == m)));
+        let signed_out = self.signed_out.lock().unwrap().clone();
+        let refused =
+            |id: &str| signed_out.contains(id) || model.is_some_and(|m| kept.refused.get(id).is_some_and(|r| r.iter().any(|x| x == m)));
         let default = kept.defaults.get(&name(cli)).cloned();
         let live = |w: &crate::model::UsageWindow| w.resets_at.is_some_and(|at| at > now);
         let mut open: Vec<(f64, i64, bool, usize, &SignIn)> = kept
@@ -466,6 +481,16 @@ impl SignIns {
         open.first().map(|chosen| chosen.4.clone())
     }
 
+    /// A task's CLI's environment for this sign-in (`environment`), its folder given the MCP servers' sign-ins first.
+    /// Only a task's start writes the folder's item: every write is a chance to lose a refresh Claude Code makes at
+    /// the same time (`share_mcp_sign_ins`), so Zero's own short runs of it (usage, models) don't.
+    pub fn task_environment(&self, signin: &SignIn) -> Result<Variables, String> {
+        if signin.kind == Kind::ClaudeHome && !signin.pending {
+            self.share_mcp_sign_ins(Some(&self.folder(Provider::Claude, &signin.id)?));
+        }
+        self.environment(signin)
+    }
+
     /// What the CLI's process is given for this sign-in: a missing value is an error to show, never a CLI started
     /// signed in as whatever it finds.
     pub fn environment(&self, signin: &SignIn) -> Result<Variables, String> {
@@ -485,9 +510,7 @@ impl SignIns {
             }
             (Provider::Codex, _) => vec![("CODEX_HOME".into(), self.folder(Provider::Codex, &signin.id)?.to_string_lossy().into())],
             (Provider::Claude, Kind::ClaudeHome) => {
-                let folder = self.folder(Provider::Claude, &signin.id)?;
-                self.share_mcp_sign_ins(Some(&folder));
-                vec![("CLAUDE_CONFIG_DIR".into(), folder.to_string_lossy().into())]
+                vec![("CLAUDE_CONFIG_DIR".into(), self.folder(Provider::Claude, &signin.id)?.to_string_lossy().into())]
             }
             (cli, kind) => return Err(format!("{} doesn't sign in with {kind:?}", cli.title())),
         })

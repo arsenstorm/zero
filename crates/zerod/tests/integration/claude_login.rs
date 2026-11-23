@@ -86,3 +86,23 @@ async fn an_accounts_models_are_asked_of_claude_code_without_a_turn() {
     assert_eq!(values, ["default", "claude-opus-4-8"]);
     assert_eq!(models[1]["supportedEffortLevels"], serde_json::json!(["low", "high"]));
 }
+
+/// Claude Code that has answered is left to finish on its own, its input closed, never killed: it may be renewing the
+/// account's sign-in, and killed between Anthropic's new refresh token and its write to the Keychain, the account is
+/// signed out for good (the old token no longer works).
+#[tokio::test]
+async fn claude_code_that_has_answered_finishes_on_its_own() {
+    let finished = std::env::temp_dir().join(format!("zerod-claude-finished-{}", std::process::id()));
+    let _ = std::fs::remove_file(&finished);
+    let answer = r#"{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[]}}}"#;
+    let script = format!("read request; echo '{answer}'; while read more; do :; done; sleep 0.3; touch '{}'", finished.display());
+    zerod::claude_login::models(&sh(&script), &[]).await.unwrap();
+    for _ in 0..40 {
+        if finished.exists() {
+            let _ = std::fs::remove_file(&finished);
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("Claude Code was killed after it answered");
+}

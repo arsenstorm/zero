@@ -631,6 +631,48 @@ async fn a_task_refused_its_model_carries_on_as_another_account() {
     assert_eq!(w.daemon.get(&next).unwrap().signin.as_deref(), Some(second.id.as_str()));
 }
 
+/// A task whose account is signed out (Claude Code couldn't renew its sign-in): the task carries on as another
+/// account, its agent told why, and new tasks don't start as that one until a read of its usage finds it signed in.
+#[tokio::test]
+async fn a_task_whose_account_is_signed_out_carries_on_as_another() {
+    let w = world("signin-signed-out");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    let account = |label: &str| {
+        w.daemon
+            .signins
+            .save(zerod::signins::SignIn {
+                id: String::new(),
+                cli: Provider::Claude,
+                kind: zerod::signins::Kind::ClaudeHome,
+                label: label.into(),
+                plan: None,
+                variable: None,
+                pending: false,
+            })
+            .unwrap()
+    };
+    let (first, second) = (account("a@example.com"), account("b@example.com"));
+    let options = || Options { cwd: Some(w.project.to_str().unwrap().into()), ..Default::default() };
+    let lead = w.daemon.start(Provider::Claude, "lead the work", options()).unwrap();
+    assert_eq!(w.daemon.get(&lead).unwrap().signin.as_deref(), Some(first.id.as_str()));
+    let seen = lead_runtime(&w).await;
+    seen.said("user", 1).await;
+    seen.say(json!({"type": "result", "subtype": "success", "is_error": true,
+                    "result": "Failed to authenticate: OAuth session expired and could not be refreshed"}));
+    until(&w.daemon, &lead, |c| c.signin.as_deref() == Some(second.id.as_str())).await;
+    let again = nth_runtime(&w, 1).await;
+    assert!(again.said("user", 1).await[0]["message"]["content"].as_str().unwrap().contains("signed out"));
+    let next = w.daemon.start(Provider::Claude, "more", options()).unwrap();
+    assert_eq!(w.daemon.get(&next).unwrap().signin.as_deref(), Some(second.id.as_str()), "not the signed-out one");
+    // Signed in again: a read of its usage with its plan's figures says so.
+    let week = zerod::model::UsageWindow { name: "7 days".into(), used: 0.0, resets_at: Some(i64::MAX / 2), ..Default::default() };
+    w.daemon.signins.replace_usage(&first.id, &zerod::model::Usage { windows: vec![week], ..Default::default() });
+    let later = w.daemon.start(Provider::Claude, "later", options()).unwrap();
+    assert_eq!(w.daemon.get(&later).unwrap().signin.as_deref(), Some(first.id.as_str()), "signed in again");
+}
+
 /// The nth Claude process started, once it has.
 async fn nth_runtime(w: &World, n: usize) -> Seen {
     for _ in 0..500 {

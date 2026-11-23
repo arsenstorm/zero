@@ -1581,6 +1581,22 @@ async fn a_remote_server_a_tasks_claude_has_of_its_own_and_needs_signing_in_to_b
     // Signed in: Zero's amie, its token the header, takes the place of the task's own.
     let set = claude.said("control_request:mcp_set_servers", 1).await;
     assert_eq!(set[0]["request"]["servers"]["amie"]["headers"]["Authorization"], "Bearer tok-1", "{}", set[0]);
+
+    // A task that says it needs signing in again while Zero has its token (one started without it, as a zerod
+    // starting does) is given it: Zero doesn't sign in again. (`mcp_changed` forgets the sign-in ended, as a restart.)
+    h.daemon.mcp_changed("amie");
+    let again = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "ls"})).await;
+    let again = again["result"]["session"].as_str().unwrap().to_string();
+    until(&h.daemon.session(&again).unwrap(), |c| c.status == Status::Idle).await;
+    let asked = h.web.asked.lock().unwrap().len();
+    let second = h.seen.lock().unwrap()[1].clone();
+    second.say(json!({"type": "system", "subtype": "init", "session_id": "de7c0e2b-badd-439a-a46b-9e187476cb40",
+                      "mcp_servers": [{"name": "amie", "status": "needs-auth"}]}));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let asks = client.call(json!({"op": "asks"})).await["result"].clone();
+    let open = asks.as_array().unwrap().iter().filter(|a| a["title"] == "Sign in to amie?" && a["state"] == "waiting").count();
+    assert_eq!(open, 0, "no sign-in asked again: {asks}");
+    assert_eq!(h.web.asked.lock().unwrap().len(), asked, "nothing asked of amie");
 }
 
 #[tokio::test]

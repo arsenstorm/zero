@@ -259,6 +259,16 @@ impl Daemon {
         self.mcp_changed(&saved.id);
     }
 
+    /// Whether Zero has a token for a server it keeps, for its URL.
+    pub fn mcp_signed_in(&self, id: &str) -> bool {
+        let (Some(tokens), Some(url)) =
+            (self.integrations.get(), self.mcp_servers.list().into_iter().find(|s| s.id == id).and_then(|s| s.url))
+        else {
+            return false;
+        };
+        tokens.mcp_access(id, &url).is_some_and(|access| access.is_some())
+    }
+
     /// A server's config changed: no stale "needs signing in" (Claude's cache in every home, this zerod's ended
     /// sign-ins) hides the new one.
     pub fn mcp_changed(&self, id: &str) {
@@ -439,7 +449,7 @@ impl Daemon {
             });
         }
         let mut env = match conversation.signin.as_deref().and_then(|id| self.signins.get(id)) {
-            Some(signin) => self.signins.environment(&signin)?,
+            Some(signin) => self.signins.task_environment(&signin)?,
             None => vec![],
         };
         if conversation.provider == Provider::Claude {

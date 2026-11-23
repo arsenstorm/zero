@@ -487,7 +487,10 @@ fn an_mcp_servers_sign_in_in_one_claude_folder_is_every_accounts() {
     items.lock().unwrap().insert(item_a.clone(), signed_in.to_string());
     items.lock().unwrap().insert(item_b.clone(), serde_json::json!({"claudeAiOauth": {"accessToken": "b-account"}}).to_string());
 
+    // Zero's own short runs of Claude Code (its usage, its models) leave the item alone: only a task's start writes it.
     store.environment(&b).unwrap();
+    assert!(items.lock().unwrap()[&item_b].find("mcpOAuth").is_none(), "not written for a usage read");
+    store.task_environment(&b).unwrap();
     let b_now: serde_json::Value = serde_json::from_str(&items.lock().unwrap()[&item_b]).unwrap();
     assert_eq!(b_now["mcpOAuth"]["linear|abc"], entry("t1", 100), "signed in to Linear in a's folder: b's has it too");
     assert_eq!(b_now["claudeAiOauth"]["accessToken"], "b-account", "b's own sign-in untouched");
@@ -499,7 +502,7 @@ fn an_mcp_servers_sign_in_in_one_claude_folder_is_every_accounts() {
     let c = store.save(signin(Provider::Claude, Kind::ClaudeHome, "c@example.com")).unwrap();
     let item_c = item_of(&store, &c);
     items.lock().unwrap().insert(item_c.clone(), serde_json::json!({"claudeAiOauth": {"accessToken": "c-account"}}).to_string());
-    store.environment(&c).unwrap();
+    store.task_environment(&c).unwrap();
     let c_now: serde_json::Value = serde_json::from_str(&items.lock().unwrap()[&item_c]).unwrap();
     assert_eq!(c_now["mcpOAuth"]["linear|abc"]["accessToken"], "t1");
 }
@@ -520,10 +523,10 @@ fn the_latest_refreshed_mcp_sign_in_is_the_one_shared() {
     items.lock().unwrap().insert(item_a.clone(), serde_json::json!({"mcpOAuth": {"linear|abc": entry("old", 100)}}).to_string());
     items.lock().unwrap().insert(item_b.clone(), serde_json::json!({"mcpOAuth": {"linear|abc": entry("new", 200)}}).to_string());
 
-    store.environment(&a).unwrap();
+    store.task_environment(&a).unwrap();
     let a_now: serde_json::Value = serde_json::from_str(&items.lock().unwrap()[&item_a]).unwrap();
     assert_eq!(a_now["mcpOAuth"]["linear|abc"], entry("new", 200), "b refreshed it since");
-    store.environment(&b).unwrap();
+    store.task_environment(&b).unwrap();
     let b_now: serde_json::Value = serde_json::from_str(&items.lock().unwrap()[&item_b]).unwrap();
     assert_eq!(b_now["mcpOAuth"]["linear|abc"], entry("new", 200), "a's older one doesn't go back");
     assert!(!items.lock().unwrap().contains_key(&item_pending), "an account still signing in has no item made for it");
@@ -570,10 +573,10 @@ fn a_folder_claude_is_running_in_is_left_until_its_next_start() {
     let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let busy = running.clone();
     store.set_in_use(Arc::new(move |_: &std::path::Path| busy.load(std::sync::atomic::Ordering::SeqCst)));
-    store.environment(&b).unwrap();
+    store.task_environment(&b).unwrap();
     assert_eq!(items.lock().unwrap()[&item_b], before, "Claude is running in b's folder: not written");
     running.store(false, std::sync::atomic::Ordering::SeqCst);
-    store.environment(&b).unwrap();
+    store.task_environment(&b).unwrap();
     assert!(items.lock().unwrap()[&item_b].contains("linear|abc"), "its next start with none running");
 }
 
@@ -596,7 +599,7 @@ fn only_the_servers_sign_ins_added_change_in_a_folders_item() {
     let before = format!(r#"{{"claudeAiOauth": {account},"mcpOAuth":{{"other|y":{other},"linear|abc":{old}}} }}"#);
     items.lock().unwrap().insert(item_b.clone(), before);
 
-    store.environment(&b).unwrap();
+    store.task_environment(&b).unwrap();
     let after = items.lock().unwrap()[&item_b].clone();
     let renewed = entry("new", 200).to_string();
     let added = entry("amie", 50).to_string();
@@ -608,7 +611,7 @@ fn only_the_servers_sign_ins_added_change_in_a_folders_item() {
     let bare = store.save(signin(Provider::Claude, Kind::ClaudeHome, "c@example.com")).unwrap();
     let item_c = item_of(&store, &bare);
     items.lock().unwrap().insert(item_c.clone(), format!(r#"{{"claudeAiOauth":{account}}}"#));
-    store.environment(&bare).unwrap();
+    store.task_environment(&bare).unwrap();
     let after = items.lock().unwrap()[&item_c].clone();
     assert!(after.starts_with(&format!(r#"{{"claudeAiOauth":{account},"mcpOAuth":{{"#)), "{after}");
     let parsed: serde_json::Value = serde_json::from_str(&after).unwrap();
@@ -656,7 +659,7 @@ fn a_folders_item_takes_the_servers_used_last_that_fit_and_the_rest_wait() {
     items.lock().unwrap().insert(item_a, signed_in.to_string());
     items.lock().unwrap().insert(item_b.clone(), serde_json::json!({"claudeAiOauth": {"accessToken": "b-account"}}).to_string());
 
-    store.environment(&b).unwrap();
+    store.task_environment(&b).unwrap();
     let written = items.lock().unwrap()[&item_b].clone();
     assert!(zerod::mcp_servers::fits_keychain(&item_b.0, &item_b.1, &written), "it fits a line of security -i");
     let b_now: serde_json::Value = serde_json::from_str(&written).unwrap();
