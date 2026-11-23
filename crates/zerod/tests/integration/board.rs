@@ -629,6 +629,9 @@ fn ending_on_an_ask_already_answered_doesnt_need_the_user() {
     let mut ask = Ask::new(AskKind::Choice, "Ship it?", agent("a"), 3600);
     ask.id = "k3x9qa".into();
     assert_eq!(ended(std::slice::from_ref(&ask)), State::NeedsYou, "still open: it waits on the user");
+    // A command the user ran (`zero run`) under way on their Mac: they've done their part, the output is on its way.
+    ask.state = AskState::Running;
+    assert_eq!(ended(std::slice::from_ref(&ask)), State::Working, "running: nothing missed");
     ask.state = AskState::Answered;
     assert_eq!(ended(&[ask]), State::Answered, "answered already: the ending is stale, a reply like any other");
 }
@@ -653,6 +656,13 @@ fn a_question_in_the_reply_needs_the_user_whatever_ending_follows() {
         ended("## What's next?\n\nThe docs PR, then QA.\n\n[zero: done]"),
         State::Answered,
         "a heading that asks isn't a question to the user (and done unconfirmed is a reply)"
+    );
+    assert_eq!(
+        ended(
+            "The issue leaves two questions open:\n- Is the fallback valid?\n- Must \"n/a\" count as none?\n\nI will settle them in the plan.\n\n[zero: waiting]"
+        ),
+        State::Waiting,
+        "questions it lists (the issue's own, quoted) aren't put to the user"
     );
 }
 
@@ -681,6 +691,24 @@ fn a_lead_keeps_a_row_per_issue_and_the_one_on_the_user_comes_first() {
     assert_eq!((done.since, done.on_you_ms), (at(500), at(300)), "five minutes on the user, kept");
     lead.apply(Change::Issue { issue: done });
     assert_ne!(board(&[lead], &[])[0].state, State::NeedsYou);
+}
+
+#[test]
+fn an_issue_moved_off_the_user_drops_what_it_needed_from_them() {
+    // A row on the user ("merge, changes or hold") moved back to its agents: what it needed from them no longer stands,
+    // or the strip still read "Needs you" over work going on. Its PR and columns stay; a state still on the user keeps it.
+    use zerod::model::{Issue, IssueMore, IssueState};
+    let at = |s: i64| s * 1000;
+    let mut on_you = Issue::set(None, "ENG-1", IssueState::You, "ready to merge", at(100));
+    let more = IssueMore { needs: Some("Merge, changes or hold".into()), pr: Some("https://github.com/o/r/pull/1".into()), fields: vec![] };
+    more.apply(&mut on_you).unwrap();
+    let reworded = Issue::set(Some(&on_you), "ENG-1", IssueState::You, "ready to merge, CI green", at(150));
+    assert_eq!(reworded.needs.as_deref(), Some("Merge, changes or hold"), "still on the user: kept");
+    let handed = Issue::set(Some(&reworded), "ENG-1", IssueState::Over, "merge it", at(160));
+    assert_eq!(handed.needs.as_deref(), Some("Merge, changes or hold"), "over to the user: kept");
+    let working = Issue::set(Some(&handed), "ENG-1", IssueState::Working, "advisor on the gaps", at(200));
+    assert_eq!(working.needs, None, "back with its agents: nothing needed from the user");
+    assert_eq!(working.pr.as_deref(), Some("https://github.com/o/r/pull/1"));
 }
 
 #[test]

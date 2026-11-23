@@ -120,7 +120,7 @@ Leading several issues at once (a worker each), keep a row per issue, which the 
 asking you where everything is: `zero issue TICKET you|over|working|waiting|parked|done \"…\"` whenever one's state \
 changes (you: what you need them to decide or give; over: done on your side, their step to take, such as a review or \
 merge; waiting: on whom; parked: why), with `--needs \"…\"`, `--pr URL` and `--field \"Merge risk=Medium\"` as they \
-apply (left out, each is kept). Zero shows the rows as one live board at the top of your conversation, each \
+apply (left out, each is kept; --needs only while the row is you or over). Zero shows the rows as one live board at the top of your conversation, each \
 with the states it went through: don't repost them as a table or a list; say only what changed and what you decided. \
 Other tasks in Zero may \
 work on what yours touches (`zero tasks` lists them, with their folders): coordinate with one directly by \
@@ -147,13 +147,14 @@ line: [zero: done] (the work is finished end to end, with good reason to say so:
 ticket closed, or the user said it's done; Zero then puts it away, and what you follow brings it back if something \
 comes up. Committed, pushed or in review is not done. It counts only once `zero done \"what's done\"` (or zero_done) \
 has confirmed it: that's refused at first with what done means and a token, then `--confirm <token>` within 5 \
-minutes marks it; unsure, `--ask` asks the user. A worker's done is its lead's to judge, never the user's: for a \
+minutes marks it; unsure, `--ask` asks the user, and their answer decides: until they say Done, the token is \
+refused, and silence isn't a yes. A worker's done is its lead's to judge, never the user's: for a \
 worker, `zero done` marks it at once and asks no one. Unconfirmed, [zero: done] shows as Replied), [zero: waiting] (the next move is someone else's, not the user's: a review, CI, a deploy, QA; [zero: waiting on <task>] \
 when it's another task's, whose next turn ending wakes you), \
 [zero: blocked] (rare, shown red: it can't go on at all until something outside you and the user changes, such as an \
 outage or another team's access, or for a worker, a decision only its lead or the user can make; only once `zero blocked \"what blocks it\"` (or zero_blocked) has confirmed it, in two \
-steps as done; unconfirmed, it shows as Waiting), [zero: working] (pausing between steps), or [zero: asked <id>] (waiting on the user's answer to what you asked, only \
-while it's unanswered). Don't take actions other people will see, such as merging, marking a pull request ready, requesting reviews or \
+steps as done; unconfirmed, it shows as Waiting), [zero: working] (pausing between steps), or [zero: asked <id>] (waiting on the user's answer to an ask of yours, or \
+of a worker's, that's still open). Don't take actions other people will see, such as merging, marking a pull request ready, requesting reviews or \
 posting messages, unless the user asked you to. For anything in a web browser, use Zero's browser_ tools (the user's \
 Chrome, through Zero for Chrome): your own browser tools are off in Zero. To show the user an image (a screenshot, a \
 render), save it as a file and put `![what it shows](/its/absolute/path.png)` on a line of its own in your message: \
@@ -281,19 +282,17 @@ impl Provider {
         let unrestricted = conversation.permissions == crate::model::Permissions::Unrestricted;
         let compact = codex_compact();
         let mut args: Vec<&str> = match self {
-            Provider::Claude => [
-                &[
-                    "claude",
-                    "--resume",
-                    thread,
-                    "--permission-mode",
-                    if unrestricted { "bypassPermissions" } else { "auto" },
-                    "--no-chrome",
-                    "--settings",
-                    claude::NO_IDLE_COMPACTION,
-                ][..],
-                if subagents() { &[] } else { claude::NO_SUBAGENTS },
-            ]
+            Provider::Claude => [&[
+                "claude",
+                "--resume",
+                thread,
+                "--permission-mode",
+                if unrestricted { "bypassPermissions" } else { "auto" },
+                "--no-chrome",
+                "--settings",
+                claude::NO_IDLE_COMPACTION,
+                claude::disallowed(subagents()),
+            ][..]]
             .concat(),
             // Its own app-server, as Zero runs Codex headless: the shared one may run with other settings, and Codex asks
             // before using it.

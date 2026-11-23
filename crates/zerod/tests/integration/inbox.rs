@@ -657,3 +657,57 @@ async fn an_mcp_ask_zerod_made_is_kept_when_approved_after_zerod_restarts() {
     assert_eq!(inbox.ask(&made.id).unwrap().state, AskState::Answered);
     assert_eq!(inbox.ask(&forged.id).unwrap().state, AskState::Declined);
 }
+
+#[tokio::test]
+async fn done_isnt_confirmed_while_the_users_answer_to_is_it_done_is_missing() {
+    // Asked whether the task is done, the user's answer decides: while the question is open, or once it closed without
+    // their Done (withdrawn, expired, Not yet), the agent's own token can't confirm it. Silence isn't a yes. Their word
+    // after it, in chat, still counts.
+    let s = inbox();
+    let agent = AgentIdentity {
+        name: "zerod-t1".into(),
+        reference: Some("t1".into()),
+        runtime: Some("zerod".into()),
+        host: "mac".into(),
+        ..Default::default()
+    };
+    let said: Arc<Mutex<Vec<zerod::model::Item>>> = Default::default();
+    let read = said.clone();
+    s.know_conversations(Box::new(move |_, _| Some(read.lock().unwrap().clone())));
+    let token = |s: &Inbox| {
+        let refused = s.done(&agent, "Shipped", None).unwrap_err();
+        let token = refused.split("--confirm ").nth(1).unwrap().split_whitespace().next().unwrap();
+        token.trim_matches(|c: char| !c.is_alphanumeric()).to_string()
+    };
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    let user = |id: &str, text: String| zerod::model::Item {
+        at: Some(at),
+        id: id.into(),
+        turn: None,
+        kind: zerod::model::ItemKind::User { text, images: vec![], sent: None },
+        status: zerod::model::ItemStatus::Done,
+    };
+    let question = s.ask_done(&agent, "Shipped");
+    let refused = s.done(&agent, "Shipped", Some(&token(&s))).unwrap_err();
+    assert!(refused.contains("silence isn't a yes") && refused.contains(&question.id), "{refused}");
+    // While it's open, even their word in chat: the ask is withdrawn first.
+    said.lock().unwrap().push(user("u0", "Looks done to me".into()));
+    assert!(s.done(&agent, "Shipped", Some(&token(&s))).unwrap_err().contains("zero withdraw"), "still open");
+    said.lock().unwrap().clear();
+    let mut expired = s.ask(&question.id).unwrap();
+    s.withdraw(&question.id, None);
+    assert!(s.done(&agent, "Shipped", Some(&token(&s))).is_err(), "closed without their Done");
+    let not_yet = s.ask_done(&agent, "Shipped");
+    s.choose(&not_yet.id, 1);
+    until(&s, &not_yet.id, |a| a.state == AskState::Answered).await;
+    assert!(s.done(&agent, "Shipped", Some(&token(&s))).is_err(), "Not yet");
+    assert!(!s.asks().iter().any(|a| a.confirmed), "nothing confirmed");
+    // Zero's words to it aren't the user's: what it's told as an ask expires, as its answer comes.
+    expired.state = AskState::Expired;
+    said.lock().unwrap().push(user("u1", zerod::model::from_line("zero", &Inbox::delivery_text(&expired))));
+    let answered = s.ask(&not_yet.id).unwrap();
+    said.lock().unwrap().push(user("u2", zerod::model::from_line("zero", &Inbox::delivery_text(&answered))));
+    assert!(s.done(&agent, "Shipped", Some(&token(&s))).is_err(), "an event isn't the user's word");
+    said.lock().unwrap().push(user("u3", "It's done, close it".into()));
+    assert!(s.done(&agent, "Shipped", Some(&token(&s))).is_ok(), "the user's word after it");
+}

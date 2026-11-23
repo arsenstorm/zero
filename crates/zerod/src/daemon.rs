@@ -5,6 +5,7 @@
 mod adopt;
 mod archive;
 mod heard;
+pub(crate) use heard::users_own;
 mod inbox;
 mod pause;
 mod rewind;
@@ -50,6 +51,8 @@ pub type Blocked = Box<dyn Fn(&str) -> bool + Send + Sync>;
 /// A user's queued words as they go to the agent: the note on its open asks added then (the inbox's to say).
 /// Whether a task's own note says who it waits on (board::says_who), from the inbox.
 pub type SaysWho = Box<dyn Fn(&Conversation) -> bool + Send + Sync>;
+/// Whether an ask (by its id) is open and made by one of these sessions, from the inbox.
+pub type OpenAsk = Box<dyn Fn(&str, &[String]) -> bool + Send + Sync>;
 /// What else hears a task's turn end (the inbox, keeping the agent's answer with the ask it answers).
 pub type Ended = Box<dyn Fn(&Conversation) + Send + Sync>;
 pub type Noted = Box<dyn Fn(&str, String) -> String + Send + Sync>;
@@ -113,6 +116,9 @@ pub struct Daemon {
     says_who: std::sync::OnceLock<SaysWho>,
     /// Whether a task has an ask open to the user, from the inbox: its answer wakes the task.
     asking: std::sync::OnceLock<Blocked>,
+    /// What a turn's ending is checked against, from the inbox: the ask `[zero: asked <id>]` names, and a done confirmed.
+    open_ask: std::sync::OnceLock<OpenAsk>,
+    done_confirmed: std::sync::OnceLock<SaysWho>,
     ended: std::sync::OnceLock<Ended>,
     /// Tasks told nothing wakes them: not again until something could (a follow, a background run, a note saying who).
     /// ponytail: in memory; a restart may tell one once more.
@@ -176,10 +182,24 @@ pub const CARRIED: &str = "Zero updated: carrying on where it left off";
 pub const END_YOUR_TURN_MARK: &str = "Zero can't tell where your turn left the task";
 pub const END_YOUR_TURN: &str = "Zero can't tell where your turn left the task. End it with exactly one of these as its last line: \
 [zero: done] (the work is finished end to end: merged and deployed, verified, or the user said so; and only after \
-`zero done` confirmed it, its token, or zero done --ask), [zero: waiting] \
-(the next move is someone else's, not the user's: a review, CI, a deploy, QA), [zero: working] (pausing between steps), or [zero: asked <id>]. Anything you need from the user (a decision, a command for them to run, steps for them to take) \
+`zero done` confirmed it, its token, or the user's Done to zero done --ask), [zero: waiting] \
+(the next move is someone else's, not the user's: a review, CI, a deploy, QA), [zero: working] (pausing between steps), or [zero: asked <id>] (an ask of yours still open). Anything you need from the user (a decision, a command for them to run, steps for them to take) \
 goes through zero ask, zero run or zero approve with --async (or Zero's zero_ask and zero_run tools), and the turn ends [zero: asked <id>]: a question left in \
 your words reaches no one. Don't repeat your answer; do what's missing and end.";
+/// What a task is told when its turn ends [zero: done] with nothing confirming it (`zero done`'s token, the user's Done).
+pub const DONE_UNCONFIRMED: &str = "Zero can't tell where your turn left the task: it ended [zero: done], but nothing \
+confirmed the task done since the user last spoke. If it's finished end to end, run zero done \"what's done\" and confirm \
+with its token. Unsure, run zero done \"what's done\" --ask and end [zero: asked <its id>]: the user's answer decides, \
+and no answer isn't a yes. Otherwise end [zero: waiting] or [zero: working]. Don't repeat your answer; do what's missing and end.";
+/// What a task is told when its turn ends [zero: asked <id>] on an ask that isn't open, or isn't its own.
+pub fn asked_not_open(id: &str) -> String {
+    format!(
+        "Zero can't tell where your turn left the task: it ended [zero: asked {id}], but {id} isn't an open ask of yours \
+(answered, withdrawn, expired, or another task's). If you need the user, ask with zero ask, zero run or zero approve \
+--async and end [zero: asked <its id>]. Otherwise end [zero: done], [zero: waiting] or [zero: working]. Don't repeat \
+your answer; do what's missing and end."
+    )
+}
 /// What a worker is told when its turn ends without Zero's ending: as a task's, in a worker's terms. Its lead hears how
 /// it ended, and a decision it can't make (its lead's or the user's) is blocked, red on its row, not a reply.
 pub const END_A_WORKERS_TURN: &str = "Zero can't tell where your turn left the task. You're a worker: your lead hears how you end. End it with \
@@ -385,6 +405,8 @@ impl Daemon {
             following: Default::default(),
             says_who: Default::default(),
             asking: Default::default(),
+            open_ask: Default::default(),
+            done_confirmed: Default::default(),
             ended: Default::default(),
             told_nothing_wakes: Mutex::default(),
             crossed: Mutex::default(),
@@ -644,6 +666,12 @@ impl Daemon {
     pub fn know_who(&self, says_who: SaysWho, asking: Blocked) {
         let _ = self.says_who.set(says_who);
         let _ = self.asking.set(asking);
+    }
+
+    /// What a turn's ending is checked against, given once (server::know_endings).
+    pub fn know_endings(&self, open_ask: OpenAsk, done_confirmed: SaysWho) {
+        let _ = self.open_ask.set(open_ask);
+        let _ = self.done_confirmed.set(done_confirmed);
     }
 
     /// What else hears a turn end, given once (server::link_asks).

@@ -406,18 +406,32 @@ impl Daemon {
         };
         let ending = crate::board::ending(answer);
         // A worker's question in prose is its lead's to take up: any ending will do.
-        if ending.is_some() && (worker || ending == Some("asked") || !crate::board::asks_in_prose(answer)) {
+        let ended = ending.is_some() && (worker || ending == Some("asked") || !crate::board::asks_in_prose(answer));
+        // Its ending checked against what Zero knows: the ask it waits on open and its own (or a worker's), a done
+        // confirmed (an agent took the user's silence on "Is this task done?" for a yes). A worker's done is its lead's.
+        let owners =
+            || std::iter::once(conversation.id.clone()).chain(self.workers(&conversation.id).into_iter().map(|w| w.id)).collect::<Vec<_>>();
+        let words = if !ended {
+            if worker { END_A_WORKERS_TURN } else { END_YOUR_TURN }.to_string()
+        } else if worker {
             return;
-        }
+        } else if let Some(id) = crate::board::asked(answer)
+            && self.open_ask.get().is_some_and(|open| !open(id, &owners()))
+        {
+            asked_not_open(id)
+        } else if ending == Some("done") && self.done_confirmed.get().is_some_and(|done| !done(conversation)) {
+            DONE_UNCONFIRMED.to_string()
+        } else {
+            return;
+        };
         self.sent_back.lock().unwrap().insert(conversation.id.clone());
         // Its report, which the turn that ends it ("the answer above has it") would otherwise stand in for.
         if worker {
             self.kept_reports.lock().unwrap().insert(conversation.id.clone(), answer.to_string());
         }
-        let words = if worker { END_A_WORKERS_TURN } else { END_YOUR_TURN };
         self.pending.lock().unwrap().entry(conversation.id.clone()).or_default().push(Queued {
             id: new_id(),
-            text: words.into(),
+            text: words,
             images: vec![],
             report: true,
         });
@@ -736,7 +750,7 @@ fn this_turn(conversation: &Conversation) -> &[crate::model::Item] {
 }
 
 /// Words the user wrote themselves, not ones Zero gave the task (an event, a report, a send-back, a carry-on).
-fn users_own(text: &str) -> bool {
+pub(crate) fn users_own(text: &str) -> bool {
     !text.starts_with(crate::model::FROM)
         && ![END_YOUR_TURN_MARK, WRAP_UP].iter().chain(CARRIES.iter()).any(|zeros| text.starts_with(zeros))
 }

@@ -18,7 +18,11 @@ use zerod::model::{Attention, Conversation, ItemKind, Provider};
 struct Canned(Mutex<Vec<Value>>);
 
 impl Fetcher for Canned {
-    fn run(&self, _: Vec<String>, _: Option<String>) -> zerod::inbox::Fut<'_, Result<String, String>> {
+    fn run(&self, argv: Vec<String>, _: Option<String>) -> zerod::inbox::Fut<'_, Result<String, String>> {
+        // GitHub's conditional checks fail: every poll reads in full.
+        if argv.iter().any(|a| a == "-i") {
+            return Box::pin(async { Err("no checks canned".to_string()) });
+        }
         let mut answers = self.0.lock().unwrap();
         let answer = if answers.is_empty() { Err("nothing canned".to_string()) } else { Ok(answers.remove(0).to_string()) };
         Box::pin(async move { answer })

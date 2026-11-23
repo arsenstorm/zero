@@ -370,3 +370,82 @@ async fn a_session_waiting_on_another_is_woken_when_that_one_ends_its_turn() {
     turn(&fixing, 2, &zeros("go on"), "More.\n\n[zero: waiting]").await;
     assert_eq!(woken(), 1, "{}", told());
 }
+
+/// A task's (or its worker's) identity in the inbox.
+fn agent_of(id: &str) -> zerod::ask::AgentIdentity {
+    zerod::ask::AgentIdentity {
+        name: format!("zerod-{id}"),
+        reference: Some(id.into()),
+        runtime: Some("zerod".into()),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn an_asked_ending_must_name_an_open_ask_of_its_own() {
+    // [zero: asked <id>] says the task waits on the user's answer: only so while that ask is open, and its own (or one
+    // of its workers'). Otherwise it's sent back once, as a turn without an ending is.
+    let home = temp_dir("endings-asked-open");
+    let (daemon, id, sent) = task(&home, Provider::Claude).await;
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    zerod::server::know_endings(&daemon, &inbox);
+    let session = daemon.session(&id).unwrap();
+    let choice = |agent| zerod::ask::Ask::new(zerod::ask::AskKind::Choice, "Which branch?", agent, 3600);
+    let own = inbox.create(choice(agent_of(&id)), false);
+    turn(&session, 1, &zeros("1 new event on what you follow"), &format!("Asked.\n\n[zero: asked {}]", own.id)).await;
+    let worker = daemon.spawn(&id, Provider::Claude, "fix it", Default::default()).unwrap();
+    let theirs = inbox.create(choice(agent_of(&worker)), false);
+    turn(&session, 2, &zeros("A worker's report"), &format!("The worker asked.\n\n[zero: asked {}]", theirs.id)).await;
+    assert_eq!(sent_back(&sent), 0, "open asks of its own and its worker's: {}", sent.lock().unwrap());
+    inbox.withdraw(&own.id, None);
+    turn(&session, 3, &zeros("1 new event on what you follow"), &format!("Still asked.\n\n[zero: asked {}]", own.id)).await;
+    assert_eq!(sent_back(&sent), 1, "no longer open");
+    assert!(sent.lock().unwrap().contains(&format!("{} isn't an open ask of yours", own.id)), "{}", sent.lock().unwrap());
+    turn(&session, 4, "(sent back)", &format!("Still asked.\n\n[zero: asked {}]", own.id)).await;
+    assert_eq!(sent_back(&sent), 1, "its reply is taken as it is");
+    let others = inbox.create(choice(agent_of("someone-else")), false);
+    turn(&session, 5, &zeros("1 new event on what you follow"), &format!("Asked.\n\n[zero: asked {}]", others.id)).await;
+    turn(&session, 6, "(sent back)", "Fine.\n\n[zero: working]").await;
+    turn(&session, 7, &zeros("1 new event on what you follow"), "Asked.\n\n[zero: asked made-up]").await;
+    assert_eq!(sent_back(&sent), 3, "another task's ask, or none at all");
+}
+
+#[tokio::test]
+async fn done_must_be_confirmed_by_zero_done() {
+    // [zero: done] counts once `zero done` confirmed it (its token, or the user's Done): a turn ending done without
+    // that (an agent taking the user's silence for a yes) is sent back once. Not a turn the user's own words started,
+    // and not a worker's, whose done is its lead's to judge.
+    let home = temp_dir("endings-done-confirmed");
+    let (daemon, id, sent) = task(&home, Provider::Claude).await;
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    zerod::server::know_endings(&daemon, &inbox);
+    let session = daemon.session(&id).unwrap();
+    turn(&session, 1, &zeros("Your ask expired"), "No answer, so it's done.\n\n[zero: done]").await;
+    assert_eq!(sent_back(&sent), 1);
+    assert!(sent.lock().unwrap().contains("--ask and end [zero: asked"), "{}", sent.lock().unwrap());
+    turn(&session, 2, "(sent back)", "It's done.\n\n[zero: done]").await;
+    turn(&session, 3, "Is it shipped?", "Yes.\n\n[zero: done]").await;
+    let worker = daemon.spawn(&id, Provider::Claude, "fix it", Default::default()).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    turn(&daemon.session(&worker).unwrap(), 1, "fix it", "Fixed and pushed.\n\n[zero: done]").await;
+    assert_eq!(sent_back(&sent), 1, "{}", sent.lock().unwrap());
+    // Notes are timed in seconds: the done confirmed a second after the user last spoke.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let refused = inbox.done(&agent_of(&id), "Merged and deployed", None).unwrap_err();
+    let token = refused.split("--confirm ").nth(1).unwrap().split_whitespace().next().unwrap();
+    inbox.done(&agent_of(&id), "Merged and deployed", Some(token.trim_matches(|c: char| !c.is_alphanumeric()))).unwrap();
+    // zerod's own note as each turn starts (bridge.rs): a done stands through turns Zero starts, not the user's.
+    let new_turn = || {
+        let mut note = zerod::ask::Ask::new(zerod::ask::AskKind::Note, "Working", agent_of(&id), 0);
+        note.request = Some(zerod::board::ATTENTION.into());
+        inbox.create(note, false);
+    };
+    new_turn();
+    turn(&session, 4, &zeros("1 new event on what you follow"), "Merged and deployed.\n\n[zero: done]").await;
+    assert_eq!(sent_back(&sent), 1, "confirmed");
+    new_turn();
+    turn(&session, 5, "The footer broke, look again", "Looking.\n\n[zero: working]").await;
+    new_turn();
+    turn(&session, 6, &zeros("1 new event on what you follow"), "Fixed.\n\n[zero: done]").await;
+    assert_eq!(sent_back(&sent), 2, "the user spoke since it was confirmed: {}", sent.lock().unwrap());
+}

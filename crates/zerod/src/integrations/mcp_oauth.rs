@@ -45,6 +45,12 @@ impl Integrations {
         matches!(call(&*self.fetcher, config).await, Ok((401, challenge, _)) if challenge.to_lowercase().starts_with("bearer"))
     }
 
+    /// Zero can sign in to the server at `url` itself: it asks for a sign-in, and its authorization server registers
+    /// clients (Zero registers one for each sign-in).
+    pub async fn mcp_zero_signs_in(&self, url: &str) -> bool {
+        self.mcp_needs_sign_in(url).await && self.endpoints(url).await.is_ok()
+    }
+
     /// `id` waits for the user to sign in to it at `url`: until then tasks aren't given it (a CLI given it without a
     /// token would note it as needing a sign-in of its own, and skip it for a while after).
     pub fn mcp_waiting(&self, id: &str, url: &str) {

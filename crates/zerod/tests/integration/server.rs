@@ -410,6 +410,25 @@ async fn a_lead_spawns_names_waits_on_and_reads_a_worker_over_the_socket() {
 }
 
 #[tokio::test]
+async fn a_task_starts_leads_of_their_own_beside_it_not_workers() {
+    let h = harness("server-own-leads").await;
+    let mut client = Client::connect(&h.socket).await;
+    let first =
+        client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead", "permissions": "unrestricted"})).await;
+    let first = first["result"]["session"].as_str().unwrap().to_string();
+    // A list of issues, a lead for each: on its folder, mode and model, in its workspace, but nobody's worker.
+    let spawned = client.call(json!({"op": "spawn", "session": first, "prompt": "@issue WEB-7", "own": true})).await;
+    assert_eq!(spawned["ok"], true, "{spawned}");
+    let lead = spawned["result"]["session"].as_str().unwrap().to_string();
+    let got = client.call(json!({"op": "get", "session": lead})).await["result"].clone();
+    assert_eq!(got["parent"], Value::Null, "a task of its own: {got}");
+    assert_eq!(got["permissions"], "unrestricted", "the starting task's mode");
+    assert_eq!(got["cwd"], h.project.to_string_lossy().as_ref());
+    let workers = client.call(json!({"op": "workers", "session": first})).await;
+    assert_eq!(workers["result"], json!([]), "not a worker of the task that started it");
+}
+
+#[tokio::test]
 async fn the_inbox_is_followed_and_answered_over_the_socket() {
     let h = harness("server-inbox").await;
     let mut client = Client::connect(&h.socket).await;
@@ -684,6 +703,55 @@ async fn a_task_saved_for_later_leaves_the_board_paused_and_comes_back_from_late
     assert_eq!(back["result"]["session"], session.as_str(), "{back}");
     assert!(on_board(&client.call(json!({"op": "board"})).await) && !paused());
     assert_eq!(client.call(json!({"op": "later", "tool": "view", "args": {"item": item}})).await["result"]["done"], true);
+}
+
+#[tokio::test]
+async fn a_task_brought_back_from_the_archive_is_sent_afresh_to_a_subscribed_app() {
+    // The app follows sessions over one subscription. A task archived and brought back starts again at the change
+    // number it was archived at, which the subscription had sent already: skipped as old, the app never had it again,
+    // and its page showed New task until Zero restarted.
+    let h = harness("server-back").await;
+    let mut app = Client::connect(&h.socket).await;
+    let mut other = Client::connect(&h.socket).await;
+    app.call(json!({"op": "subscribe"})).await;
+    let task =
+        other.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead", "permissions": "unrestricted"})).await;
+    let task = task["result"]["session"].as_str().unwrap().to_string();
+    other.call(json!({"op": "wait", "sessions": [task], "timeout": 5})).await;
+    assert_eq!(other.call(json!({"op": "archive", "session": task})).await["ok"], true);
+    loop {
+        let event = app.event().await;
+        if event["session"] == task.as_str() && event["change"]["type"] == "archived" {
+            break;
+        }
+    }
+    assert_eq!(other.call(json!({"op": "unarchive", "session": task})).await["ok"], true);
+    loop {
+        let event = app.event().await;
+        if event["event"] == "session" && event["conversation"]["id"] == task.as_str() {
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn subscribing_again_sends_every_session_afresh() {
+    // The app subscribes again when its copy has fallen behind or lacks a task: over the same connection, that has to
+    // send the sessions again, not be taken as subscribed already.
+    let h = harness("server-resub").await;
+    let mut app = Client::connect(&h.socket).await;
+    let task = app.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "lead"})).await;
+    let task = task["result"]["session"].as_str().unwrap().to_string();
+    for _ in 0..2 {
+        app.events.clear();
+        app.call(json!({"op": "subscribe"})).await;
+        loop {
+            let event = app.event().await;
+            if event["event"] == "session" && event["conversation"]["id"] == task.as_str() {
+                break;
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -1149,6 +1217,42 @@ async fn the_user_sets_a_tasks_status_done_waiting_or_blocked_as_a_confirmed_not
 }
 
 #[tokio::test]
+async fn the_users_word_on_a_task_moves_its_issue_rows_that_say_otherwise() {
+    // The agent set its issue done (or over to the user) and the user marked the task waiting: the row kept saying so
+    // over a task that waits. A row the user's word contradicts takes it; one that doesn't (working) stays.
+    let h = harness("server-mark-rows").await;
+    let mut client = Client::connect(&h.socket).await;
+    let started = client.call(json!({"op": "start", "provider": "codex", "cwd": h.project, "prompt": "lead these"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    let set = |ticket: &str, state: &str| json!({"op": "issue", "session": session, "ticket": ticket, "state": state, "text": "merged"});
+    client.call(set("ENG-1", "done")).await;
+    client.call(set("ENG-2", "working")).await;
+    client.call(set("ENG-3", "over")).await;
+    let rows = |board: Value| -> Vec<String> {
+        let rows = board["result"]["rows"].as_array().or(board["result"].as_array()).unwrap().clone();
+        let row = rows.into_iter().find(|r| r["session"] == session.as_str()).unwrap();
+        let mut rows: Vec<(String, String)> = row["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| (i["ticket"].as_str().unwrap().into(), i["state"].as_str().unwrap().into()))
+            .collect();
+        rows.sort();
+        rows.into_iter().map(|(_, state)| state).collect()
+    };
+    client.call(json!({"op": "setStatus", "session": session, "state": "waiting"})).await;
+    assert_eq!(rows(client.call(json!({"op": "board"})).await), ["waiting", "working", "waiting"], "on the user contradicts waiting too");
+    let row =
+        |board: Value| board["result"].as_array().unwrap().iter().find(|r| r["session"] == session.as_str()).unwrap()["state"].clone();
+    assert_eq!(row(client.call(json!({"op": "board"})).await), "waiting", "not over to the user");
+    client.call(set("ENG-3", "you")).await;
+    client.call(json!({"op": "setStatus", "session": session, "state": "blocked"})).await;
+    assert_eq!(rows(client.call(json!({"op": "board"})).await), ["waiting", "working", "parked"], "a working row isn't contradicted");
+    client.call(json!({"op": "setStatus", "session": session, "state": "done"})).await;
+    assert_eq!(rows(client.call(json!({"op": "board"})).await), ["done", "done", "done"]);
+}
+
+#[tokio::test]
 async fn a_subscriber_that_falls_behind_gets_snapshots_of_what_changed_since_not_of_everything() {
     // A burst (thousands of changes at once) leaves a subscriber behind: every session sent again in full, each
     // carrying its whole latest turn, while the burst went on put it behind again, and gigabytes waited for the app.
@@ -1387,11 +1491,125 @@ async fn zero_signs_in_to_a_remote_server_an_agent_adds_and_its_task_gets_the_to
     let set = claude.said("control_request:mcp_set_servers", 1).await;
     assert_eq!(set[0]["request"]["servers"]["docs"]["headers"]["Authorization"], "Bearer tok-1", "{}", set[0]);
     assert!(!claude.methods().iter().any(|m| m == "control_request:mcp_reconnect"), "changed, not reconnected without it");
+    // One line in the task for the sign-in, its link replaced by the outcome.
+    let notices = || -> Vec<String> {
+        h.daemon
+            .get(&session)
+            .unwrap()
+            .items
+            .iter()
+            .filter_map(|i| match &i.kind {
+                zerod::model::ItemKind::Notice { text, .. } if text.contains("docs") => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    for _ in 0..200 {
+        if notices().iter().any(|n| n.starts_with("Signed in")) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(notices(), ["Signed in to docs"]);
 
     // Deleted, its sign-in goes with it.
     client.call(json!({"op": "deleteMcpServer", "server": "docs"})).await;
     let token = std::fs::read_to_string(h.home.join("secrets.json")).unwrap();
     assert!(!token.contains("tok-1"), "{token}");
+}
+
+#[tokio::test]
+async fn a_remote_server_a_tasks_claude_has_of_its_own_and_needs_signing_in_to_becomes_zeros() {
+    let h = harness("server-mcp-adopt").await;
+    zerod::mcp_auth::start(h.daemon.clone(), h.inbox.clone());
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "configure", "takeBack": 0.02, "ttl": 600})).await;
+    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    until(&h.daemon.session(&session).unwrap(), |c| c.status == Status::Idle).await;
+    let claude = h.seen.lock().unwrap()[0].clone();
+    claude.answer(
+        "mcp_status",
+        json!({"mcpServers": [{"name": "amie", "status": "needs-auth", "scope": "user", "config": {"type": "http", "url": "https://amie.example/mcp"}}]}),
+    );
+    let challenge = "\n401|Bearer resource_metadata=\"https://amie.example/.well-known/oauth-protected-resource\"";
+    let metadata = "{\"authorization_servers\":[\"https://amie.example\"]}\n200|";
+    let server = "{\"authorization_endpoint\":\"https://amie.example/authorize\",\"token_endpoint\":\"https://amie.example/token\",\"registration_endpoint\":\"https://amie.example/register\"}\n200|";
+    // Asked whether Zero can sign in to it (a challenge, a registration endpoint), then signed in to.
+    *h.web.answers.lock().unwrap() = vec![
+        challenge.into(),
+        challenge.into(),
+        metadata.into(),
+        server.into(),
+        challenge.into(),
+        "{\"authorization_servers\":[\"https://amie.example\"]}\n200|".into(),
+        "{\"authorization_endpoint\":\"https://amie.example/authorize\",\"token_endpoint\":\"https://amie.example/token\",\"registration_endpoint\":\"https://amie.example/register\"}\n200|".into(),
+        "{\"client_id\":\"zero-1\"}\n201|".into(),
+        "{\"access_token\":\"tok-1\",\"refresh_token\":\"ref-1\",\"expires_in\":3600}\n200|".into(),
+    ];
+
+    // The task's Claude says its own amie needs signing in: Zero keeps it and signs in to it itself, once for every task.
+    claude.say(json!({"type": "system", "subtype": "init", "session_id": "de7c0e2b-badd-439a-a46b-9e187476cb40",
+                      "mcp_servers": [{"name": "amie", "status": "needs-auth"}]}));
+    let mut link = None;
+    for _ in 0..300 {
+        let asks = client.call(json!({"op": "asks"})).await["result"].clone();
+        link =
+            asks.as_array().unwrap().iter().find(|a| a["title"] == "Sign in to amie?").and_then(|a| a["link"].as_str().map(String::from));
+        if link.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let link = link.expect("a sign-in ask with its link");
+    assert!(link.starts_with("https://amie.example/authorize?") && link.contains("client_id=zero-1"), "Zero's sign-in: {link}");
+    let kept = h.daemon.mcp_servers.list();
+    assert!(
+        kept.iter().any(|s| s.id == "amie" && s.url.as_deref() == Some("https://amie.example/mcp") && s.workspaces.is_empty()),
+        "{kept:?}"
+    );
+    assert!(!claude.methods().iter().any(|m| m == "control_request:mcp_set_servers"), "not given before it's signed in to");
+
+    let query = |key: &str| link.split(&format!("{key}=")).nth(1).unwrap().split('&').next().unwrap().to_string();
+    let redirect = query("redirect_uri").replace("%3A", ":").replace("%2F", "/");
+    let port: u16 = redirect.trim_start_matches("http://127.0.0.1:").trim_end_matches("/callback").parse().unwrap();
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(format!("GET /callback?code=c0de&state={} HTTP/1.1\r\n\r\n", query("state")).as_bytes()).await.unwrap();
+    let mut page = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut stream, &mut page).await.unwrap();
+
+    // Signed in: Zero's amie, its token the header, takes the place of the task's own.
+    let set = claude.said("control_request:mcp_set_servers", 1).await;
+    assert_eq!(set[0]["request"]["servers"]["amie"]["headers"]["Authorization"], "Bearer tok-1", "{}", set[0]);
+}
+
+#[tokio::test]
+async fn a_server_zero_keeps_for_one_workspace_is_widened_to_a_task_elsewhere_whose_claude_has_it_at_that_url() {
+    let h = harness("server-mcp-widen").await;
+    zerod::mcp_auth::start(h.daemon.clone(), h.inbox.clone());
+    let mut client = Client::connect(&h.socket).await;
+    client.call(json!({"op": "saveWorkspace", "workspace": {"id": "", "name": "Personal", "glyph": "", "folders": []}})).await;
+    let url = "https://mcp.linear.example/mcp";
+    let header = json!([{"name": "Authorization", "value": "Bearer kept", "from": "file"}]);
+    client
+        .call(
+            json!({"op": "saveMcpServer", "server": {"name": "linear-server", "url": url, "headers": header, "workspaces": ["personal"]}}),
+        )
+        .await;
+    let started = client.call(json!({"op": "start", "provider": "claude", "cwd": h.project, "prompt": "ls"})).await;
+    let session = started["result"]["session"].as_str().unwrap().to_string();
+    until(&h.daemon.session(&session).unwrap(), |c| c.status == Status::Idle).await;
+    let claude = h.seen.lock().unwrap()[0].clone();
+    assert!(!claude.methods().iter().any(|m| m == "control_request:mcp_set_servers"), "not this workspace's yet");
+    claude.answer("mcp_status", json!({"mcpServers": [{"name": "linear-server", "status": "needs-auth", "scope": "local", "config": {"type": "http", "url": url}}]}));
+
+    claude.say(json!({"type": "system", "subtype": "init", "session_id": "de7c0e2b-badd-439a-a46b-9e187476cb40",
+                      "mcp_servers": [{"name": "linear-server", "status": "needs-auth"}]}));
+    let set = claude.said("control_request:mcp_set_servers", 1).await;
+    assert_eq!(set[0]["request"]["servers"]["linear-server"]["url"], url, "{}", set[0]);
+    let kept = h.daemon.mcp_servers.list();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0].workspaces.len(), 2, "Personal and this task's: {kept:?}");
 }
 
 #[tokio::test]

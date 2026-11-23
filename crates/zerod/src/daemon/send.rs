@@ -580,6 +580,8 @@ impl Daemon {
         if session.is_attached() || conversation.terminal.is_some() {
             if between_turns(&conversation) {
                 self.deliver(id)
+            } else {
+                self.steer(id, &conversation)
             }
             return false;
         }
@@ -602,6 +604,35 @@ impl Daemon {
     pub fn deliver_stranded(&self) -> Vec<String> {
         let queued: Vec<String> = self.pending.lock().unwrap().iter().filter(|(_, l)| !l.is_empty()).map(|(id, _)| id.clone()).collect();
         queued.into_iter().filter(|id| !self.is_paused(id) && self.wake(id)).collect()
+    }
+
+    /// A worker mid-turn (its turn is often its whole task): its lead's words go at once, taken at its next step as the
+    /// user's are, rather than when the task is over. Claude Code and Codex take words mid-turn; OpenCode one at a time.
+    fn steer(&self, id: &str, conversation: &Conversation) {
+        let Some(lead) = conversation.parent.as_deref() else { return };
+        if conversation.turn.is_none() || conversation.provider == Provider::Opencode || self.is_paused(id) {
+            return;
+        }
+        let Ok(session) = self.session(id) else { return };
+        let words: Vec<String> = {
+            let mut pending = self.pending.lock().unwrap();
+            let Some(list) = pending.get_mut(id) else { return };
+            let (theirs, rest): (Vec<Queued>, Vec<Queued>) =
+                list.drain(..).partition(|q| q.report && crate::model::from(&q.text) == Some(lead));
+            *list = rest;
+            theirs.into_iter().map(|q| q.text).collect()
+        };
+        if words.is_empty() {
+            return;
+        }
+        self.keep_pending(id);
+        let text = words.join("\n\n");
+        tokio::spawn(async move {
+            let message = Message { text: &text, images: &[], context: None, sent: None };
+            if let Err(error) = session.send(message, ModelChoice::default()).await {
+                session.report(&format!("Couldn't pass on: {error}"))
+            }
+        });
     }
 
     /// The next of what may go (Holding::may_go): a message of the user's on its own (one turn each, never joined to anything),

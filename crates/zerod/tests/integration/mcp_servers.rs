@@ -204,3 +204,30 @@ fn a_server_changed_is_no_longer_taken_for_one_that_needs_signing_in_by_any_clau
     );
     assert!(!homes.join("d").join("mcp-needs-auth-cache.json").exists(), "none made where there was none");
 }
+
+#[test]
+fn a_tasks_own_remote_server_is_zeros_to_sign_in_to_only_when_its_plain_http_under_its_own_name() {
+    let listed = |name: &str, scope: &str, config: serde_json::Value| serde_json::json!({"name": name, "status": "needs-auth", "scope": scope, "config": config});
+    let http = serde_json::json!({"type": "http", "url": "https://amie.example/mcp"});
+    let user = adoptable(&listed("amie", "user", http.clone()), "work").expect("the user's own");
+    assert_eq!((user.name.as_str(), user.url.as_deref(), user.workspaces.len()), ("amie", Some("https://amie.example/mcp"), 0));
+    assert_eq!(
+        adoptable(&listed("linear-server", "local", http.clone()), "work").unwrap().workspaces,
+        ["work"],
+        "a project's: its workspace's alone"
+    );
+    let url = "https://amie.example/mcp";
+    for (name, scope, config) in [
+        ("amie", "user", serde_json::json!({"type": "sse", "url": url})),
+        ("amie", "user", serde_json::json!({"type": "http", "url": url, "headers": {"Authorization": "Bearer x"}})),
+        ("amie", "user", serde_json::json!({"type": "http", "url": url, "headersHelper": "get-token"})),
+        ("amie", "user", serde_json::json!({"type": "http", "url": url, "oauth": {"clientId": "c"}})),
+        ("amie", "user", serde_json::json!({"type": "stdio", "command": "amie"})),
+        ("amie", "dynamic", http.clone()),
+        ("amie", "claudeai", http.clone()),
+        ("Amie", "user", http.clone()),
+        ("my_server", "user", http.clone()),
+    ] {
+        assert!(adoptable(&listed(name, scope, config.clone()), "work").is_none(), "{name} {scope} {config}");
+    }
+}

@@ -142,6 +142,12 @@ pub struct Ask {
     /// For a note: what the agent hands to the user, without waiting for it ("mark the PR ready and merge it").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub needs: Option<String>,
+    /// For an approval: its title and body say the whole call in words, so the call itself is shown folded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub folded: bool,
+    /// For an approval said in words: what it writes (a comment), as Markdown, shown as it will read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
     /// A page its first option opens, the ask staying open (an MCP server's sign-in, which closes it once done).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
@@ -225,6 +231,8 @@ impl Ask {
             done_check: false,
             allow: None,
             link: None,
+            folded: false,
+            preview: None,
             about: None,
             replies: vec![],
             mcp: None,

@@ -38,7 +38,6 @@ pub type Runner = Arc<dyn Fn(Job, tokio::sync::oneshot::Sender<String>) -> crate
 pub enum News<'a> {
     Link(&'a str),
     SignedIn,
-    Failed(&'a str),
     /// A claude.ai connector, connected in claude.ai's settings rather than here.
     Connector,
 }
@@ -68,6 +67,8 @@ pub struct McpAuth {
     attempts: Mutex<HashMap<String, Attempt>>,
     /// The claude.ai connectors the user has been told about.
     connectors: Mutex<std::collections::HashSet<String>>,
+    /// The URLs of CLIs' own servers Zero found it can't sign in to itself: not asked again.
+    declined: Mutex<std::collections::HashSet<String>>,
     me: Weak<McpAuth>,
 }
 
@@ -79,6 +80,7 @@ impl McpAuth {
             inbox: OnceLock::new(),
             attempts: Mutex::default(),
             connectors: Mutex::default(),
+            declined: Mutex::default(),
             me: me.clone(),
         })
     }
@@ -123,6 +125,20 @@ impl McpAuth {
     /// Whether Zero signs in to `server` itself.
     pub fn zero_owns(&self, server: &str) -> bool {
         self.zero.get().is_some_and(|(owns, _)| owns(server))
+    }
+
+    /// Whether a sign-in to `server` is under way.
+    pub fn under_way(&self, server: &str) -> bool {
+        self.attempts.lock().unwrap().get(server).is_some_and(|a| !a.over)
+    }
+
+    /// Zero found it can't sign in to the server at `url` itself.
+    pub fn decline(&self, url: &str) {
+        self.declined.lock().unwrap().insert(url.into());
+    }
+
+    pub fn declined(&self, url: &str) -> bool {
+        self.declined.lock().unwrap().contains(url)
     }
 
     /// A server's config changed: a sign-in that ended for the old one no longer stops a new one.
@@ -236,10 +252,11 @@ impl McpAuth {
             };
             inbox.withdraw(&id, Some(&reason))
         }
-        for session in &sessions {
-            match &outcome {
-                Ok(()) => tell(session, server, News::SignedIn),
-                Err(error) => tell(session, server, News::Failed(error)),
+        // Signed in, each task reconnects it. Not, the tasks aren't told: every task's CLI reports the server, whether
+        // it uses it or not, and an error in each was noise; the ask said it to the user.
+        if outcome.is_ok() {
+            for session in &sessions {
+                tell(session, server, News::SignedIn)
             }
         }
     }
@@ -290,20 +307,33 @@ pub fn runner() -> Runner {
 pub fn start(daemon: Arc<crate::daemon::Daemon>, inbox: Arc<Inbox>) {
     let auth = daemon.mcp_auth.clone();
     let weak = Arc::downgrade(&daemon);
+    // Each task's line for a server's sign-in: its link, then the outcome in its place.
+    let lines: Mutex<HashMap<(String, String), String>> = Mutex::default();
     auth.attach(
         inbox,
         Box::new(move |session, server, news| {
             let Some(session) = weak.upgrade().and_then(|d| d.session(session).ok()) else { return };
+            let key = (session.summary().id.clone(), server.to_string());
+            let line = match news {
+                News::Link(_) => {
+                    let id = format!("mcp-auth-{}", session.summary().seq + 1);
+                    lines.lock().unwrap().insert(key, id.clone());
+                    id
+                }
+                News::SignedIn => {
+                    lines.lock().unwrap().remove(&key).unwrap_or_else(|| format!("mcp-auth-{}", session.summary().seq + 1))
+                }
+                News::Connector => format!("mcp-auth-{}", session.summary().seq + 1),
+            };
             let (text, error) = match news {
                 News::Link(url) => (
                     format!("{server} needs you to sign in on your Mac before this task can use it: [open its sign-in page]({url}) (asked in Zero's inbox too)"),
                     false,
                 ),
                 News::SignedIn => (format!("Signed in to {server}"), false),
-                News::Failed(why) => (format!("Couldn't sign in to {server}: {why}"), true),
                 News::Connector => (format!("{server} needs connecting in claude.ai's connector settings before tasks can use it."), false),
             };
-            notice(&session, &text, error);
+            notice(&session, &line, &text, error);
             // Claude skipped the server when it started: it connects now, with what the sign-in kept. (Its folder, with
             // Claude running in it, isn't written: another account's folder gets the sign-in at its next start.)
             // Zero's own sign-in gives the CLIs its token instead (a changed server, restarted with it).
@@ -316,6 +346,9 @@ pub fn start(daemon: Arc<crate::daemon::Daemon>, inbox: Arc<Inbox>) {
     );
     let mut events = daemon.subscribe();
     let weak = Arc::downgrade(&daemon);
+    // A server's sign-ins handled one at a time (taking it over first can take seconds), apart from the loop, which
+    // would miss events while it waited.
+    let turns: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = Arc::default();
     tokio::spawn(async move {
         loop {
             let event = match events.recv().await {
@@ -330,21 +363,22 @@ pub fn start(daemon: Arc<crate::daemon::Daemon>, inbox: Arc<Inbox>) {
                 daemon.mcp_auth.connector(&conversation, &server);
                 continue;
             }
-            let env = crate::process::SESSION_ENV.lock().unwrap().get(&conversation.id).cloned().unwrap_or_default();
-            let job = Job { server, provider: conversation.provider, cwd: conversation.cwd.clone(), env, mcp: conversation.mcp.clone() };
-            daemon.mcp_auth.wanted(&conversation, job);
+            let turn = turns.lock().unwrap().entry(server.clone()).or_default().clone();
+            tokio::spawn(async move {
+                let _turn = turn.lock().await;
+                // The CLI's own server: Zero's to sign in to from now on, when it can be.
+                daemon.adopt_mcp(&event.session, &server).await;
+                let env = crate::process::SESSION_ENV.lock().unwrap().get(&conversation.id).cloned().unwrap_or_default();
+                let job =
+                    Job { server, provider: conversation.provider, cwd: conversation.cwd.clone(), env, mcp: conversation.mcp.clone() };
+                daemon.mcp_auth.wanted(&conversation, job);
+            });
         }
     });
 }
 
 /// A line in a task, as Zero says it.
-fn notice(session: &crate::session::Session, text: &str, error: bool) {
-    let item = Item {
-        at: None,
-        id: format!("mcp-auth-{}", session.summary().seq + 1),
-        turn: None,
-        kind: ItemKind::Notice { text: text.into(), error },
-        status: ItemStatus::Done,
-    };
+fn notice(session: &crate::session::Session, id: &str, text: &str, error: bool) {
+    let item = Item { at: None, id: id.into(), turn: None, kind: ItemKind::Notice { text: text.into(), error }, status: ItemStatus::Done };
     session.change(Change::Item { item });
 }

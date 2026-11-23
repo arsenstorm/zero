@@ -721,6 +721,98 @@ pub fn changes_linear(document: &str) -> bool {
     words.iter().any(|w| w == "mutation" || w == "subscription")
 }
 
+/// The arguments of a document's one top-level `field`, when that's all it is: a `mutation` (named or not, with
+/// variables or not) of `field(...)` alone, no alias, its selection plain braces (no string, no comment), nothing after.
+fn lone_mutation<'a>(document: &'a str, field: &str) -> Option<&'a str> {
+    static HEAD: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^\s*mutation\b\s*(?:\w+\s*)?(?:\([^)]*\)\s*)?\{\s*(\w+)\s*\(").unwrap());
+    let head = HEAD.captures(document)?;
+    if head.get(1)?.as_str() != field {
+        return None;
+    }
+    // The arguments: to their closing parenthesis, past what's in strings.
+    let from = head.get(0)?.end();
+    let (mut depth, mut quoted, mut escaped, mut close) = (1, false, false, None);
+    for (at, c) in document[from..].char_indices() {
+        match (quoted, escaped, c) {
+            (true, true, _) => escaped = false,
+            (true, false, '\\') => escaped = true,
+            (true, false, '"') => quoted = false,
+            (true, false, _) => {}
+            (false, _, '"') => quoted = true,
+            (false, _, '(') => depth += 1,
+            (false, _, ')') => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(from + at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    // What follows: the fields it returns, one braced selection, then the operation's close.
+    let rest = document[close + 1..].trim_start();
+    if rest.contains(['"', '#']) || !rest.starts_with('{') {
+        return None;
+    }
+    let mut depth = 0;
+    let end = rest.char_indices().find(|&(_, c)| {
+        depth += match c {
+            '{' => 1,
+            '}' => -1,
+            _ => 0,
+        };
+        depth == 0
+    })?;
+    (rest[end.0 + 1..].trim() == "}").then(|| &document[from..close])
+}
+
+/// A GraphQL string's value: a quoted one (JSON's escapes), or a `$variable` given in `variables`. No block string.
+fn graphql_string(raw: &str, variables: &Value) -> Option<String> {
+    match raw.strip_prefix('$') {
+        Some(name) => variables.get(name)?.as_str().map(String::from),
+        None if raw.starts_with("\"\"\"") => None,
+        None => serde_json::from_str::<String>(raw).ok(),
+    }
+}
+
+/// The issue and state of a document that only moves one issue to another state (`issueUpdate` with `stateId` alone,
+/// no alias, nothing else in it), its variables filled in: what an approval can say in words. Anything more, none.
+pub fn linear_state_move(document: &str, variables: &Value) -> Option<(String, String)> {
+    static MOVE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        let value = r#"("(?:[^"\\]|\\.)*"|\$\w+)"#;
+        let state = format!(r"input\s*:\s*\{{\s*stateId\s*:\s*{value}\s*\}}");
+        regex::Regex::new(&format!(r"^\s*(?:id\s*:\s*{value}\s*,?\s*{state}|{state}\s*,?\s*id\s*:\s*{value})\s*$")).unwrap()
+    });
+    let found = MOVE.captures(lone_mutation(document, "issueUpdate")?)?;
+    let value = |i: usize| graphql_string(found.get(i)?.as_str(), variables);
+    if found.get(1).is_some() { Some((value(1)?, value(2)?)) } else { Some((value(4)?, value(3)?)) }
+}
+
+/// The issue and words of a document that only comments on one issue (`commentCreate` with `issueId` and `body`
+/// alone: no reply, nothing else in it), its variables filled in. Anything more, none.
+pub fn linear_comment(document: &str, variables: &Value) -> Option<(String, String)> {
+    static COMMENT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        let value = r#"("(?:[^"\\]|\\.)*"|\$\w+)"#;
+        regex::Regex::new(&format!(
+            r"^\s*input\s*:\s*(?:(\$\w+)|\{{\s*(?:issueId\s*:\s*{value}\s*,?\s*body\s*:\s*{value}|body\s*:\s*{value}\s*,?\s*issueId\s*:\s*{value})\s*\}})\s*$"
+        ))
+        .unwrap()
+    });
+    let found = COMMENT.captures(lone_mutation(document, "commentCreate")?)?;
+    if let Some(name) = found.get(1) {
+        let input = variables.get(name.as_str().strip_prefix('$')?)?.as_object()?;
+        if input.keys().any(|k| k != "issueId" && k != "body") {
+            return None;
+        }
+        return Some((input.get("issueId")?.as_str()?.into(), input.get("body")?.as_str()?.into()));
+    }
+    let value = |i: usize| graphql_string(found.get(i)?.as_str(), variables);
+    if found.get(2).is_some() { Some((value(2)?, value(3)?)) } else { Some((value(5)?, value(4)?)) }
+}
+
 /// An answer from an API, with what its headers say of its rate limits.
 struct Reply {
     status: u16,

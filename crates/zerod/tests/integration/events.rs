@@ -87,6 +87,32 @@ async fn anything_can_tell_a_session_something() {
     assert_eq!(seen.said("user", 3).await[2]["message"]["content"], zerod::model::from_line("01a1worker", "Fix pushed; CI running"));
 }
 
+/// A worker's turn is often its whole task: its lead's word mid-turn reaches it at its next step, as the user's own
+/// words do (Claude Code takes a message mid-turn after the tool call under way), not when the task is over. Another
+/// task's words still wait for the turn's end.
+#[tokio::test]
+async fn a_leads_word_reaches_its_working_worker_mid_turn() {
+    let w = world("events-steer");
+    let (lead, _) = idle_claude(&w).await;
+    let id = w.daemon.spawn(&lead, Provider::Claude, "check row 3", Options::default()).unwrap();
+    let mut seen = None;
+    for _ in 0..500 {
+        if w.claude.lock().unwrap().len() == 2 {
+            seen = w.claude.lock().unwrap().last().cloned();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let seen = seen.expect("the worker's Claude started");
+    seen.said("user", 1).await;
+    until(&w.daemon, &id, |c| c.turn.is_some()).await;
+    w.daemon.notify_from(&id, "01a1other", "FYI from another task").unwrap();
+    w.daemon.notify_from(&id, &lead, "Important: no writes").unwrap();
+    let said = seen.said("user", 2).await;
+    let words = said[1]["message"]["content"].as_str().unwrap();
+    assert_eq!(words, zerod::model::from_line(&lead, "Important: no writes"), "mid-turn, no result yet, the lead's alone");
+}
+
 #[tokio::test]
 async fn a_watched_command_wakes_its_session_with_how_it_ended() {
     let w = world("events-watch");

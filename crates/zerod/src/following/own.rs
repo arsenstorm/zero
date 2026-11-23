@@ -32,6 +32,16 @@ impl Touch {
     }
 }
 
+/// A comment Zero wrote on a Linear issue for a task (its `zero linear`): what comes back of it is the task's own.
+pub fn linear_comment(issue: &str, body: &str) -> Touch {
+    Touch::new(format!("linear/{}", issue.to_uppercase()), &["comment", "comment_edited"]).text(Some(body))
+}
+
+/// A Linear issue Zero moved for a task, to state `to`.
+pub fn linear_state(issue: &str, to: &str) -> Touch {
+    Touch::new(format!("linear/{}", issue.to_uppercase()), &["state"]).to(Some(to))
+}
+
 /// Whether `topic` is what `touch` was on, or under it.
 pub fn on(touch: &Touch, topic: &str) -> bool {
     let (pattern, topic): (Vec<&str>, Vec<&str>) = (touch.topic.split('/').collect(), topic.split('/').collect());

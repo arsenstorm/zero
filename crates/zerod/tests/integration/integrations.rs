@@ -342,6 +342,13 @@ async fn agents_query_linear_through_zeros_connection_and_change_it_only_with_th
         vec![
             http(issue.clone(), 200, ""),
             http(json!({"errors": [{"message": "Entity not found", "extensions": {"code": "INVALID_INPUT"}}]}), 200, ""),
+            // The approval's lookup: the issue and the state it moves to, named.
+            http(
+                json!({"data": {"issue": {"identifier": "ENG-1", "title": "Fix it", "state": {"name": "In Progress"}},
+                    "workflowState": {"name": "Done"}}}),
+                200,
+                "",
+            ),
             http(json!({"data": {"issueUpdate": {"success": true}}}), 200, ""),
         ],
     )
@@ -363,11 +370,80 @@ async fn agents_query_linear_through_zeros_connection_and_change_it_only_with_th
     assert!(refused.contains("Let agents make changes"), "{refused}");
     call(&socket, json!({"op": "configure", "linearChanges": true, "takeBack": 0})).await.unwrap();
     let id = asked(&call(&socket, linear(change, json!({}))).await.unwrap_err());
-    assert!(inbox.ask(&id).unwrap().command.as_deref().unwrap().contains("issueUpdate"));
+    // A state move, said in words; the call itself, folded, is still what the approval is for.
+    let ask = inbox.ask(&id).unwrap();
+    assert_eq!(ask.title, "Move ENG-1 to Done?");
+    assert!(ask.body.contains("ENG-1 Fix it") && ask.body.contains("In Progress → Done"), "{}", ask.body);
+    assert!(ask.folded);
+    assert_eq!(ask.command.as_deref(), Some(change));
     answer(&inbox, &id, 0).await;
     let made = call(&socket, linear(change, json!({"approval": id}))).await.unwrap();
     assert_eq!(made["data"]["issueUpdate"]["success"], true);
-    assert_eq!(fetcher.asked.lock().unwrap().len(), 3);
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn a_linear_change_zero_cant_name_is_shown_as_the_call() {
+    let (_fetcher, inbox, socket) = connected(
+        "agents-linear-raw",
+        vec![http(json!({"errors": [{"message": "Rate limited", "extensions": {"code": "RATELIMITED"}}]}), 200, "")],
+    )
+    .await;
+    call(&socket, json!({"op": "configure", "linearChanges": true, "takeBack": 0})).await.unwrap();
+    let change = |query: &str| json!({"op": "linear", "session": "0123456789abcdef", "args": {"query": query}});
+    // The lookup fails: the call as it is.
+    let move_it = "mutation { issueUpdate(id: \"ENG-1\", input: {stateId: \"done\"}) { success } }";
+    let ask = inbox.ask(&asked(&call(&socket, change(move_it)).await.unwrap_err())).unwrap();
+    assert_eq!((ask.title.as_str(), ask.folded), ("Change Linear?", false));
+    // Not a lone state move: no lookup, the call as it is.
+    let two = "mutation { issueUpdate(id: \"ENG-1\", input: {stateId: \"done\"}) { success } issueDelete(id: \"ENG-2\") { success } }";
+    let ask = inbox.ask(&asked(&call(&socket, change(two)).await.unwrap_err())).unwrap();
+    assert_eq!((ask.title.as_str(), ask.folded), ("Change Linear?", false));
+}
+
+#[test]
+fn only_a_lone_state_move_is_said_in_words() {
+    use zerod::integrations::linear_state_move as moves;
+    let none = Value::Null;
+    let at = |a: &str, b: &str| Some((a.to_string(), b.to_string()));
+    assert_eq!(
+        moves("mutation { issueUpdate(id: \"U-1\", input: { stateId: \"s1\" }) { issue { identifier state { name } } } }", &none),
+        at("U-1", "s1")
+    );
+    assert_eq!(
+        moves(
+            "mutation Move($id: String!, $s: String!) { issueUpdate(input: {stateId: $s}, id: $id) { success } }",
+            &json!({"id": "U-1", "s": "s1"})
+        ),
+        at("U-1", "s1")
+    );
+    assert_eq!(
+        moves("mutation { issueUpdate(id: \"U-1\", input: {stateId: \"s1\", assigneeId: \"a\"}) { success } }", &none),
+        None,
+        "more than the state"
+    );
+    assert_eq!(moves("mutation { done: issueUpdate(id: \"U-1\", input: {stateId: \"s1\"}) { success } }", &none), None, "an alias");
+    assert_eq!(
+        moves("mutation { issueUpdate(id: \"U-1\", input: {stateId: \"s1\"}) { success } issueDelete(id: \"U-2\") { success } }", &none),
+        None
+    );
+    assert_eq!(
+        moves(
+            "mutation { issueUpdate(id: \"U-1\", input: {stateId: \"s1\"}) { success } }\nmutation B { issueDelete(id: \"U-2\") { success } }",
+            &none
+        ),
+        None
+    );
+    assert_eq!(
+        moves("mutation($s: String!) { issueUpdate(id: \"U-1\", input: {stateId: $s}) { success } }", &none),
+        None,
+        "a variable not given"
+    );
+    assert_eq!(
+        moves("mutation { issueUpdate(id: \"U-1\", input: {stateId: \"s1\"}) { success } } # mutation { issueDelete }", &none),
+        None,
+        "anything after"
+    );
 }
 
 #[test]
@@ -680,4 +756,63 @@ async fn zero_signs_in_to_an_mcp_server_and_keeps_its_token_for_that_url_alone()
     assert!(refresh.contains("grant_type=refresh_token") && refresh.contains("refresh_token=ref-1"), "{refresh}");
     assert_eq!(integrations.refresh_mcp().await, vec!["docs".to_string()]);
     assert_eq!(integrations.mcp_access("docs", url), None, "refused: forgotten, so the next start says it needs signing in");
+}
+
+#[test]
+fn only_a_lone_comment_is_shown_as_its_words() {
+    use zerod::integrations::linear_comment as comment;
+    let none = Value::Null;
+    let at = |a: &str, b: &str| Some((a.to_string(), b.to_string()));
+    let doc = "mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id url } } }";
+    assert_eq!(
+        comment(doc, &json!({"input": {"body": "**Fixed** by #1\n\n- one", "issueId": "u1"}})),
+        at("u1", "**Fixed** by #1\n\n- one")
+    );
+    assert_eq!(comment(doc, &json!({"input": {"body": "x", "issueId": "u1", "parentId": "c1"}})), None, "a reply: more than a comment");
+    assert_eq!(comment(doc, &none), None, "no input given");
+    assert_eq!(
+        comment("mutation { commentCreate(input: {issueId: \"U-1\", body: \"Done \\\"now\\\"\\n- a\"}) { success } }", &none),
+        at("U-1", "Done \"now\"\n- a")
+    );
+    assert_eq!(
+        comment(
+            "mutation { commentCreate(input: {body: \"a\", issueId: \"U-1\"}) { success } issueDelete(id: \"U-2\") { success } }",
+            &none
+        ),
+        None
+    );
+    assert_eq!(
+        comment("mutation { commentCreate(input: {body: \"\"\"a\"\"\", issueId: \"U-1\"}) { success } }", &none),
+        None,
+        "a block string"
+    );
+}
+
+#[tokio::test]
+async fn a_linear_comment_is_approved_as_its_words_and_isnt_news_to_its_task() {
+    let (fetcher, inbox, socket) = connected(
+        "agents-linear-comment",
+        vec![
+            http(json!({"data": {"issue": {"identifier": "ENG-1", "title": "Fix it"}}}), 200, ""),
+            http(json!({"data": {"commentCreate": {"success": true}}}), 200, ""),
+        ],
+    )
+    .await;
+    call(&socket, json!({"op": "configure", "linearChanges": true, "takeBack": 0})).await.unwrap();
+    let doc = "mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }";
+    let variables = json!({"input": {"body": "Fixed by **#14017**.", "issueId": "165a8acc"}});
+    let write = |more: Value| {
+        let mut args = json!({"query": doc, "variables": variables});
+        args.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+        json!({"op": "linear", "session": "0123456789abcdef", "args": args})
+    };
+    let id = asked(&call(&socket, write(json!({}))).await.unwrap_err());
+    let ask = inbox.ask(&id).unwrap();
+    assert_eq!(ask.title, "Comment on ENG-1?");
+    assert!(ask.body.contains("ENG-1 Fix it"), "{}", ask.body);
+    assert_eq!(ask.preview.as_deref(), Some("Fixed by **#14017**."));
+    assert!(ask.folded);
+    answer(&inbox, &id, 0).await;
+    call(&socket, write(json!({"approval": id}))).await.unwrap();
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 2, "the lookup, then the comment");
 }

@@ -123,6 +123,49 @@ impl McpServer {
     }
 }
 
+/// A server's id, made from its name.
+fn id_for(name: &str) -> String {
+    let base: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if base.is_empty() { "server".to_string() } else { base }
+}
+
+/// A remote server a task's Claude has of its own (as its `mcp_status` lists it), as Zero keeps it to sign in to it
+/// itself, once for every task and account: only a plain HTTP one (Zero gives a server as one) of the user's (for every
+/// workspace) or a project's (for `workspace`), with no headers or sign-in setup of its own, and named as Zero's id
+/// for it is (a server Zero gives takes the place of the CLI's own of that name alone).
+pub fn adoptable(listed: &serde_json::Value, workspace: &str) -> Option<McpServer> {
+    let (name, config) = (listed["name"].as_str()?, &listed["config"]);
+    let workspaces = match listed["scope"].as_str()? {
+        "user" => vec![],
+        "local" | "project" => vec![workspace.to_string()],
+        _ => return None,
+    };
+    let headers = config["headers"].as_object().is_some_and(|h| !h.is_empty());
+    if config["type"] != "http" || headers || !config["headersHelper"].is_null() || !config["oauth"].is_null() || id_for(name) != name {
+        return None;
+    }
+    Some(McpServer {
+        id: String::new(),
+        name: name.into(),
+        command: None,
+        args: vec![],
+        url: Some(config["url"].as_str()?.into()),
+        env: vec![],
+        headers: vec![],
+        workspaces,
+        enabled: true,
+        lazy: false,
+    })
+}
+
 /// What a transcript keeps in place of a server's value (an env var's, a header's).
 pub const HIDDEN: &str = "<kept out of the transcript>";
 
@@ -364,17 +407,7 @@ impl McpServers {
         }
         let mut list = self.list.lock().unwrap();
         if server.id.is_empty() {
-            let base: String = server
-                .name
-                .to_lowercase()
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                .collect::<String>()
-                .split('-')
-                .filter(|p| !p.is_empty())
-                .collect::<Vec<_>>()
-                .join("-");
-            let base = if base.is_empty() { "server".to_string() } else { base };
+            let base = id_for(&server.name);
             let mut id = base.clone();
             let mut n = 2;
             while list.iter().any(|s| s.id == id) {

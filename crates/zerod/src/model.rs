@@ -136,7 +136,8 @@ impl Issue {
             on_you_ms: previous.map_or(0, |p| p.on_you_ms) + left_you,
             updated: now,
             history,
-            needs: previous.and_then(|p| p.needs.clone()),
+            // What it needs from the user stands while it's on them; moved back to its agents (or anyone else), it's gone.
+            needs: previous.filter(|_| matches!(state, IssueState::You | IssueState::Over)).and_then(|p| p.needs.clone()),
             pr: previous.and_then(|p| p.pr.clone()),
             fields: previous.map_or_else(Vec::new, |p| p.fields.clone()),
         }

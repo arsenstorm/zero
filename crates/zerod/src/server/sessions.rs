@@ -194,6 +194,19 @@ pub(super) async fn properties(zerod: &Zerod, request: Request) -> Result<Value,
             let state = state.ok_or("A task's status is one of done, waiting or blocked")?;
             let task = daemon.get(&request.session()?).ok_or("No such session")?;
             zerod.inbox.mark(&crate::bridge::identity(&task, &crate::bridge::hostname()), state);
+            // Its issue rows that say otherwise take the user's word: a row left Done, or over to them, on a task they marked
+            // waiting.
+            use crate::model::IssueState;
+            // Waiting or blocked: not on the user, nor done.
+            let (to, all) = match state {
+                "done" => (IssueState::Done, true),
+                "waiting" => (IssueState::Waiting, false),
+                _ => (IssueState::Parked, false),
+            };
+            let against = |s: IssueState| all || matches!(s, IssueState::Done | IssueState::You | IssueState::Over);
+            for issue in task.issues.iter().filter(|i| i.state != to && against(i.state)) {
+                daemon.set_issue(&task.id, &issue.ticket, to, &issue.text)?;
+            }
             Ok(Value::Null)
         }
         // One of the issues the task drives, its row set: who has it, and what it needs, where it stands or why parked.
@@ -314,7 +327,7 @@ fn start(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     Ok(json!({"session": id}))
 }
 
-/// A worker for the session, on its lead's provider unless the request names one.
+/// A worker for the session, on its lead's provider unless the request names one; `own`, a lead beside it instead.
 fn spawn(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     let lead = request.session()?;
     let provider = match request.provider {
@@ -323,9 +336,9 @@ fn spawn(zerod: &Zerod, request: &Request) -> Result<Value, String> {
     };
     let options = options(request, request.cwd.clone(), request.permissions);
     let (prompt, loops) = zerod.loops.expand(request.prompt.as_deref().unwrap_or(""));
-    let id = zerod.daemon.spawn(&lead, provider, &prompt, options)?;
+    let id = zerod.daemon.spawn_as(&lead, provider, &prompt, options, request.own)?;
     for name in &loops {
-        zerod.loops.record(name, &id, "worker")
+        zerod.loops.record(name, &id, if request.own { "lead" } else { "worker" })
     }
     Ok(json!({"session": id}))
 }

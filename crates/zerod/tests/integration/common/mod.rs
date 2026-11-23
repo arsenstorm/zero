@@ -36,7 +36,12 @@ pub fn replay(provider: Provider, name: &str) -> (Core, Vec<Change>) {
 
 /// Everything Zero wrote to the runtime, in order; and, once the script has run out, a way to say more.
 #[derive(Clone, Default)]
-pub struct Seen(Arc<Mutex<Vec<Value>>>, Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Value>>>>);
+pub struct Seen(
+    Arc<Mutex<Vec<Value>>>,
+    Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Value>>>>,
+    /// What the runtime answers a control request of this subtype with, in place of an empty success.
+    Arc<Mutex<HashMap<String, Value>>>,
+);
 
 impl Seen {
     /// Has the runtime say `message` (after its script has played).
@@ -44,6 +49,11 @@ impl Seen {
         if let Some(say) = self.1.lock().unwrap().as_ref() {
             let _ = say.send(message);
         }
+    }
+
+    /// Has the runtime answer each control request of `subtype` with `response`.
+    pub fn answer(&self, subtype: &str, response: Value) {
+        self.2.lock().unwrap().insert(subtype.into(), response);
     }
 
     pub fn all(&self) -> Vec<Value> {
@@ -158,7 +168,7 @@ pub fn play(script: Vec<Value>) -> (Transport, Seen) {
                         write(&mut runtime_write, &json!({"jsonrpc": "2.0", "id": message["id"], "result": {}})).await;
                     }
                     if message["type"] == "control_request" {
-                        write(&mut runtime_write, &json!({"type": "control_response", "response": {"subtype": "success", "request_id": message["request_id"], "response": {}}})).await;
+                        write(&mut runtime_write, &control_answer(&recorder, &message)).await;
                     }
                 }
                 Some(message) = said.recv() => write(&mut runtime_write, &message).await,
@@ -180,10 +190,16 @@ async fn wait(lines: &mut In, out: &mut Out, seen: &Seen, wanted: &(dyn Fn(&Valu
             write(out, &json!({"jsonrpc": "2.0", "id": message["id"], "result": {}})).await;
         }
         if message["type"] == "control_request" {
-            write(out, &json!({"type": "control_response", "response": {"subtype": "success", "request_id": message["request_id"], "response": {}}})).await;
+            write(out, &control_answer(seen, &message)).await;
         }
     }
     None
+}
+
+fn control_answer(seen: &Seen, request: &Value) -> Value {
+    let subtype = request["request"]["subtype"].as_str().unwrap_or_default();
+    let response = seen.2.lock().unwrap().get(subtype).cloned().unwrap_or(json!({}));
+    json!({"type": "control_response", "response": {"subtype": "success", "request_id": request["request_id"], "response": response}})
 }
 
 fn key(id: &Value) -> String {

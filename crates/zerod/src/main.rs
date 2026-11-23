@@ -153,6 +153,7 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> Arc<zerod::in
     zerod::server::apply_mcp_asks(daemon, &inbox);
     zerod::server::hold_while_blocked(daemon, &inbox);
     zerod::server::know_what_wakes(daemon, &inbox);
+    zerod::server::know_endings(daemon, &inbox);
     zerod::server::know_workers(daemon, &inbox);
     zerod::server::link_asks(daemon, &inbox);
     inbox

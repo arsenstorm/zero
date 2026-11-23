@@ -58,8 +58,11 @@ pub struct Claude {
 /// summary. Off for Zero's runs only, on top of the user's own settings.
 pub const NO_IDLE_COMPACTION: &str = r#"{"idleCompaction":false}"#;
 
-/// Claude's own subagents (its Agent tool), off for this run only.
-pub const NO_SUBAGENTS: &[&str] = &["--disallowed-tools=Agent"];
+/// Tools off for this run only. Claude's own cron always: its reminders die with the process, unseen, while Zero's
+/// `zero schedule` resumes a parked task. Its subagents (the Agent tool) unless the user allows them.
+pub fn disallowed(subagents: bool) -> &'static str {
+    if subagents { "--disallowed-tools=CronCreate,CronDelete,CronList" } else { "--disallowed-tools=CronCreate,CronDelete,CronList,Agent" }
+}
 
 pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, effort: Option<&str>, subagents: bool) -> Vec<String> {
     let mut instructions = instructions(conversation.plain_answers);
@@ -94,9 +97,7 @@ pub fn command(conversation: &Conversation, resume: bool, model: Option<&str>, e
         "--settings",
         NO_IDLE_COMPACTION,
     ];
-    if !subagents {
-        args.extend(NO_SUBAGENTS)
-    }
+    args.push(disallowed(subagents));
     if let Some(thread) = conversation.thread.as_deref() {
         args.extend([if resume { "--resume" } else { "--session-id" }, thread])
     }

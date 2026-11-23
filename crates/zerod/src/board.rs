@@ -262,8 +262,7 @@ pub fn board_in(
                     .unwrap_or(false),
                 issues: {
                     // Their steps stay in the conversation: the board is sent whole on every change.
-                    let mut issues: Vec<_> =
-                        lead.issues.iter().map(|i| crate::model::Issue { history: vec![], ..i.clone() }).collect();
+                    let mut issues: Vec<_> = lead.issues.iter().map(|i| crate::model::Issue { history: vec![], ..i.clone() }).collect();
                     issues.sort_by_key(|i| (i.state, i.since));
                     issues
                 },
@@ -384,16 +383,17 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
         state = state.min(State::NeedsYou)
     }
     // Ended on an ask that's no longer open (answered, withdrawn, expired), its question no longer anyone's: what it
-    // said is a reply to read. Agents repeat the ending through later turns, long after the answer came.
+    // said is a reply to read. Agents repeat the ending through later turns, long after the answer came. A command the
+    // user ran (`zero run`) still under way: their part is done, its output on its way.
     if state == State::NeedsYou
         && open.is_empty()
         && session.questions.is_empty()
         && session.approvals.is_empty()
         && team.iter().skip(1).all(|c| attention(c) != State::NeedsYou)
         && let Some(id) = session.answer().and_then(asked)
-        && asks.iter().any(|a| a.id == id && a.state.is_final())
+        && let Some(ask) = asks.iter().find(|a| a.id == id && (a.state.is_final() || a.state == AskState::Running))
     {
-        state = State::Answered;
+        state = if ask.state == AskState::Running { State::Working } else { State::Answered };
     }
     // A confirmed note (the agent's `zero done` with its token, or the user's own word) settles it however the last
     // turn ended (in a question, failing, stuck), unless something still asks the user.
@@ -454,7 +454,7 @@ fn standing(session: &Conversation, conversations: &[Conversation], asks: &[Ask]
 /// The ending Zero has an agent close its turn with, when it's the answer's last line: "done", "waiting", "working",
 /// or "asked" (its ask's id dropped). "completed" and "blocked", as agents said them before, are "done" and "waiting".
 /// The ask an answer's ending waits on: `[zero: asked <id>]`'s id.
-fn asked(answer: &str) -> Option<&str> {
+pub fn asked(answer: &str) -> Option<&str> {
     answer.trim_end().lines().last()?.trim().strip_prefix("[zero: asked ")?.strip_suffix(']').map(str::trim)
 }
 
@@ -479,6 +479,8 @@ pub fn asks_in_prose(answer: &str) -> bool {
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with("[zero:") && !l.starts_with('#') && !l.starts_with('|'))
+        // A list's items and quotes: questions it lists (an issue's open ones, a worker's), not put to the user.
+        .filter(|l| !l.starts_with('>') && unlisted(l).len() == l.len())
         .rev()
         .take(3)
         .any(|l| l.trim_end_matches(['*', '_', ')', '"']).ends_with('?'))
@@ -602,6 +604,11 @@ fn is(ask: &Ask, conversation: &Conversation) -> bool {
 /// user (`--needs`).
 pub fn says_who(conversation: &Conversation, asks: &[Ask]) -> bool {
     note(conversation, asks).is_some_and(|n| matches!(n.status.as_deref(), Some("waiting" | "blocked")) || n.needs.is_some())
+}
+
+/// Its own note confirms it done (`zero done`, its token; or the user's Done): one the user hasn't spoken over since.
+pub fn done_confirmed(conversation: &Conversation, asks: &[Ask]) -> bool {
+    note(conversation, asks).is_some_and(|n| n.confirmed && matches!(n.status.as_deref(), Some("done" | "completed" | "merged")))
 }
 
 /// The agent's latest own note, unless a turn started after it (zerod notes each new turn, and what the note said was

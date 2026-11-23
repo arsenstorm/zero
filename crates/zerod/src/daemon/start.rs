@@ -10,7 +10,13 @@ impl Daemon {
     }
 
     /// A worker of `lead`: in the lead's folder, with the lead's permissions, unless told otherwise.
-    pub fn spawn(&self, lead: &str, provider: Provider, prompt: &str, mut options: Options) -> Result<String, String> {
+    pub fn spawn(&self, lead: &str, provider: Provider, prompt: &str, options: Options) -> Result<String, String> {
+        self.spawn_as(lead, provider, prompt, options, false)
+    }
+
+    /// A worker of `lead`, on its folder, mode, model and workspace unless told otherwise; `own`, the same but a task of
+    /// its own beside it (a lead for each of a list of issues), whose end the session isn't told of.
+    pub fn spawn_as(&self, lead: &str, provider: Provider, prompt: &str, mut options: Options, own: bool) -> Result<String, String> {
         let parent = self.get(lead).ok_or_else(|| format!("No session {lead} to lead it"))?;
         options.cwd = options.cwd.or(Some(parent.cwd.clone()));
         options.permissions = options.permissions.or(Some(parent.permissions));
@@ -22,7 +28,7 @@ impl Daemon {
         }
         // The lead decides: its worker is in its workspace wherever the worker's folder is.
         options.workspace = options.workspace.or_else(|| Some(self.workspace_of(&parent)));
-        options.parent = Some(lead.to_string());
+        options.parent = (!own).then(|| lead.to_string());
         self.create(provider, prompt, options)
     }
 
@@ -208,6 +214,49 @@ impl Daemon {
         };
         self.push_mcp_everywhere();
         Ok(format!("{kept} {told}").trim_end().to_string())
+    }
+
+    /// A server a Claude task says needs signing in that is its CLI's own: kept as Zero's when Zero can sign in to it
+    /// itself (`mcp_servers::adoptable`, and `mcp_zero_signs_in`), so one sign-in serves every task and account. Zero's
+    /// copy takes the place of the CLI's in every task once signed in. One Zero keeps at that URL for other workspaces
+    /// is widened to this task's.
+    pub async fn adopt_mcp(self: &Arc<Self>, id: &str, server: &str) {
+        let (Ok(session), Some(tokens)) = (self.session(id), self.integrations.get()) else { return };
+        let conversation = session.summary();
+        let workspace = self.workspace_of(&conversation);
+        let kept = self.mcp_servers.list().into_iter().find(|s| s.id == server);
+        let covered = kept.as_ref().is_some_and(|s| !s.enabled || s.workspaces.is_empty() || s.workspaces.contains(&workspace));
+        if conversation.provider != Provider::Claude
+            || !session.is_attached()
+            || covered
+            || (kept.is_none() && self.mcp_auth.under_way(server))
+        {
+            return;
+        }
+        let listed = tokio::time::timeout(std::time::Duration::from_secs(10), claude_status(&session)).await.unwrap_or_default();
+        let Some(adopted) = listed.iter().find(|s| s["name"] == server).and_then(|s| crate::mcp_servers::adoptable(s, &workspace)) else {
+            return;
+        };
+        let url = adopted.url.clone().unwrap_or_default();
+        if let Some(mut kept) = kept {
+            // ponytail: one of this name at another URL stays the CLI's own here; a server per URL if that's ever seen.
+            if kept.url.as_deref() == Some(&url) {
+                kept.workspaces = if adopted.workspaces.is_empty() { vec![] } else { [kept.workspaces, adopted.workspaces].concat() };
+                if self.mcp_servers.save(kept).is_ok() {
+                    self.push_mcp_everywhere()
+                }
+            }
+            return;
+        }
+        if self.mcp_auth.declined(&url) {
+            return;
+        }
+        if !tokens.mcp_zero_signs_in(&url).await {
+            return self.mcp_auth.decline(&url);
+        }
+        let Ok(saved) = self.mcp_servers.save(adopted) else { return };
+        tokens.mcp_waiting(&saved.id, &url);
+        self.mcp_changed(&saved.id);
     }
 
     /// A server's config changed: no stale "needs signing in" (Claude's cache in every home, this zerod's ended

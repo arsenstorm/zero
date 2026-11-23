@@ -63,7 +63,7 @@ pub fn argv(key: &[&str]) -> Vec<String> {
         "graphql",
         "-f",
         &format!(
-            "query=query($owner: String!, $repo: String!, $number: Int!) {{ viewer {{ login }} {} }}",
+            "query=query($owner: String!, $repo: String!, $number: Int!) {{ viewer {{ login }} {RATE} {} }}",
             repository("owner: $owner, name: $repo", "$number")
         ),
         "-f",
@@ -87,7 +87,87 @@ pub fn batch_argv(keys: &[Vec<&str>]) -> Vec<String> {
             format!("p{i}: {}", repository(&repo, &k[2].parse::<u64>().unwrap_or(0).to_string()))
         })
         .collect();
-    ["gh", "api", "graphql", "-f", &format!("query=query {{ viewer {{ login }} {} }}", reads.join(" "))].map(String::from).to_vec()
+    ["gh", "api", "graphql", "-f", &format!("query=query {{ viewer {{ login }} {RATE} {} }}", reads.join(" "))].map(String::from).to_vec()
+}
+
+/// What's left of the account's GraphQL points: they're shared with every `gh pr` command the user's agents run.
+const RATE: &str = "rateLimit { remaining resetAt }";
+/// The points follows leave to the user's agents: with fewer left, they wait for the reset.
+pub const RESERVE: i64 = 1000;
+
+/// When follows may read again (Unix seconds), from a reply with fewer than RESERVE points left.
+pub fn held_until(reply: &Value) -> Option<i64> {
+    let rate = &reply["data"]["rateLimit"];
+    (rate["remaining"].as_i64()? < RESERVE).then(|| unix(rate["resetAt"].as_str()?)).flatten()
+}
+
+/// "2026-11-19T14:24:45Z" in Unix seconds.
+fn unix(at: &str) -> Option<i64> {
+    let n = |r: std::ops::Range<usize>| at.get(r)?.parse::<i64>().ok();
+    let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + (153 * m + 2) / 5 + d - 1 - 719_468;
+    Some(days * 86_400 + n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?)
+}
+
+/// What's checked of a pull request before it's read: REST paths whose ETags GitHub answers 304 for, free, while they
+/// haven't changed. Its issue moves with its state, draft, title, body, labels, assignees, review requests, comments,
+/// reviews and pushes; its head's check runs and statuses with CI, which moves neither. Not `pulls/N`: it holds the
+/// repository's `pushed_at`, which a push to any branch moves. Edits, resolved threads and conflicts move none of them
+/// (FULL_EVERY reads them).
+pub fn checks(key: &[&str], state: &Value) -> Vec<String> {
+    let base = format!("repos/{}/{}", key[0], key[1]);
+    let mut paths = vec![format!("{base}/issues/{}", key[2])];
+    if let Some(head) = state["head"].as_str().filter(|h| !h.is_empty() && state["state"] == "OPEN") {
+        paths.push(format!("{base}/commits/{head}/check-runs?per_page=100"));
+        paths.push(format!("{base}/commits/{head}/status"));
+    }
+    paths
+}
+
+/// Whether a pull request whose checks haven't changed can go unread: not while any of its CI is under way (a result
+/// never waits on a check, or on a read that lags behind one), nor merged in a repository that deploys (a deploy, even
+/// a later one once the first settled, moves nothing checked).
+pub fn gated(state: &Value) -> bool {
+    match str(&state["state"]) {
+        "OPEN" => {
+            let done = |c: &Value| c["s"].as_str().is_some_and(|s| FAILED.contains(&s) || PASSED.contains(&s));
+            !matches!(str(&state["rollup"]), "PENDING" | "EXPECTED")
+                && state["checks"].as_object().into_iter().flatten().all(|(_, c)| done(c))
+        }
+        "MERGED" => state["deploys_used"] != true,
+        _ => true,
+    }
+}
+
+/// Seconds between an open pull request's reads in full, whatever its checks say, for what they can't tell.
+pub const FULL_EVERY: i64 = 15 * 60;
+
+/// The `gh` command that checks `path`, conditional on the ETag last seen (sent back as GitHub gave it): headers only.
+pub fn check_argv(path: &str, etag: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["gh".to_string(), "api".into(), "-i".into(), "--silent".into()];
+    if let Some(etag) = etag {
+        argv.extend(["-H".into(), format!("If-None-Match: {etag}")]);
+    }
+    argv.push(path.into());
+    argv
+}
+
+/// What a check found: `Ok(None)` unchanged (gh fails a 304, saying so), `Ok(Some(etag))` changed, `Err` it couldn't tell.
+pub fn checked(answer: Result<String, String>) -> Result<Option<String>, String> {
+    match answer {
+        Err(error) if error.trim() == "gh: HTTP 304" => Ok(None),
+        Err(error) => Err(error),
+        Ok(headers) => headers
+            .lines()
+            .take_while(|l| !l.trim().is_empty())
+            .find_map(|l| l.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("etag")).map(|(_, v)| v.trim().to_string()))
+            .map(Some)
+            .ok_or_else(|| "no ETag".into()),
+    }
 }
 
 /// A read of several, as each would have been read alone.

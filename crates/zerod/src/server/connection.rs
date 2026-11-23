@@ -90,9 +90,11 @@ async fn connection(zerod: Zerod, stream: UnixStream) {
             continue;
         }
         if request.op == "subscribe" {
-            if subscription.is_none() {
-                subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone(), request.lazy.unwrap_or(false))))
+            // Again (the app's copy fell behind, or lacks a task): started afresh, every session sent again.
+            if let Some(running) = subscription.take() {
+                tokio::task::JoinHandle::<()>::abort(&running)
             }
+            subscription = Some(tokio::spawn(subscribe(zerod.daemon.clone(), out.clone(), request.lazy.unwrap_or(false))));
             if feed.is_none() {
                 feed = Some(tokio::spawn(self::feed(zerod.clone(), out.clone())))
             }
@@ -234,7 +236,13 @@ async fn subscribe(daemon: Arc<Daemon>, out: mpsc::UnboundedSender<Value>, lazy:
                 Some(seq) if event.seq <= seq => true,
                 // An undone rewind brings back what clients let go of: they're sent the session afresh instead.
                 Some(seq) if event.seq == seq + 1 && event.change != crate::model::Change::Unrewound => {
-                    known.insert(event.session.clone(), event.seq);
+                    // Archived, it's gone from the app: brought back, it starts again at the number it was archived at,
+                    // which would read as sent already. Forgotten, its return is sent afresh, as a new session is.
+                    if event.change == crate::model::Change::Archived {
+                        known.remove(&event.session);
+                    } else {
+                        known.insert(event.session.clone(), event.seq);
+                    }
                     out.send(json!({"event": "change", "session": event.session, "seq": event.seq, "change": event.change})).is_ok()
                 }
                 _ => match daemon.session(&event.session) {

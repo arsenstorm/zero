@@ -534,14 +534,15 @@ fn what_runs_in_the_background_is_known_so_stop_can_stop_it() {
 
 /// Work handed to another agent goes to a Zero worker, which the user sees, steers and stops in Zero: the CLIs' own
 /// subagents (Claude's Agent tool, Codex's multi-agent tools) are off in Zero's runs unless the user turns them on.
+/// Claude's own cron is always off: its reminders die with the process, and Zero's `zero schedule` resumes a parked task.
 #[test]
 fn the_clis_own_subagents_are_off_unless_the_user_allows_them() {
     let mut claude = Conversation::new("s", Provider::Claude, "/w");
     claude.thread = Some("3f1c".into());
     let off = Provider::Claude.command_with(&claude, false, None, None, false);
-    assert!(off.iter().any(|a| a == "--disallowed-tools=Agent"), "{off:?}");
+    assert!(off.iter().any(|a| a == "--disallowed-tools=CronCreate,CronDelete,CronList,Agent"), "{off:?}");
     let on = Provider::Claude.command_with(&claude, false, None, None, true);
-    assert!(!on.iter().any(|a| a.starts_with("--disallowed-tools")), "{on:?}");
+    assert!(on.iter().any(|a| a == "--disallowed-tools=CronCreate,CronDelete,CronList"), "{on:?}");
     let codex = Conversation::new("s", Provider::Codex, "/w");
     let off = Provider::Codex.command_with(&codex, false, None, None, false);
     assert!(off.windows(2).any(|w| w == ["-c", "features.multi_agent=false"]), "{off:?}");

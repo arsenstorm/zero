@@ -30,7 +30,7 @@ fn each_provider_opens_its_own_terminal_on_the_tasks_thread() {
             "--no-chrome",
             "--settings",
             r#"{"idleCompaction":false}"#,
-            "--disallowed-tools=Agent",
+            "--disallowed-tools=CronCreate,CronDelete,CronList,Agent",
             "--model",
             "opus"
         ]

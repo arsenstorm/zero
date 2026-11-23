@@ -45,6 +45,9 @@ struct Request {
     effort: Option<String>,
     /// The model Claude Code consults; none (or left out), no advisor.
     advisor: Option<String>,
+    /// Spawned as a task of its own (a lead beside the session), not its worker.
+    #[serde(default)]
+    own: bool,
     approval: Option<String>,
     choice: Option<String>,
     question: Option<String>,
@@ -394,6 +397,22 @@ impl Zerod {
         }
         rows
     }
+}
+
+/// What a turn's ending is checked against (Daemon::check_ending): the ask `[zero: asked <id>]` names, open (not
+/// answered, withdrawn or expired) and made by the task or a worker of its own; `[zero: done]`'s confirmed note.
+pub fn know_endings(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    let (asks, notes) = (Arc::downgrade(inbox), Arc::downgrade(inbox));
+    daemon.know_endings(
+        Box::new(move |id, owners| {
+            asks.upgrade().and_then(|inbox| inbox.ask(id)).is_some_and(|a| {
+                !a.state.is_final()
+                    && !matches!(a.kind, crate::ask::AskKind::Note | crate::ask::AskKind::Message)
+                    && owners.iter().any(|o| a.agent.reference.as_deref() == Some(o) || a.agent.name == format!("zerod-{o}"))
+            })
+        }),
+        Box::new(move |conversation| notes.upgrade().is_some_and(|inbox| crate::board::done_confirmed(conversation, &inbox.asks()))),
+    );
 }
 
 /// The inbox tells a worker (a task under a lead) by the daemon's sessions: its done is its lead's to judge.

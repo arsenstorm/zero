@@ -505,6 +505,11 @@ impl Inbox {
             self.confirm(agent, said, "done");
             return Ok(());
         }
+        if token.is_some()
+            && let Some(refused) = self.done_unanswered(agent)
+        {
+            return Err(refused);
+        }
         let quoted = said.replace('"', "'");
         self.second_word(agent, said, token, "done", || {
             format!(
@@ -513,7 +518,7 @@ impl Inbox {
             - the work is finished end to end: merged, deployed and checked, its ticket closed, nothing left that \
             anyone has to do for it. Committed, pushed, or sent for review is not done.\n\
             If one of those is so, confirm within 5 minutes: zero done \"{quoted}\" --confirm {{token}}\n\
-            Unsure? Ask the user instead: zero done \"{quoted}\" --ask"
+            Unsure? Ask the user instead, and their answer decides: zero done \"{quoted}\" --ask"
             )
         })
     }
@@ -554,6 +559,37 @@ impl Inbox {
         drop(state);
         self.confirm(agent, said, status);
         Ok(())
+    }
+
+    /// The agent asked the user whether its task is done (`zero done --ask`), and they haven't said Done: the question is
+    /// open, or closed some other way (expired, withdrawn, Not yet). Their answer decides, so its own token can't: an
+    /// agent took silence for a yes. Once it's closed, the user's own words to the task since (done, said in chat) are
+    /// theirs to read: Zero can't tell what they mean. While it's open, their word in chat means withdrawing it first.
+    fn done_unanswered(&self, agent: &AgentIdentity) -> Option<String> {
+        let question = self.lock().asks.iter().rev().find(|a| a.done_check && a.agent.name == agent.name).cloned()?;
+        let id = &question.id;
+        if question.state == AskState::Answered && question.choice == Some(0) {
+            return None;
+        }
+        if !question.state.is_final() {
+            return Some(format!(
+                "Not marked done: you asked the user whether it's done (ask {id}), and they haven't answered. Their answer \
+                 decides, and silence isn't a yes: end your turn [zero: asked {id}]. If they said it's done in chat, \
+                 withdraw the ask (zero withdraw {id}) and confirm again."
+            ));
+        }
+        let session = agent.reference.as_deref().or_else(|| agent.name.strip_prefix("zerod-"));
+        let items = session.zip(self.conversations.get()).and_then(|(session, read)| read(session, true)).unwrap_or_default();
+        let spoke_since = items.iter().any(|i| {
+            matches!(&i.kind, crate::model::ItemKind::User { text, .. } if crate::daemon::users_own(text))
+                && i.at.is_some_and(|at| at >= question.created_at.0 * 1000)
+        });
+        (!spoke_since).then(|| {
+            format!(
+                "Not marked done: you asked the user whether it's done (ask {id}), and it closed without their Done. Their \
+                 answer decides, and silence isn't a yes. Carry on with what's left, or ask again: zero done \"…\" --ask"
+            )
+        })
     }
 
     /// `zero done --ask`: the user asked whether the task is done; their Done confirms it (finish).

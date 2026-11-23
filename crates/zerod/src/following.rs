@@ -42,6 +42,8 @@ pub const ENDED_EVERY: i64 = 15 * 60;
 /// How many of one source's things due together are read in one request: gh's answer for 20 pull requests took 6
 /// seconds (of its 30) and half a megabyte; Linear took 130 issues in one query (of 10,000 complexity points).
 const GITHUB_BATCH: usize = 10;
+/// How many of GitHub's checks (github::checks) run at once.
+const CHECKS_AT_ONCE: usize = 8;
 const LINEAR_BATCH: usize = 20;
 
 /// How long what a step did is remembered, to know the events it causes as the task's own.
@@ -95,6 +97,13 @@ pub struct Target {
     pub error: Option<String>,
     #[serde(default)]
     pub fails: u32,
+    /// A pull request's ETags, by what's checked (github::checks), as of its last read in full; kept so a restart
+    /// doesn't read them all again.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub etags: BTreeMap<String, String>,
+    /// When it was last read in full, not only checked (Unix seconds).
+    #[serde(default)]
+    pub read_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -216,7 +225,7 @@ impl Source {
     }
     /// Seconds between polls of one open key, and the milliseconds of the source's rate limit each open key takes:
     /// with n open keys each is polled every n × spacing, at most every interval. GitHub: a pull request costs 1.4 of
-    /// GraphQL's 5,000 points an hour when batched, so 2.5 s each is about 2,000 an hour. Linear: an issue is at most 77
+    /// GraphQL's 5,000 points an hour when batched, so 2.5 s each would be about 2,000 an hour; it's checked at that pace, and only read when its checks changed (github::checks). Linear: an issue is at most 77
     /// of the OAuth app's 2,000,000 complexity points an hour (130 fit one query), so 0.3 s each is at most 920,000;
     /// one read alone, whole, takes WHOLE_SPACING_MS. Both leave the rest to the user's and agents' own reads. Slack: a channel's history call each, Tier 3 (50 a minute).
     fn interval(self) -> i64 {
@@ -266,6 +275,12 @@ pub struct Following {
     touches: Mutex<Vec<(String, i64, own::Touch)>>,
     /// Seconds events for a session between turns are held (BATCH).
     window: AtomicI64,
+    /// Until when GitHub isn't read (Unix seconds): its GraphQL points are down to the agents' reserve (github::RESERVE).
+    github_held: AtomicI64,
+    /// Seconds between an open pull request's reads in full (github::FULL_EVERY).
+    full_every: AtomicI64,
+    /// ETags a check found, kept with the read it led to once that read succeeds.
+    checked: Mutex<HashMap<String, BTreeMap<String, String>>>,
     /// Fires when follows or targets change, for the app.
     pub changed: broadcast::Sender<()>,
 }
@@ -281,6 +296,9 @@ impl Following {
             kept: Mutex::new(kept),
             touches: Mutex::default(),
             window: AtomicI64::new(BATCH),
+            github_held: AtomicI64::new(0),
+            full_every: AtomicI64::new(github::FULL_EVERY),
+            checked: Mutex::default(),
             changed: broadcast::channel(16).0,
         })
     }
@@ -290,10 +308,19 @@ impl Following {
         self.window.store(seconds, Ordering::Relaxed)
     }
 
+    /// How often an open pull request is read in full whatever its checks say.
+    pub fn set_full_every(&self, seconds: i64) {
+        self.full_every.store(seconds, Ordering::Relaxed)
+    }
+
     /// A step of `session`'s, as it starts: what it does to things followed is remembered a while, so the events it
     /// causes come back as its own.
     pub fn touched(&self, session: &str, kind: &ItemKind) {
-        let found = own::touches(kind);
+        self.wrote(session, own::touches(kind))
+    }
+
+    /// What Zero did for `session` itself (a write through its connections): remembered as a step's is.
+    pub fn wrote(&self, session: &str, found: Vec<own::Touch>) {
         let mut touches = self.touches.lock().unwrap();
         let now = now();
         touches.retain(|(s, at, t)| now - at <= OWN_FOR && !(s == session && found.contains(t)));
@@ -511,8 +538,14 @@ impl Following {
                 self.keep(&kept);
             }
             let now = now();
-            kept.targets.iter().filter(|(_, t)| t.next_poll <= now).map(|(k, _)| k.clone()).collect()
+            let held = now < self.github_held.load(Ordering::Relaxed);
+            kept.targets
+                .iter()
+                .filter(|(k, t)| t.next_poll <= now && !(held && Source::of(k) == Ok(Source::GitHub)))
+                .map(|(k, _)| k.clone())
+                .collect()
         };
+        let due = self.unchanged(due).await;
         // What has been read and reads well goes in batches; the rest, and Slack, one by one.
         // A rate limit is the service's, not the thing's: it keeps its batch.
         let healthy = |key: &String| {
@@ -586,14 +619,29 @@ impl Following {
         let mut kept = self.kept.lock().unwrap();
         let target = kept.targets.entry(key.into()).or_default();
         let (state, fails) = (target.state.clone(), target.fails);
-        let before = (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails);
+        let before = (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails, target.etags.clone());
+        let checked = self.checked.lock().unwrap().remove(key);
         let (mut events, mut trouble) = (vec![], None);
         match result {
             Ok(poll) => {
                 if state.is_some() {
                     events = poll.events
                 }
-                *target = Target { state: Some(poll.state), summary: poll.summary, last_poll: now(), next_poll: 0, error: None, fails: 0 };
+                let mut etags = checked.unwrap_or(std::mem::take(&mut target.etags));
+                if let Some(parts) = key.strip_prefix("github/").map(|k| k.split('/').collect::<Vec<_>>()) {
+                    let paths = github::checks(&parts, &poll.state);
+                    etags.retain(|path, _| paths.contains(path));
+                }
+                *target = Target {
+                    state: Some(poll.state),
+                    summary: poll.summary,
+                    last_poll: now(),
+                    next_poll: 0,
+                    error: None,
+                    fails: 0,
+                    etags,
+                    read_at: now(),
+                };
                 let interval = every(&kept, key);
                 kept.targets.get_mut(key).unwrap().next_poll = now() + interval;
             }
@@ -612,10 +660,70 @@ impl Following {
         // Written only when what it found is new: the times of the polls aren't worth the file (hundreds of kilobytes
         // with many things followed) after every poll of every one; lost with a restart, it's polled again, early.
         let target = &kept.targets[key];
-        if (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails) != before {
+        if (target.state.clone(), target.summary.clone(), target.error.clone(), target.fails, target.etags.clone()) != before {
             self.keep(&kept)
         }
         (events, trouble)
+    }
+
+    /// GitHub's pull requests in `due` are checked first (github::checks), conditional reads that are free while nothing
+    /// changed: those unchanged are polled without a read and left out; the rest are read, the ETags found kept with
+    /// that read. A check gh can't make reads, as before checks; a 304 is never a failure.
+    async fn unchanged(&self, due: Vec<String>) -> Vec<String> {
+        let checks: Vec<(String, String, Option<String>)> = {
+            let kept = self.kept.lock().unwrap();
+            due.iter()
+                .filter(|key| Source::of(key) == Ok(Source::GitHub))
+                .filter_map(|key| kept.targets.get(key).and_then(|t| t.state.as_ref().map(|s| (key, t, s))))
+                .flat_map(|(key, target, state)| {
+                    let parts: Vec<&str> = key.split('/').skip(1).collect();
+                    github::checks(&parts, state).into_iter().map(|path| (key.clone(), path.clone(), target.etags.get(&path).cloned()))
+                })
+                .collect()
+        };
+        let mut answers = vec![];
+        // ponytail: a few at a time, so a restart's hundreds don't start as many gh at once.
+        for chunk in checks.chunks(CHECKS_AT_ONCE) {
+            let running: Vec<_> = chunk
+                .iter()
+                .map(|(_, path, etag)| {
+                    let (fetcher, argv) = (self.fetcher.clone(), github::check_argv(path, etag.as_deref()));
+                    let argv = crate::adapter::on_login_path(&argv.iter().map(String::as_str).collect::<Vec<_>>());
+                    tokio::spawn(async move { fetcher.run(argv, None).await })
+                })
+                .collect();
+            for run in running {
+                answers.push(github::checked(run.await.unwrap_or_else(|e| Err(e.to_string()))));
+            }
+        }
+        let mut found: BTreeMap<String, (bool, BTreeMap<String, String>)> = BTreeMap::new();
+        for ((key, path, etag), answer) in checks.into_iter().zip(answers) {
+            let (same, etags) = found.entry(key).or_insert((true, BTreeMap::new()));
+            *same &= matches!(answer, Ok(None));
+            match answer {
+                // Not told, the last ETag still holds: what changed since it shows on the next check.
+                Ok(None) | Err(_) => _ = etag.map(|etag| etags.insert(path, etag)),
+                Ok(Some(etag)) => _ = etags.insert(path, etag),
+            }
+        }
+        let (now, full_every) = (now(), self.full_every.load(Ordering::Relaxed));
+        let mut kept = self.kept.lock().unwrap();
+        let mut checked = self.checked.lock().unwrap();
+        let mut skipped = HashSet::new();
+        for (key, (same, etags)) in found {
+            let Some(target) = kept.targets.get(&key) else { continue };
+            let state = target.state.as_ref().unwrap_or(&Value::Null);
+            let floor = state["state"] == "OPEN" && now - target.read_at >= full_every;
+            if same && target.fails == 0 && github::gated(state) && !floor {
+                let interval = every(&kept, &key);
+                let target = kept.targets.get_mut(&key).unwrap();
+                (target.last_poll, target.next_poll) = (now, now + interval);
+                skipped.insert(key);
+            } else {
+                checked.insert(key, etags);
+            }
+        }
+        due.into_iter().filter(|key| !skipped.contains(key)).collect()
     }
 
     async fn fetch(&self, source: Source, key: &str, state: Option<&Value>) -> Result<Poll, String> {
@@ -625,10 +733,19 @@ impl Following {
                 let argv = crate::adapter::on_login_path(&github::argv(&parts).iter().map(String::as_str).collect::<Vec<_>>());
                 let reply: Value =
                     serde_json::from_str(&self.fetcher.run(argv, None).await?).map_err(|e| format!("gh answered oddly: {e}"))?;
+                self.hold_github(&reply);
                 github::poll(&reply, state, key)
             }
             Source::Linear => linear::poll(&self.integrations.linear(linear::query(parts[0])).await?, state, key),
             Source::Slack => slack::poll(&self.integrations, &parts, state).await,
+        }
+    }
+
+    /// Down to the agents' reserve of GitHub's points: no more reads until they reset.
+    fn hold_github(&self, reply: &Value) {
+        if let Some(until) = github::held_until(reply) {
+            eprintln!("zerod: following: GitHub's GraphQL points are down to the reserve; reading again at {until}");
+            self.github_held.store(until, Ordering::Relaxed)
         }
     }
 
@@ -641,6 +758,7 @@ impl Following {
                 let argv = crate::adapter::on_login_path(&github::batch_argv(&parts).iter().map(String::as_str).collect::<Vec<_>>());
                 let reply: Value =
                     serde_json::from_str(&self.fetcher.run(argv, None).await?).map_err(|e| format!("gh answered oddly: {e}"))?;
+                self.hold_github(&reply);
                 github::split(&reply, keys.len())
             }
             Source::Linear => {
@@ -796,7 +914,8 @@ fn needs_user(error: &str) -> bool {
         "forbidden",
         "bad credentials",
         "not found",
-        "could not resolve",
+        // GitHub's not found ("Could not resolve to a PullRequest"); not "Could not resolve host", which is being offline.
+        "could not resolve to",
         "isn't connected",
         "auth login",
         "invalid_auth",

@@ -60,7 +60,7 @@ fn zero_tools() -> Vec<Value> {
                    "needs": string("What it needs from the user, in your words (\"check the bench tabs\"). Left out, it keeps what it was; empty takes it back."),
                    "pr": string("Its pull request, a link. Left out, kept; empty takes it back."),
                    "fields": {"type": "array", "items": {"type": "string"}, "description": "Columns of your own, each \"Name=value\" (\"Merge risk=Medium\"); \"Name=\" takes one back."}}}}),
-        json!({"name": "zero_done", "description": "Marks the task done, in two steps: called with what's done, it's refused with what done means and a token; if it is so (the user said it's done, or it's finished end to end: merged, deployed and checked), call again with confirm: the token, within 5 minutes. Unsure: ask: true asks the user.",
+        json!({"name": "zero_done", "description": "Marks the task done, in two steps: called with what's done, it's refused with what done means and a token; if it is so (the user said it's done, or it's finished end to end: merged, deployed and checked), call again with confirm: the token, within 5 minutes. Unsure: ask: true asks the user, and their answer decides: until they say Done, confirm is refused.",
                "inputSchema": {"type": "object", "required": ["text"], "properties": {
                    "text": string("What's done, one line."), "confirm": string("The token the first call gave."),
                    "ask": {"type": "boolean", "description": "Ask the user whether it's done instead; end your turn with [zero: asked <id>]."}}}}),

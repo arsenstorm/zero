@@ -14,10 +14,25 @@ struct Canned {
     answers: Mutex<Vec<Result<String, String>>>,
     asked: Mutex<Vec<Vec<String>>>,
     fed: Mutex<Vec<String>>,
+    /// GitHub's conditional checks (`gh api -i`), answered by path, apart from the reads: none canned, gh failed.
+    rest: Mutex<Vec<(String, Result<String, String>)>>,
+    /// The checks asked, as `path If-None-Match`.
+    checked: Mutex<Vec<String>>,
 }
 
 impl Fetcher for Canned {
     fn run(&self, argv: Vec<String>, stdin: Option<String>) -> zerod::inbox::Fut<'_, Result<String, String>> {
+        if argv.iter().any(|a| a == "-i") {
+            let path = argv.last().cloned().unwrap_or_default();
+            let tag = argv.iter().find_map(|a| a.strip_prefix("If-None-Match: ")).unwrap_or("");
+            self.checked.lock().unwrap().push(format!("{path} {tag}").trim().to_string());
+            let mut rest = self.rest.lock().unwrap();
+            let answer = match rest.iter().position(|(p, _)| path == *p) {
+                Some(i) => rest.remove(i).1,
+                None => Err("nothing canned".to_string()),
+            };
+            return Box::pin(async move { answer });
+        }
         self.asked.lock().unwrap().push(argv);
         self.fed.lock().unwrap().push(stdin.unwrap_or_default());
         let answer = {
@@ -226,6 +241,23 @@ async fn polling_trouble_is_zeros_own_and_never_wakes_a_follower() {
     tick().await;
     assert_eq!(following.list(None)[0].error, None);
     assert!(told.lock().unwrap().is_empty(), "a network failure and its end aren't news: {:?}", told.lock().unwrap());
+}
+
+/// Offline (no name resolves), every follow fails at once: that's the Mac's network, not a follow to fix, and no task
+/// is told of it.
+#[tokio::test]
+async fn being_offline_is_no_follows_trouble() {
+    let offline = || Err("curl: (6) Could not resolve host: api.github.com");
+    let fetcher = canned(vec![Ok(pr(vec![], vec![], vec![], "aaa", "OPEN")), offline(), offline(), offline(), offline()]);
+    let following = open("following-offline", fetcher);
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    let told = Arc::new(Mutex::new(vec![]));
+    for _ in 0..4 {
+        following.hurry();
+        following.tick(|_| true, |_| false, |_: &str, w: &str, _| told.lock().unwrap().push(w.to_string())).await;
+    }
+    assert!(following.list(None)[0].error.as_deref().is_some_and(|e| e.contains("resolve host")), "kept, for the app");
+    assert!(told.lock().unwrap().is_empty(), "{:?}", told.lock().unwrap());
 }
 
 #[tokio::test]
@@ -472,6 +504,23 @@ async fn a_merged_pull_requests_deployments_are_followed_until_they_settle() {
     assert!(words[2].0.contains("deployed to production") && words[2].0.contains("deploy to staging failed"), "{}", words[2].0);
     assert!(words[2].0.contains("https://ci/deploys/8"), "{}", words[2].0);
     assert!(following.finished("s1"), "its deploys settled: nothing more to come");
+
+    // A later deploy of a merged pull request moves nothing checked: one that deploys is read whatever its checks say.
+    let fetcher = canned(vec![
+        Ok(merged(vec![("7", "production", "SUCCESS")], 3)),
+        Ok(merged(vec![("7", "production", "SUCCESS")], 3)),
+        Ok(merged(vec![("7", "production", "SUCCESS"), ("9", "canary", "SUCCESS")], 3)),
+    ]);
+    let following = open("following-deployments-later", fetcher.clone());
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    let told: Told = Arc::new(Mutex::new(vec![]));
+    for answer in [fresh("i1"), same()] {
+        fetcher.rest.lock().unwrap().push(("repos/o/r/issues/42".into(), answer));
+        following.hurry();
+        following.tick(|_| true, |_| false, listener(&told)).await;
+    }
+    assert_eq!(fetcher.checked.lock().unwrap().as_slice(), ["repos/o/r/issues/42", "repos/o/r/issues/42 \"i1\""]);
+    assert!(told.lock().unwrap().iter().any(|(_, w, _)| w.contains("deployed to canary")), "{told:?}");
 
     // No deployments in the repository: merged is the end. None in two hours: so is that.
     let none = zerod::following::github::snapshot(&merged(vec![], 0)["data"]).unwrap();
@@ -846,6 +895,233 @@ async fn a_rate_limited_batch_isnt_read_one_by_one() {
     assert!(following.list(None).iter().all(|f| f.error.is_none()));
 }
 
+/// GitHub's GraphQL points are the account's, shared with every `gh pr` command the user's agents run: with fewer than
+/// the reserve left, follows wait for the reset rather than take the last of them. The query asks for what's left.
+#[tokio::test]
+async fn follows_leave_githubs_last_points_to_the_agents() {
+    let open_pr = || pr(vec![], vec![], vec![], "aaa", "OPEN");
+    let mut low = prs(vec![open_pr(), open_pr()]);
+    low["data"]["rateLimit"] = json!({"remaining": 400, "resetAt": "2099-01-01T00:00:00Z"});
+    let fetcher = canned(vec![Ok(open_pr()), Ok(open_pr()), Ok(low)]);
+    let following = open("following-reserve", fetcher.clone());
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    following.follow("s1", "github/o/r/43", false, vec![]).await.unwrap();
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    let asked = fetcher.asked.lock().unwrap().clone();
+    assert!(asked[2].join(" ").contains("rateLimit { remaining resetAt }"), "{:?}", asked[2]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3, "held until the reset");
+}
+
+/// What `gh api -i --silent` prints of a 200: its headers, the ETag among them.
+fn fresh(tag: &str) -> Result<String, String> {
+    Ok(format!("HTTP/2.0 200 OK\r\nCache-Control: private, max-age=60\r\nEtag: \"{tag}\"\r\nX-Ratelimit-Used: 7\r\n\r\n"))
+}
+
+/// What gh does with a 304: fails, saying so.
+fn same() -> Result<String, String> {
+    Err("gh: HTTP 304".into())
+}
+
+/// The checks of pull request 42 at `head` (its issue, its head's check runs and statuses), each answered.
+fn checks(fetcher: &Canned, head: &str, [issue, runs, statuses]: [Result<String, String>; 3]) {
+    fetcher.rest.lock().unwrap().extend([
+        ("repos/o/r/issues/42".to_string(), issue),
+        (format!("repos/o/r/commits/{head}/check-runs?per_page=100"), runs),
+        (format!("repos/o/r/commits/{head}/status"), statuses),
+    ]);
+}
+
+fn checked(fetcher: &Canned) -> Vec<String> {
+    let mut checked = std::mem::take(&mut *fetcher.checked.lock().unwrap());
+    checked.sort();
+    checked
+}
+
+/// Followed, then checked once with nothing known: the checks' ETags are kept with the reading.
+async fn known(following: &Following, fetcher: &Canned, head: &str) {
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    checks(fetcher, head, [fresh("i1"), fresh("c1"), fresh("s1")]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 2, "nothing known yet: read");
+    checked(fetcher);
+}
+
+/// A pull request is checked before it's read, with conditional REST reads GitHub answers 304 for free when nothing
+/// changed: its issue (moved by its state, words, labels, reviewers, comments, reviews and pushes), its head's check
+/// runs and statuses (moved by CI alone). Unchanged, it isn't read: GraphQL's points are spent only on what changed.
+#[tokio::test]
+async fn a_pull_request_unchanged_since_its_checks_isnt_read() {
+    let green = || pr(vec![], vec![], vec![("specs", "SUCCESS")], "aaa", "OPEN");
+    let fetcher = canned(vec![Ok(green()), Ok(green())]);
+    let following = open("following-etags", fetcher.clone());
+    following.follow("s1", "github/o/r/42", false, vec![]).await.unwrap();
+    checks(&fetcher, "aaa", [fresh("i1"), fresh("c1"), fresh("s1")]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(
+        checked(&fetcher),
+        ["repos/o/r/commits/aaa/check-runs?per_page=100", "repos/o/r/commits/aaa/status", "repos/o/r/issues/42"],
+        "nothing known: asked plainly"
+    );
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 2, "and read");
+    checks(&fetcher, "aaa", [same(), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(
+        checked(&fetcher),
+        ["repos/o/r/commits/aaa/check-runs?per_page=100 \"c1\"", "repos/o/r/commits/aaa/status \"s1\"", "repos/o/r/issues/42 \"i1\""]
+    );
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 2, "unchanged: not read");
+    let followed = following.list(Some("s1")).remove(0);
+    assert!(followed.error.is_none() && followed.next_poll > followed.last_poll && followed.last_poll > 0, "{followed:?}");
+}
+
+/// Whatever moved one of its ETags reads it, and its events are told: a comment through its issue, CI through its
+/// check runs alone (a task waiting on CI waits on that).
+#[tokio::test]
+async fn a_change_to_its_issue_or_its_checks_reads_it() {
+    let green = || pr(vec![], vec![], vec![("specs", "SUCCESS")], "aaa", "OPEN");
+    let commented = || pr(vec![("c1", "sam", "Looks off")], vec![], vec![("specs", "SUCCESS")], "aaa", "OPEN");
+    let failed = pr(vec![("c1", "sam", "Looks off")], vec![], vec![("specs", "FAILURE")], "aaa", "OPEN");
+    let fetcher = canned(vec![Ok(green()), Ok(green()), Ok(commented()), Ok(failed)]);
+    let following = open("following-etags-changed", fetcher.clone());
+    known(&following, &fetcher, "aaa").await;
+    let told = Mutex::new(vec![]);
+    let tell = |_: &str, words: &str, _| told.lock().unwrap().push(words.to_string());
+    checks(&fetcher, "aaa", [fresh("i2"), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, tell).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3);
+    assert!(told.lock().unwrap().concat().contains("comment by @sam"), "{told:?}");
+    checks(&fetcher, "aaa", [same(), fresh("c2"), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, tell).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 4, "CI moved only the check runs");
+    assert!(told.lock().unwrap().concat().contains("check failed: specs"), "{told:?}");
+    assert_eq!(
+        checked(&fetcher),
+        [
+            "repos/o/r/commits/aaa/check-runs?per_page=100 \"c1\"",
+            "repos/o/r/commits/aaa/check-runs?per_page=100 \"c1\"",
+            "repos/o/r/commits/aaa/status \"s1\"",
+            "repos/o/r/commits/aaa/status \"s1\"",
+            "repos/o/r/issues/42 \"i1\"",
+            "repos/o/r/issues/42 \"i2\""
+        ],
+        "each read keeps the ETags checked before it"
+    );
+    checks(&fetcher, "aaa", [same(), same(), fresh("s2")]);
+    following.hurry();
+    following.tick(|_| true, |_| false, tell).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 5, "a status moved only the statuses");
+}
+
+/// A push moves its issue; the new head's checks have no ETags yet, so they're asked plainly and it's read again,
+/// and the old head's are dropped.
+#[tokio::test]
+async fn a_push_checks_the_new_heads_ci() {
+    let green = |head| pr(vec![], vec![], vec![("specs", "SUCCESS")], head, "OPEN");
+    let fetcher = canned(vec![Ok(green("aaa")), Ok(green("aaa")), Ok(green("bbb")), Ok(green("bbb"))]);
+    let following = open("following-etags-push", fetcher.clone());
+    known(&following, &fetcher, "aaa").await;
+    let told = Mutex::new(vec![]);
+    let tell = |_: &str, words: &str, _| told.lock().unwrap().push(words.to_string());
+    checks(&fetcher, "aaa", [fresh("i2"), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, tell).await;
+    assert!(told.lock().unwrap().concat().contains("1 new commit"), "{told:?}");
+    checked(&fetcher);
+    checks(&fetcher, "bbb", [same(), fresh("c3"), fresh("s3")]);
+    following.hurry();
+    following.tick(|_| true, |_| false, tell).await;
+    assert_eq!(
+        checked(&fetcher),
+        ["repos/o/r/commits/bbb/check-runs?per_page=100", "repos/o/r/commits/bbb/status", "repos/o/r/issues/42 \"i2\""]
+    );
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 4, "read with the new head's ETags");
+    checks(&fetcher, "bbb", [same(), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, tell).await;
+    assert_eq!(checked(&fetcher).len(), 3, "the old head's ETags dropped: {:?}", fetcher.rest.lock().unwrap());
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 4, "then unchanged");
+}
+
+/// A read that fails keeps the ETags it had, so the change is still seen on the next check; a check gh can't make
+/// (offline, rate-limited) reads, and neither is a failure of the follow.
+#[tokio::test]
+async fn a_read_that_fails_keeps_its_etags_and_a_failed_check_reads() {
+    let green = || pr(vec![], vec![], vec![("specs", "SUCCESS")], "aaa", "OPEN");
+    let fetcher = canned(vec![Ok(green()), Ok(green()), Err("connection reset"), Ok(green())]);
+    let following = open("following-etags-failed", fetcher.clone());
+    known(&following, &fetcher, "aaa").await;
+    checks(&fetcher, "aaa", [fresh("i2"), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3);
+    assert!(checked(&fetcher).contains(&"repos/o/r/issues/42 \"i1\"".to_string()));
+    checks(&fetcher, "aaa", [Err("HTTP 403: API rate limit exceeded".into()), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 4, "can't tell: read");
+    assert!(checked(&fetcher).contains(&"repos/o/r/issues/42 \"i1\"".to_string()), "the failed read kept i1");
+    assert!(following.list(None)[0].error.is_none());
+}
+
+/// zerod restarting keeps what it knew: the ETags and when each was last read, so its pull requests aren't all read
+/// again.
+#[tokio::test]
+async fn etags_outlast_a_restart() {
+    let green = || pr(vec![], vec![], vec![("specs", "SUCCESS")], "aaa", "OPEN");
+    let home = temp_dir("following-etags-restart");
+    let fetcher = canned(vec![Ok(green()), Ok(green())]);
+    let following = Following::open(&home, fetcher.clone(), Integrations::open(&home, fetcher.clone()));
+    known(&following, &fetcher, "aaa").await;
+    let again = canned(vec![]);
+    let following = Following::open(&home, again.clone(), Integrations::open(&home, again.clone()));
+    checks(&again, "aaa", [same(), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(checked(&again).len(), 3);
+    assert!(again.asked.lock().unwrap().is_empty(), "not read again");
+}
+
+/// What its ETags can't tell is read anyway: CI under way (a result never waits on a check), and every open pull
+/// request now and then (a thread resolved, a comment edited, conflicts with its base move none of them).
+#[tokio::test]
+async fn ci_under_way_and_the_floor_read_whatever_the_checks_say() {
+    let running = || pr(vec![], vec![], vec![], "aaa", "OPEN");
+    let fetcher = canned(vec![Ok(running()), Ok(running()), Ok(running())]);
+    let following = open("following-etags-running", fetcher.clone());
+    known(&following, &fetcher, "aaa").await;
+    checks(&fetcher, "aaa", [same(), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3, "CI pending: read");
+
+    let failing = || pr(vec![], vec![], vec![("specs", "FAILURE"), ("e2e", "IN_PROGRESS")], "aaa", "OPEN");
+    let fetcher = canned(vec![Ok(failing()), Ok(failing()), Ok(failing())]);
+    let following = open("following-etags-failing", fetcher.clone());
+    known(&following, &fetcher, "aaa").await;
+    checks(&fetcher, "aaa", [same(), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3, "failed, a check still running: read");
+
+    let green = || pr(vec![], vec![], vec![("specs", "SUCCESS")], "aaa", "OPEN");
+    let fetcher = canned(vec![Ok(green()), Ok(green()), Ok(green())]);
+    let following = open("following-etags-floor", fetcher.clone());
+    known(&following, &fetcher, "aaa").await;
+    following.set_full_every(0);
+    checks(&fetcher, "aaa", [same(), same(), same()]);
+    following.hurry();
+    following.tick(|_| true, |_| false, |_, _, _| {}).await;
+    assert_eq!(fetcher.asked.lock().unwrap().len(), 3, "its floor has come: read");
+}
+
 /// Linear issues due together are read in one request, with their comments as one alone is.
 #[tokio::test]
 async fn linear_issues_due_together_are_read_in_one_request() {
@@ -948,4 +1224,22 @@ async fn an_issue_with_many_comments_is_read_on_its_own_in_full() {
     assert!(fed[1].contains("comments(first: 250)") && fed[1].contains("ENG-1"), "{}", fed[1]);
     let words = told.lock().unwrap().iter().map(|t| t.1.clone()).collect::<Vec<_>>().join("\n");
     assert!(words.contains("Newest") && words.contains("New") && !words.contains("deleted"), "{words}");
+}
+
+/// A comment Zero posted for a task (an approved `zero linear`) comes back from Linear as the task's own: it doesn't
+/// wake the task as news.
+#[tokio::test]
+async fn a_comment_zero_wrote_for_a_task_comes_back_as_its_own() {
+    let following = open("following-wrote", canned(vec![]));
+    following.wrote("s1", vec![own::linear_comment("ENG-1", "🤖 Fixed by [#14017](https://x/14017).\n\n- one")]);
+    let event = Event {
+        topic: "linear/ENG-1".into(),
+        kind: "comment".into(),
+        // As Linear keeps it: the Markdown, its list written its own way.
+        body: "🤖 Fixed by [#14017](https://x/14017).\n\n* one".into(),
+        ..Default::default()
+    };
+    assert!(following.own("s1", &event));
+    assert!(!following.own("s2", &event), "another task's news still");
+    assert!(!following.own("s1", &Event { body: "Something else".into(), ..event.clone() }));
 }

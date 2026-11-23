@@ -178,8 +178,10 @@ async fn a_sign_in_that_fails_takes_its_ask_back_and_isnt_tried_again_unasked() 
     ends.lock().unwrap().remove(0).send(Err("the sign-in wasn't finished".into())).unwrap();
     until(|| inbox.ask(&id).is_some_and(|a| a.state == AskState::Expired)).await;
     assert_eq!(inbox.ask(&id).unwrap().answer.as_deref(), Some("Couldn't sign in: the sign-in wasn't finished"));
-    until(|| told.lock().unwrap().len() == 2).await;
-    assert_eq!(told.lock().unwrap()[1], "Failed(\"the sign-in wasn't finished\")");
+    // The tasks aren't told: every task's CLI reports the server, used or not, and the ask said it to the user.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let heard = told.lock().unwrap().clone();
+    assert_eq!(heard.len(), 1, "its link alone: {heard:?}");
     auth.wanted(&a, job(&a, "linear"));
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(runs.lock().unwrap().len(), 1, "once per Zero session: Settings' Sign in tries again");
