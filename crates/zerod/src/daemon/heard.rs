@@ -31,9 +31,10 @@ impl Daemon {
             return false;
         }
         if !reported && let Some(signin) = conversation.signin.as_deref() {
-            self.signins.limit_said(signin, now());
+            self.signins.limit_said(signin, now(), conversation.model.as_deref());
         }
-        let Some(next) = self.signins.choose(conversation.provider, now(), conversation.signin.as_deref()) else { return false };
+        let model = conversation.model.as_deref();
+        let Some(next) = self.signins.choose_for(conversation.provider, now(), conversation.signin.as_deref(), model) else { return false };
         self.switching.lock().unwrap().insert(conversation.id.clone());
         let carry_on = match answered {
             Some(answer) if crate::board::ending(answer).is_some_and(|e| e != "working") => None,
@@ -249,9 +250,10 @@ impl Daemon {
         };
         // Nor the turn it was just sent back from (no Zero ending): its lead hears the turn as it ends properly, once.
         let sent_back = self.sent_back.lock().unwrap().contains(id);
-        // What its CLI says of its account's usage is the account's, for choosing accounts by.
+        // What its CLI says of its account's usage is the account's, for choosing accounts by: a limit it hit, its
+        // model's alone (a provider may limit one model and not the others).
         if let (Some(signin), Some(usage)) = (&conversation.signin, &conversation.usage) {
-            self.signins.record_usage(signin, usage)
+            self.signins.record_usage(signin, &crate::model::Usage::heard_on(usage, conversation.model.as_deref()))
         }
         // Carried on as another account (at a limit, refused its model): it hasn't stopped, so its lead hears
         // nothing, nor of its process stopped for the switch. Only with no account left is the limit news.

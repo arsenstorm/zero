@@ -781,6 +781,7 @@ fn usage(info: &Value) -> crate::model::Usage {
                     used: window["utilization"].as_f64().unwrap_or(0.0),
                     resets_at: window["resetsAt"].as_i64(),
                     read_at: None,
+                    model: None,
                 })
                 .collect()
         })
@@ -789,7 +790,7 @@ fn usage(info: &Value) -> crate::model::Usage {
     if limited && let Some(full) = info["rateLimitType"].as_str().map(name) {
         match windows.iter_mut().find(|w| w.name == full) {
             Some(window) => window.used = window.used.max(1.0),
-            None => windows.push(crate::model::UsageWindow { name: full, used: 1.0, resets_at, read_at: None }),
+            None => windows.push(crate::model::UsageWindow { name: full, used: 1.0, resets_at, read_at: None, model: None }),
         }
     }
     crate::model::Usage { limited, resets_at, windows, ..Default::default() }

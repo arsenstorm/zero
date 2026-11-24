@@ -1023,6 +1023,7 @@ async fn limited_with_none_free(w: &World) -> (String, zerod::signins::SignIn) {
             used: 0.1,
             resets_at: Some(zerod::now() + 86_400),
             read_at: Some(zerod::now()),
+            model: None,
         }],
         ..Default::default()
     };

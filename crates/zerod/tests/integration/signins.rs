@@ -139,8 +139,12 @@ fn a_claude_account_has_a_folder_of_its_own_sharing_everything_but_its_sign_in()
 }
 
 fn usage(five: f64, seven: f64, seven_resets: i64) -> zerod::model::Usage {
-    let window =
-        |name: &str, used: f64, resets: i64| zerod::model::UsageWindow { name: name.into(), used, resets_at: Some(resets), read_at: None };
+    let window = |name: &str, used: f64, resets: i64| zerod::model::UsageWindow {
+        name: name.into(),
+        used,
+        resets_at: Some(resets),
+        ..Default::default()
+    };
     zerod::model::Usage {
         limited: five >= 1.0,
         resets_at: (five >= 1.0).then_some(NOW + 3_600),
@@ -188,7 +192,7 @@ fn a_report_without_figures_keeps_the_accounts_windows() {
     store.record_usage(&account.id, &usage(0.4, 0.7, NOW + DAY));
     store.record_usage(&account.id, &zerod::model::Usage { limited: false, resets_at: None, windows: vec![], ..Default::default() });
     assert_eq!(store.usage(&account.id).unwrap().windows.len(), 2, "kept");
-    let week = zerod::model::UsageWindow { name: "7 days".into(), used: 0.8, resets_at: Some(NOW + DAY), read_at: None };
+    let week = zerod::model::UsageWindow { name: "7 days".into(), used: 0.8, resets_at: Some(NOW + DAY), read_at: None, model: None };
     store.record_usage(&account.id, &zerod::model::Usage { limited: false, resets_at: None, windows: vec![week], ..Default::default() });
     let now = store.usage(&account.id).unwrap();
     let used = |name: &str| now.windows.iter().find(|w| w.name == name).map(|w| w.used);
@@ -202,7 +206,7 @@ fn a_read_of_the_plan_drops_the_windows_it_no_longer_has() {
     let store = SignIns::open(&temp_dir("signins-replace"));
     let account = store.save(signin(Provider::Claude, Kind::ClaudeHome, "a@example.com")).unwrap();
     store.record_usage(&account.id, &usage(0.0, 0.5, NOW + DAY));
-    let week = zerod::model::UsageWindow { name: "7 days".into(), used: 0.56, resets_at: Some(NOW + DAY), read_at: None };
+    let week = zerod::model::UsageWindow { name: "7 days".into(), used: 0.56, resets_at: Some(NOW + DAY), read_at: None, model: None };
     store.replace_usage(
         &account.id,
         &zerod::model::Usage { limited: false, resets_at: None, windows: vec![week.clone()], ..Default::default() },
@@ -227,7 +231,13 @@ fn an_old_task_report_cannot_restore_a_limit_a_newer_plan_read_removed() {
     }
     store.record_usage(&account.id, &old);
     let plan = zerod::model::Usage {
-        windows: vec![zerod::model::UsageWindow { name: "7 days".into(), used: 0.03, resets_at: Some(NOW + DAY), read_at: Some(NOW + 60) }],
+        windows: vec![zerod::model::UsageWindow {
+            name: "7 days".into(),
+            used: 0.03,
+            resets_at: Some(NOW + DAY),
+            read_at: Some(NOW + 60),
+            model: None,
+        }],
         ..Default::default()
     };
     store.replace_usage(&account.id, &plan);
@@ -346,6 +356,58 @@ fn an_account_refused_a_model_isnt_chosen_for_it() {
     assert_eq!(again.refused(&plenty.id), ["claude-mythos-5-2"]);
 }
 
+/// A limit its provider sets one model (a week of Fable used up) stops that model on the account, not the others.
+#[test]
+fn a_limit_on_one_model_leaves_the_account_free_for_the_others() {
+    let store = SignIns::open(&temp_dir("signins-model-limit"));
+    let only = store.save(signin(Provider::Claude, Kind::ClaudeHome, "only@example.com")).unwrap();
+    let mut read = usage(0.1, 0.7, NOW + 5 * DAY);
+    read.windows.push(zerod::model::UsageWindow {
+        name: "7 days · Fable".into(),
+        used: 1.0,
+        resets_at: Some(NOW + 5 * DAY),
+        model: Some("fable".into()),
+        ..Default::default()
+    });
+    store.record_usage(&only.id, &read);
+    let chosen = |model: Option<&str>| store.choose_for(Provider::Claude, NOW, None, model).map(|s| s.label);
+    assert_eq!(chosen(Some("claude-fable-5-2")), None, "Fable is used up");
+    assert_eq!(chosen(Some("fable")), None);
+    assert_eq!(chosen(Some("claude-opus-5-5")).as_deref(), Some("only@example.com"), "Opus isn't");
+    assert_eq!(chosen(None).as_deref(), Some("only@example.com"));
+}
+
+/// What a task's CLI says of its account's usage, on `model`: a window it says is full while it was let through is
+/// another model's, and nothing to stop this one; a refusal is this model's alone.
+#[test]
+fn a_tasks_report_of_its_accounts_usage_is_its_models() {
+    let window =
+        |name: &str, used: f64| zerod::model::UsageWindow { name: name.into(), used, resets_at: Some(NOW + DAY), ..Default::default() };
+    let allowed =
+        zerod::model::Usage { windows: vec![window("7 days", 0.7), window("seven day overage included", 1.0)], ..Default::default() };
+    let heard = zerod::model::Usage::heard_on(&allowed, Some("claude-opus-5-5"));
+    assert_eq!(heard.windows, [window("7 days", 0.7)], "the full one isn't Opus's");
+    assert!(!heard.limited);
+
+    let refused = zerod::model::Usage {
+        limited: true,
+        resets_at: Some(NOW + 3_600),
+        windows: vec![window("5 hours", 1.0), window("7 days", 0.7)],
+        ..Default::default()
+    };
+    let heard = zerod::model::Usage::heard_on(&refused, Some("claude-fable-5-2"));
+    assert!(!heard.limited, "not the whole account");
+    let full = zerod::model::UsageWindow { name: "5 hours · Fable".into(), model: Some("fable".into()), ..window("5 hours", 1.0) };
+    assert_eq!(heard.windows, [full, window("7 days", 0.7)]);
+    // Refused with no window named: its model is out until the reset it said.
+    let bare = zerod::model::Usage { limited: true, resets_at: Some(NOW + 3_600), ..Default::default() };
+    let heard = zerod::model::Usage::heard_on(&bare, Some("fable"));
+    assert_eq!(heard.windows[0].model.as_deref(), Some("fable"));
+    assert_eq!((heard.windows[0].used, heard.windows[0].resets_at), (1.0, Some(NOW + 3_600)));
+    // Its model not known: the account's, as before.
+    assert_eq!(zerod::model::Usage::heard_on(&refused, None), refused);
+}
+
 #[test]
 fn a_model_refused_is_told_from_a_busy_one() {
     use zerod::signins::refuses_model;
@@ -406,7 +468,8 @@ fn a_claude_account_switched_to_a_token_keeps_its_id_and_uses_the_users_own_fold
 #[test]
 fn usage_is_read_every_quarter_hour_just_after_a_reset_and_less_often_while_reads_fail() {
     use zerod::model::{Usage, UsageWindow};
-    let window = |used: f64, resets: i64| UsageWindow { name: "5 hours".into(), used, resets_at: Some(resets), read_at: Some(NOW) };
+    let window =
+        |used: f64, resets: i64| UsageWindow { name: "5 hours".into(), used, resets_at: Some(resets), read_at: Some(NOW), model: None };
     let read = Usage { windows: vec![window(0.2, NOW + 3_600)], ..Default::default() };
     assert_eq!(next_read(NOW, Some(&read), 0), NOW + 15 * 60);
     let resetting = Usage { windows: vec![window(0.9, NOW + 300)], ..Default::default() };

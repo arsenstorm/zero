@@ -161,11 +161,30 @@ fn plan_usage(limits: &serde_json::Value) -> crate::model::Usage {
                 used: window["utilization"].as_f64()? / 100.0,
                 resets_at: window["resets_at"].as_str().and_then(crate::ask::Time::parse).map(|t| t.0),
                 read_at: Some(crate::now()),
+                model: None,
             })
         })
         .collect();
     let full = windows.iter().find(|w| w.used >= 1.0);
-    crate::model::Usage { limited: full.is_some(), resets_at: full.and_then(|w| w.resets_at), windows, ..Default::default() }
+    let (limited, resets_at) = (full.is_some(), full.and_then(|w| w.resets_at));
+    // And the limits the plan sets one model (`limits`, scoped to it): that model's windows, for it alone.
+    let mut windows = windows;
+    for limit in limits["limits"].as_array().into_iter().flatten() {
+        let Some(model) = limit["scope"]["model"]["display_name"].as_str().filter(|m| !m.is_empty()) else { continue };
+        let period = match limit["group"].as_str() {
+            Some("weekly") => "7 days".to_string(),
+            Some("five_hour" | "session") => "5 hours".to_string(),
+            other => other.unwrap_or("limit").replace('_', " "),
+        };
+        windows.push(crate::model::UsageWindow {
+            name: format!("{period} · {model}"),
+            used: limit["percent"].as_f64().unwrap_or(0.0) / 100.0,
+            resets_at: limit["resets_at"].as_str().and_then(crate::ask::Time::parse).map(|t| t.0),
+            read_at: Some(crate::now()),
+            model: Some(crate::model::family(model)),
+        })
+    }
+    crate::model::Usage { limited, resets_at, windows, ..Default::default() }
 }
 
 /// The first web address in a line of a terminal's output, its control sequences and carriage returns left behind.

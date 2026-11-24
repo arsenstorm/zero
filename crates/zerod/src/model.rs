@@ -489,6 +489,48 @@ pub struct UsageWindow {
     /// When its CLI said this figure (Unix seconds): how old what's shown is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_at: Option<i64>,
+    /// The model it's a limit of (its family, "fable"), when the provider sets that model one of its own; none, the
+    /// account's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+impl UsageWindow {
+    /// Whether it stops a task on `model` (none: the CLI's default): the account's windows stop every model.
+    pub fn stops(&self, model: Option<&str>) -> bool {
+        self.model.as_deref().is_none_or(|own| model.is_some_and(|m| family(m) == own))
+    }
+}
+
+/// A model's family, as a provider names its limits: "claude-fable-5-2", "fable[1m]" and "Fable" are "fable".
+pub fn family(model: &str) -> String {
+    let model = model.to_lowercase();
+    model.strip_prefix("claude-").unwrap_or(&model).chars().take_while(|c| c.is_ascii_alphabetic()).collect()
+}
+
+impl Usage {
+    /// What a task's CLI said of its account's usage, as the task runs on `model`. A window it said is full while it
+    /// let the task through is another model's (a limit of the provider's for one model), nothing to stop this one;
+    /// a refusal (full windows, or none named) is this model's alone until its reset. Its model not known, the
+    /// account's, as said.
+    pub fn heard_on(said: &Usage, model: Option<&str>) -> Usage {
+        let Some(model) = model.map(family).filter(|m| !m.is_empty()) else { return said.clone() };
+        let title = |name: &str| format!("{name} · {}{}", model[..1].to_uppercase(), &model[1..]);
+        let mut windows: Vec<UsageWindow> = vec![];
+        for window in &said.windows {
+            match (window.used >= 1.0, said.limited) {
+                (false, _) => windows.push(window.clone()),
+                (true, true) => windows.push(UsageWindow { name: title(&window.name), model: Some(model.clone()), ..window.clone() }),
+                (true, false) => {}
+            }
+        }
+        if said.limited && !windows.iter().any(|w| w.model.is_some()) {
+            let limit =
+                UsageWindow { name: title("limit"), used: 1.0, resets_at: said.resets_at, read_at: None, model: Some(model.clone()) };
+            windows.insert(0, limit)
+        }
+        Usage { limited: false, resets_at: None, windows, ..said.clone() }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

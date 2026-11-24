@@ -306,6 +306,7 @@ pub fn usage(limits: &Value) -> crate::model::Usage {
                 used: window["usedPercent"].as_f64().unwrap_or(0.0) / 100.0,
                 resets_at: window["resetsAt"].as_i64(),
                 read_at: None,
+                model: None,
             })
         })
         .collect();

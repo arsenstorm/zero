@@ -47,6 +47,31 @@ async fn an_accounts_usage_is_asked_of_claude_code_without_a_turn() {
     assert_eq!(usage.resets_at, Some(1793973600));
 }
 
+/// A limit the plan sets one model (`limits`, scoped to it) is a window of that model's.
+#[tokio::test]
+async fn a_limit_on_one_model_is_that_models_window() {
+    let answer = serde_json::json!({
+        "type": "control_response", "response": {
+            "subtype": "success", "request_id": "usage", "response": {
+                "subscription_type": "max", "rate_limits_available": true,
+                "rate_limits": {
+                    "five_hour": null, "seven_day": {"utilization": 70, "resets_at": "2026-11-30T09:59:59+00:00"},
+                    "limits": [
+                        {"kind": "weekly_all", "group": "weekly", "percent": 70, "resets_at": "2026-11-30T09:59:59+00:00", "scope": null},
+                        {"kind": "weekly_scoped", "group": "weekly", "percent": 100, "resets_at": "2026-11-30T09:59:59+00:00",
+                         "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}}
+                    ]
+                }
+            }
+        }
+    });
+    let script = format!("read request; echo '{answer}'; sleep 5");
+    let usage = usage(&sh(&script), &[]).await.unwrap();
+    assert!(!usage.limited, "the account isn't");
+    let windows: Vec<_> = usage.windows.iter().map(|w| (w.name.as_str(), w.used, w.model.as_deref())).collect();
+    assert_eq!(windows, [("7 days", 0.7, None), ("7 days · Fable", 1.0, Some("fable"))]);
+}
+
 #[tokio::test]
 async fn a_weekly_only_plan_has_no_five_hour_limit() {
     let answer = serde_json::json!({

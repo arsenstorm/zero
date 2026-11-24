@@ -389,8 +389,9 @@ impl SignIns {
         if !kept.signins.iter().any(|s| s.id == id) || kept.usage.get(id) == Some(usage) || (read_nothing && known) {
             return;
         }
+        let full = |u: &crate::model::Usage| u.limited || u.windows.iter().any(|w| w.used >= 1.0);
         let verify_limit =
-            report && usage.limited && kept.usage.get(id).is_none_or(|before| !before.limited || before.resets_at != usage.resets_at);
+            report && full(usage) && kept.usage.get(id).is_none_or(|before| !full(before) || before.resets_at != usage.resets_at);
         kept.usage.insert(id.into(), usage.clone());
         let _ = self.persist(&kept);
         if verify_limit {
@@ -401,14 +402,25 @@ impl SignIns {
     /// Its usage, now known to be at a limit its CLI said in an error (no figures, no reset): kept as limited (an hour,
     /// until a read says otherwise) so it isn't chosen again at once, and read now for the real figures. False when it
     /// was already known to be.
-    pub fn limit_said(&self, id: &str, now: i64) -> bool {
+    /// On `model`, the limit is that model's (`Usage::heard_on`).
+    pub fn limit_said(&self, id: &str, now: i64, model: Option<&str>) -> bool {
         let mut usage = self.usage(id).unwrap_or_default();
-        if usage.limited && usage.resets_at.is_some_and(|at| at > now) {
+        let live = |at: Option<i64>| at.is_some_and(|at| at > now);
+        let known = (usage.limited && live(usage.resets_at))
+            || usage.windows.iter().any(|w| w.used >= 1.0 && live(w.resets_at) && w.model.is_some() && w.stops(model));
+        if known {
             return false;
         }
         // ponytail: a guessed hour; the read it wakes (or the account's next) corrects it.
-        usage.limited = true;
-        usage.resets_at = Some(now + 3600);
+        let said = crate::model::Usage { limited: true, resets_at: Some(now + 3600), ..Default::default() };
+        let heard = crate::model::Usage::heard_on(&said, model);
+        match heard.limited {
+            true => (usage.limited, usage.resets_at) = (true, heard.resets_at),
+            false => {
+                usage.windows.retain(|w| !heard.windows.iter().any(|h| h.name == w.name));
+                usage.windows.extend(heard.windows)
+            }
+        }
         self.record_usage(id, &usage);
         self.read_now.notify_one();
         true
@@ -461,12 +473,13 @@ impl SignIns {
             .filter_map(|(order, signin)| {
                 let usage = kept.usage.get(&signin.id);
                 let stopped = usage.is_some_and(|u| {
-                    (u.limited && u.resets_at.is_some_and(|at| at > now)) || u.windows.iter().any(|w| live(w) && w.used >= 1.0)
+                    (u.limited && u.resets_at.is_some_and(|at| at > now))
+                        || u.windows.iter().any(|w| live(w) && w.used >= 1.0 && w.stops(model))
                 });
                 if stopped {
                     return None;
                 }
-                let week = usage.and_then(|u| u.windows.iter().find(|w| w.name == "7 days")).filter(|w| live(w));
+                let week = usage.and_then(|u| u.windows.iter().find(|w| w.name == "7 days" && w.model.is_none())).filter(|w| live(w));
                 let left = week.map_or(1.0, |w| (1.0 - w.used).max(0.0));
                 Some((
                     left,

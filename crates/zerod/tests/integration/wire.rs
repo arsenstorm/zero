@@ -101,8 +101,8 @@ fn the_apps_attention_is_zerods() {
         limited: true,
         resets_at: Some(1793030000),
         windows: vec![
-            UsageWindow { name: "5 hours".into(), used: 1.0, resets_at: Some(1793030000), read_at: None },
-            UsageWindow { name: "7 days".into(), used: 0.4, resets_at: None, read_at: None },
+            UsageWindow { name: "5 hours".into(), used: 1.0, resets_at: Some(1793030000), read_at: None, model: None },
+            UsageWindow { name: "7 days".into(), used: 0.4, resets_at: None, read_at: None, model: None },
         ],
         ..Default::default()
     });
