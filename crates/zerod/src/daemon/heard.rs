@@ -135,6 +135,49 @@ impl Daemon {
         }
     }
 
+    /// The models a task at its model's limit on every account could carry on as now: those other tasks of its CLI run
+    /// on, of another family, with an account free for them.
+    // ponytail: the models tasks run on, not the CLI's whole list (an async read of it); read it if one's missed.
+    pub fn models_instead(&self, conversation: &Conversation) -> Vec<String> {
+        let own = conversation.model.as_deref().map(crate::model::family);
+        let mut models: Vec<String> = vec![];
+        for other in self.sessions().iter().map(|s| s.summary()).filter(|c| c.provider == conversation.provider) {
+            let Some(model) = other.model.filter(|m| Some(crate::model::family(m)) != own) else { continue };
+            if models.iter().any(|m| crate::model::family(m) == crate::model::family(&model)) {
+                continue;
+            }
+            if self.signins.choose_for(conversation.provider, now(), None, Some(&model)).is_some() {
+                models.push(model)
+            }
+        }
+        models
+    }
+
+    /// A task at its model's limit carried on as `model` (the user chose it), as an account free for it, its history
+    /// kept: started again on it and told to go on.
+    pub async fn carry_on_as(&self, id: &str, model: &str) -> Result<(), String> {
+        let session = self.session(id)?;
+        let conversation = session.summary();
+        let next = self
+            .signins
+            .choose_for(conversation.provider, now(), None, Some(model))
+            .ok_or_else(|| format!("No account has {} free", crate::model::pretty(model)))?;
+        self.take_offline(&session).await;
+        let thread = conversation.thread.clone().unwrap_or_default();
+        session.change(Change::Thread { thread, model: Some(model.into()), effort: None });
+        session.change(Change::Usage { usage: crate::model::Usage::default() });
+        session.change(Change::SignedIn { signin: Some(next.id) });
+        session.change(Change::Status { status: Status::Offline, turn: None, error: None });
+        session.change(Change::Failed { failure: None });
+        let words = format!(
+            "Your model's usage limit was reached on every account, so the user had Zero carry this task on as {}: carry on \
+             with what you were doing.",
+            crate::model::pretty(model)
+        );
+        self.tell(id, crate::model::from_line("zero", &words));
+        Ok(())
+    }
+
     fn after_reset(&self, conversation: &Conversation) {
         let Some(usage) = conversation.usage.clone().filter(|u| u.limited) else { return };
         let Some(at) = usage.resets_at else { return };
@@ -270,6 +313,9 @@ impl Daemon {
             Attention::Limited => {
                 self.switch_account(&conversation, answered) || {
                     self.after_reset(&conversation);
+                    if let Some(offer) = self.offer.get() {
+                        offer(&conversation)
+                    }
                     false
                 }
             }

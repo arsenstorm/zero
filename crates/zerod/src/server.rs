@@ -500,6 +500,57 @@ pub fn mcp_sign_ins(daemon: &Arc<Daemon>, integrations: &Arc<crate::integrations
     });
 }
 
+/// A task whose model is used up on every account, with another model free: the user is asked whether it carries on
+/// as that one (its history kept) or waits for the reset, once per limit; their choice carries it on.
+pub fn offer_models(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {
+    // The open offers: ask → its task and the models offered.
+    type Offers = std::sync::Mutex<std::collections::HashMap<String, (String, Vec<String>)>>;
+    let offers: Arc<Offers> = Arc::default();
+    let (weak, asks, made) = (Arc::downgrade(daemon), Arc::downgrade(inbox), offers.clone());
+    daemon.offer_models_with(Box::new(move |conversation| {
+        let (Some(daemon), Some(inbox)) = (weak.upgrade(), asks.upgrade()) else { return };
+        if made.lock().unwrap().values().any(|(id, _)| *id == conversation.id) {
+            return;
+        }
+        let models = daemon.models_instead(conversation);
+        if models.is_empty() {
+            return;
+        }
+        let label = crate::bridge::label(conversation);
+        let used = conversation.model.as_deref().map_or("Its model".to_string(), crate::model::pretty);
+        let reset = conversation
+            .usage
+            .as_ref()
+            .and_then(|u| u.resets_at)
+            .map_or(String::new(), |at| format!(" until {}", crate::ask::Time(at).iso()));
+        let agent = crate::bridge::identity(conversation, &crate::bridge::hostname());
+        let mut ask = crate::ask::Ask::new(crate::ask::AskKind::Approve, &format!("Carry {label} on with another model?"), agent, 0);
+        ask.body = format!(
+            "{used} is used up on every account{reset}. Zero can carry {label} on now as another model, its history kept, \
+             or it waits for the reset."
+        );
+        ask.options = models.iter().map(|m| crate::model::pretty(m)).chain(["Wait for the reset".to_string()]).collect();
+        let id = inbox.create(ask, false).id;
+        made.lock().unwrap().insert(id, (conversation.id.clone(), models));
+    }));
+    let (mut events, weak) = (inbox.subscribe(), Arc::downgrade(daemon));
+    tokio::spawn(async move {
+        loop {
+            let ask = match events.recv().await {
+                Ok(crate::inbox::InboxEvent::Ask(ask)) if ask.state.is_final() => ask,
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => return,
+            };
+            let Some((task, models)) = offers.lock().unwrap().remove(&ask.id) else { continue };
+            let chosen = ask.choice.filter(|_| ask.state == crate::ask::AskState::Answered).and_then(|i| models.get(i).cloned());
+            let (Some(model), Some(daemon)) = (chosen, weak.upgrade()) else { continue };
+            if let Err(error) = daemon.carry_on_as(&task, &model).await {
+                eprintln!("zerod: couldn't carry {task} on as {model}: {error}")
+            }
+        }
+    });
+}
+
 /// A task with a blocking ask open (`zero ask --block`) hears nothing else until it's answered: the inbox tells the
 /// daemon which tasks those are.
 pub fn hold_while_blocked(daemon: &Arc<Daemon>, inbox: &Arc<Inbox>) {

@@ -154,6 +154,7 @@ fn open_inbox(daemon: &Arc<zerod::daemon::Daemon>, args: &Args) -> Arc<zerod::in
     zerod::recap::start(daemon.clone(), inbox.clone());
     zerod::server::apply_mcp_asks(daemon, &inbox);
     zerod::server::hold_while_blocked(daemon, &inbox);
+    zerod::server::offer_models(daemon, &inbox);
     zerod::server::know_what_wakes(daemon, &inbox);
     zerod::server::know_endings(daemon, &inbox);
     zerod::server::know_workers(daemon, &inbox);

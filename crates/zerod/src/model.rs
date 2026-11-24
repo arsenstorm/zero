@@ -502,6 +502,16 @@ impl UsageWindow {
     }
 }
 
+/// A model as people say it: "claude-opus-5-5" is "Opus 5.5".
+pub fn pretty(model: &str) -> String {
+    let lower = model.to_lowercase();
+    let mut parts = lower.strip_prefix("claude-").unwrap_or(&lower).split('-');
+    let name = parts.next().unwrap_or_default();
+    let name = name.chars().next().map(|c| c.to_uppercase().collect::<String>() + &name[1..]).unwrap_or_default();
+    let version: Vec<&str> = parts.collect();
+    if version.is_empty() { name } else { format!("{name} {}", version.join(".")) }
+}
+
 /// A model's family, as a provider names its limits: "claude-fable-5-2", "fable[1m]" and "Fable" are "fable".
 pub fn family(model: &str) -> String {
     let model = model.to_lowercase();

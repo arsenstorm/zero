@@ -998,6 +998,54 @@ async fn a_worker_at_its_only_accounts_limit_tells_its_lead() {
     assert!(text.contains("Worker Fix hit a usage limit (it resets at 2026-11-17T19:00:00Z)"), "{text}");
 }
 
+/// A worker whose model is used up on every account, another model free: the user is asked whether it carries on as
+/// that model, its history kept, or waits for the reset; carried on, it's started again on the model they chose.
+#[tokio::test]
+async fn a_worker_whose_model_is_used_up_everywhere_is_offered_another_model() {
+    let w = world("leads-limit-model");
+    let dot = w.home.join("dot-claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    w.daemon.signins.set_claude_dir(dot);
+    claude_account(&w, "a@example.com");
+    let inbox = zerod::inbox::Inbox::open(None, vec![]);
+    inbox.configure(Duration::from_millis(20), 600);
+    zerod::server::offer_models(&w.daemon, &inbox);
+    let lead = w
+        .daemon
+        .start(
+            Provider::Claude,
+            "lead the work",
+            Options { cwd: Some(w.project.to_str().unwrap().into()), model: Some("claude-opus-5-5".into()), ..Default::default() },
+        )
+        .unwrap();
+    let led = lead_runtime(&w).await;
+    led.said("user", 1).await;
+    led.say(turn_ends());
+    until(&w.daemon, &lead, |c| c.attention() == Attention::Idle).await;
+    let fable = Options { model: Some("claude-fable-5-2".into()), ..named("Fix", None) };
+    let worker = w.daemon.spawn(&lead, Provider::Claude, "fix it", fable).unwrap();
+    let fixing = nth_runtime(&w, 1).await;
+    fixing.said("user", 1).await;
+    limited(&fixing, zerod::now() + 3_600);
+    until(&w.daemon, &worker, |c| c.attention() == Attention::Limited).await;
+
+    let mut offer = None;
+    for _ in 0..300 {
+        offer = inbox.open_asks().into_iter().find(|a| a.title == "Carry Fix on with another model?");
+        if offer.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let offer = offer.expect("an offer of another model");
+    assert_eq!(offer.options, ["Opus 5.5", "Wait for the reset"], "the models other tasks run on, free");
+    inbox.choose(&offer.id, 0);
+    until(&w.daemon, &worker, |c| c.model.as_deref() == Some("claude-opus-5-5")).await;
+    let again = nth_runtime(&w, 2).await;
+    let said = again.said("user", 1).await;
+    assert!(said[0]["message"]["content"].as_str().unwrap().contains("Opus 5.5"), "{said:?}");
+}
+
 /// A worker at its limit when no other account was free waits for its reset; once another account is free, words for
 /// it (or a read of the accounts' usage) carry it on as that account, the words with it.
 async fn limited_with_none_free(w: &World) -> (String, zerod::signins::SignIn) {

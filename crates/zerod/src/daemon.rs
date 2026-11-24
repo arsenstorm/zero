@@ -48,6 +48,9 @@ const PAUSED: &str = "paused-by-user.json";
 const SAVED: &str = "saved-for-later.json";
 /// Whether a task has a blocking ask open (the inbox knows).
 pub type Blocked = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// What's done for a task whose model is used up on every account: offered another (server.rs offer_models).
+pub type Offer = Box<dyn Fn(&Conversation) + Send + Sync>;
 /// A user's queued words as they go to the agent: the note on its open asks added then (the inbox's to say).
 /// Whether a task's own note says who it waits on (board::says_who), from the inbox.
 pub type SaysWho = Box<dyn Fn(&Conversation) -> bool + Send + Sync>;
@@ -110,6 +113,7 @@ pub struct Daemon {
     crossed: Mutex<HashMap<(String, String), u32>>,
     /// Whether a task has a blocking ask open (Ask::blocks), as the inbox says: its events and reports wait then.
     blocked: std::sync::OnceLock<Blocked>,
+    offer: std::sync::OnceLock<Offer>,
     noted: std::sync::OnceLock<Noted>,
     /// What tasks follow (following.rs): the pull requests they open are followed, and a turn waiting on nothing told.
     following: std::sync::OnceLock<Arc<crate::following::Following>>,
@@ -401,6 +405,7 @@ impl Daemon {
             kept_reports: Mutex::default(),
             archive_index: Mutex::default(),
             blocked: Default::default(),
+            offer: Default::default(),
             noted: Default::default(),
             following: Default::default(),
             says_who: Default::default(),
@@ -655,6 +660,11 @@ impl Daemon {
     /// How to tell a task has a blocking ask open: the inbox's, given once (server::hold_while_blocked).
     pub fn hold_while(&self, blocked: Blocked) {
         let _ = self.blocked.set(blocked);
+    }
+
+    /// What's done for a task whose model is used up on every account, given once.
+    pub fn offer_models_with(&self, offer: Offer) {
+        let _ = self.offer.set(offer);
     }
 
     /// What tasks follow, given once (main.rs).
